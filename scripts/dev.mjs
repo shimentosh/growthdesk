@@ -7,6 +7,9 @@
  */
 import { execSync, spawn } from "node:child_process";
 
+// pnpm is a .cmd shim on Windows, which Node only runs through a shell.
+const isWindows = process.platform === "win32";
+
 execSync("docker compose up -d --wait", { stdio: "inherit" });
 execSync("pnpm --filter @growthdesk/shared run build", { stdio: "inherit" });
 execSync("pnpm --filter @growthdesk/api exec prisma migrate deploy", { stdio: "inherit" });
@@ -20,7 +23,8 @@ const procs = [
 ];
 
 const children = procs.map(([name, cmd, args, color]) => {
-  const child = spawn(cmd, args, { stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, FORCE_COLOR: "1" } });
+  const opts = { stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, FORCE_COLOR: "1" } };
+  const child = isWindows ? spawn([cmd, ...args].join(" "), { ...opts, shell: true }) : spawn(cmd, args, opts);
   const prefix = `${color}[${name}]\x1b[0m `;
   const pipe = (stream, out) => {
     let buf = "";
@@ -41,7 +45,11 @@ let stopping = false;
 const stop = () => {
   if (stopping) return;
   stopping = true;
-  for (const c of children) c.kill("SIGTERM");
+  for (const c of children) {
+    // Killing the shell alone would orphan its children on Windows.
+    if (isWindows) spawn("taskkill", ["/pid", String(c.pid), "/T", "/F"], { stdio: "ignore" });
+    else c.kill("SIGTERM");
+  }
   setTimeout(() => process.exit(0), 3000);
 };
 process.on("SIGINT", stop);
