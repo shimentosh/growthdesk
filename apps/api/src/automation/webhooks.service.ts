@@ -8,7 +8,7 @@ import { EntitlementsService } from "../billing/entitlements.service.js";
 import { AuditService } from "../core/audit.service.js";
 import { seal } from "../common/crypto.js";
 import { badRequest, conflict, notFound } from "../common/errors.js";
-import { ws, type RequestContext } from "../common/context.js";
+import { actorId, ws, type RequestContext } from "../common/context.js";
 import { assertPublicUrl, BlockedAddressError } from "./safe-http.js";
 import { WebhookDeliveryService } from "./webhook-delivery.service.js";
 
@@ -75,7 +75,15 @@ export class WebhooksService {
     await this.checkUrl(input.url);
     const secret = newSecret();
     const row = await this.prisma.db.webhookEndpoint.create({
-      data: { workspaceId: w.id, url: input.url, description: input.description ?? "", events: [...new Set(input.events)], enabled: input.enabled, secretSealed: seal(secret) },
+      data: {
+        workspaceId: w.id,
+        url: input.url,
+        description: input.description ?? "",
+        events: [...new Set(input.events)],
+        enabled: input.enabled,
+        secretSealed: seal(secret),
+        createdById: actorId(ctx),
+      },
     });
     await this.audit.record(ctx, { action: "webhook.created", targetType: "webhook_endpoint", targetId: row.id, metadata: { url: row.url, events: row.events } });
     // The only time the secret is readable.
@@ -96,6 +104,8 @@ export class WebhooksService {
         ...(input.events !== undefined ? { events: [...new Set(input.events)] } : {}),
         ...(input.enabled !== undefined ? { enabled: input.enabled } : {}),
         ...(reenabling ? { failureCount: 0, lastError: "" } : {}),
+        // Whoever points it somewhere new, or turns a paused endpoint back on, answers for it from now on.
+        ...((input.url !== undefined || reenabling) && actorId(ctx) ? { createdById: actorId(ctx) } : {}),
       },
     });
     await this.audit.record(ctx, { action: "webhook.updated", targetType: "webhook_endpoint", targetId: row.id, metadata: { fields: Object.keys(input) } });

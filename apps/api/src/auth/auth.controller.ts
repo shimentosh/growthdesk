@@ -15,7 +15,7 @@ import {
   WaitlistJoinInput,
 } from "@growthdesk/shared";
 import { z } from "zod";
-import { AllowUnverified, Body, Ctx, Public, Query, Raw } from "../common/decorators.js";
+import { AllowUnverified, Body, Ctx, Public, Query, Raw, SameOrigin } from "../common/decorators.js";
 import { me, type RequestContext } from "../common/context.js";
 import { derivedKey, hmac, newToken, safeEqual } from "../common/crypto.js";
 import { isApiError } from "../common/errors.js";
@@ -33,6 +33,7 @@ const attributionFrom = (res: Response) => parseAttributionCookie(res.req.cookie
 const STRICT = { default: { limit: Number(process.env.AUTH_RATE_LIMIT ?? 10), ttl: 60_000 } };
 
 @ApiTags("auth")
+@SameOrigin()
 @Controller("auth")
 export class AuthController {
   constructor(
@@ -58,9 +59,10 @@ export class AuthController {
   @Throttle(STRICT)
   @Post("register")
   async register(@Body(RegisterInput) body: z.infer<typeof RegisterInput>, @Ctx() ctx: RequestContext, @Res({ passthrough: true }) res: Response) {
+    // The same answer whether or not the address already had an account; only a new account gets a session.
     const session = await this.auth.register(body, ctx, attributionFrom(res));
-    this.sessions.setCookie(res, session.token);
-    return { registered: true };
+    if (session) this.sessions.setCookie(res, session.token);
+    return { received: true };
   }
 
   @Public()
@@ -186,11 +188,12 @@ export class AuthController {
     if (!this.auth.googleEnabled()) return res.redirect(302, "/login?error=google_unavailable");
     const nonce = newToken(16);
     const state = `${nonce}.${hmac(derivedKey("oauth-state"), nonce, "base64url")}`;
-    res.cookie("gd_oauth_state", state, { httpOnly: true, sameSite: "lax", maxAge: 10 * 60_000, path: "/" });
+    const secure = this.sessions.secureCookies;
+    res.cookie("gd_oauth_state", state, { httpOnly: true, sameSite: "lax", secure, maxAge: 10 * 60_000, path: "/" });
     // From the register page: kept for the callback, where the invitation is checked like any other.
     const signup = { invite: typeof invite === "string" ? invite.slice(0, 200) : "", consent: consent === "1" };
     if (signup.invite || signup.consent) {
-      res.cookie(OAUTH_SIGNUP_COOKIE, JSON.stringify(signup), { httpOnly: true, sameSite: "lax", maxAge: 10 * 60_000, path: "/" });
+      res.cookie(OAUTH_SIGNUP_COOKIE, JSON.stringify(signup), { httpOnly: true, sameSite: "lax", secure, maxAge: 10 * 60_000, path: "/" });
     } else {
       res.clearCookie(OAUTH_SIGNUP_COOKIE, { path: "/" });
     }

@@ -13,7 +13,7 @@ import {
   password,
   requiredText,
 } from "@growthdesk/shared";
-import { AllowSuspended, AllowUnverified, Body, Ctx, Permission, Public, Query } from "../common/decorators.js";
+import { AllowSuspended, AllowUnverified, Body, Ctx, Permission, Public, Query, SameOrigin } from "../common/decorators.js";
 import { ws, type RequestContext } from "../common/context.js";
 import { conflict } from "../common/errors.js";
 import { createSignupProfile, parseAttributionCookie } from "../auth/signup-profile.js";
@@ -152,6 +152,7 @@ export class WorkspacesController {
 
   /** Creates the invitee's account and joins in one step. The emailed link proves the address. */
   @Public()
+  @SameOrigin()
   @Throttle({ default: { limit: Number(process.env.AUTH_RATE_LIMIT ?? 10), ttl: 60_000 } })
   @Post("invitations/:token/register")
   async registerInvitee(

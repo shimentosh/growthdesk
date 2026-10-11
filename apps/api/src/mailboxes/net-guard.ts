@@ -19,10 +19,11 @@ import { badRequest } from "../common/errors.js";
  * set (local test servers; never in production). The port check applies to
  * public targets only.
  *
- * Residual risk (documented, not solved here): the address is resolved again
- * by nodemailer/imapflow when they connect, so a DNS answer that changes
- * between the check and the connection (rebinding) is not caught. The sync
- * worker re-runs the check before every pass, which narrows the window.
+ * DNS rebinding: assertReachableTarget only checks, and nodemailer/imapflow
+ * resolve the name again when they connect, so an answer that changes between
+ * the two is not caught. resolvePinnedTarget closes that gap by returning the
+ * vetted address to connect to. The sync worker re-runs the check before every
+ * pass; the SMTP send path (messaging/smtp.ts) does not pin yet (GAP_PLAN 2.10).
  */
 
 /** Ports a mail server legitimately listens on (SMTP, submission, alt-submission, IMAP, POP). */
@@ -65,10 +66,31 @@ const systemLookup: Lookup = (host) => lookup(host, { all: true, verbatim: true 
  * `allowPrivate` (ALLOW_PRIVATE_MAIL_HOSTS) lets local test servers through.
  */
 export async function assertReachableTarget(host: string, port: number, label: "SMTP" | "IMAP", allowPrivate: boolean, resolve: Lookup = systemLookup): Promise<void> {
+  await vetTarget(host, port, label, allowPrivate, resolve);
+}
+
+/** Where to open the socket, and the name the TLS certificate must match. */
+export type PinnedTarget = { address: string; servername: string };
+
+/**
+ * The same checks as assertReachableTarget, returning the vetted address so
+ * the caller connects to exactly that IP (with `servername` for TLS/SNI)
+ * instead of letting the mail library resolve the name a second time — which
+ * is what a DNS-rebinding answer would exploit. With `allowPrivate` the name
+ * is returned unresolved (local test servers).
+ */
+export async function resolvePinnedTarget(host: string, port: number, label: "SMTP" | "IMAP", allowPrivate: boolean, resolve: Lookup = systemLookup): Promise<PinnedTarget> {
+  const name = (host ?? "").trim().toLowerCase();
+  const addresses = await vetTarget(host, port, label, allowPrivate, resolve);
+  return { address: addresses[0] ?? name, servername: name };
+}
+
+/** Every address the name resolves to, after checking them all (empty with allowPrivate: nothing was resolved). */
+async function vetTarget(host: string, port: number, label: "SMTP" | "IMAP", allowPrivate: boolean, resolve: Lookup): Promise<string[]> {
   const name = (host ?? "").trim().toLowerCase();
   if (!name) throw badRequest(`Name the ${label} server`, { [label === "SMTP" ? "smtpHost" : "imapHost"]: "Required" });
   if (!Number.isInteger(port) || port < 1 || port > 65535) throw badRequest(`${port} is not a valid ${label} port`);
-  if (allowPrivate) return;
+  if (allowPrivate) return [];
 
   if (!MAIL_PORTS.has(port)) {
     throw badRequest(`${port} is not a mail port — ${label} servers listen on 25, 465, 587, 143, 993 and the like`);
@@ -90,6 +112,7 @@ export async function assertReachableTarget(host: string, port: number, label: "
   if (addresses.some(isPrivateAddress)) {
     throw badRequest(`${name} is on a private network. A mailbox has to be reachable from the internet.`);
   }
+  return addresses;
 }
 
 /** Hosts for which a self-signed certificate is tolerated — and only with ALLOW_PRIVATE_MAIL_HOSTS. */

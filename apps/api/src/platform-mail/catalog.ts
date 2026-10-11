@@ -37,6 +37,19 @@ export const PLATFORM_TEMPLATE_DEFAULTS: Record<PlatformTemplateKey, PlatformTem
       pasteLink("p", "If it was not you, ignore this email — your password has not changed."),
     ],
   },
+  account_exists: {
+    subject: "You already have a {{product_name}} account",
+    preheader: "Sign in instead, or reset your password.",
+    blocks: [
+      heading("h", "You already have an account"),
+      text(
+        "t",
+        "Hi {{name|there}},\n\nSomeone tried to create a {{product_name}} account with this email address, but it already has one. No new account was created and nothing about your account has changed.\n\nIf it was you, sign in instead. Forgot your password? Choose \"Forgot password\" on the sign-in page.",
+      ),
+      button("b", "Sign in"),
+      pasteLink("p", "If it was not you, you can ignore this email."),
+    ],
+  },
   invitation: {
     subject: "{{inviter}} invited you to {{workspace}} on {{product_name}}",
     preheader: "The invitation is valid for 7 days.",

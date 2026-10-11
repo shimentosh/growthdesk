@@ -133,6 +133,10 @@ export class MailService {
     return this.sendTemplate("reset_password", to, { action_url: this.link(`/reset-password?token=${encodeURIComponent(token)}`) });
   }
 
+  accountExists(to: string, name: string, userId: string) {
+    return this.sendTemplate("account_exists", to, { name, action_url: this.link("/login") }, { userId });
+  }
+
   invitation(to: string, inviter: string, workspace: string, token: string) {
     return this.sendTemplate("invitation", to, { inviter, workspace, action_url: this.link(`/invite/${encodeURIComponent(token)}`) });
   }

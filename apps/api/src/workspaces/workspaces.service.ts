@@ -15,6 +15,7 @@ import { recordSubscriptionChange } from "../billing/subscription-history.js";
 import { PlatformSettingsService } from "../core/platform-settings.service.js";
 import { AuditService } from "../core/audit.service.js";
 import { MailService } from "../core/mail.service.js";
+import { CredentialReleaseService } from "../core/credential-release.service.js";
 import { hashToken, newToken } from "../common/crypto.js";
 import { badRequest, conflict, forbidden, notFound } from "../common/errors.js";
 import { me, ws, type RequestContext } from "../common/context.js";
@@ -60,6 +61,7 @@ export class WorkspacesService {
     private readonly platform: PlatformSettingsService,
     private readonly audit: AuditService,
     private readonly mail: MailService,
+    private readonly credentials: CredentialReleaseService,
   ) {}
 
   /**
@@ -298,6 +300,8 @@ export class WorkspacesService {
       const mine = w.role === "api" ? 0 : ROLE_RANK[w.role];
       if (ROLE_RANK[target.role] >= mine) throw forbidden("You cannot remove someone at or above your own level.");
     }
+    // Their API keys and webhooks go first: if this fails, they are still a member and the removal can be retried.
+    await this.credentials.releaseInWorkspace(ctx, w.id, target.userId, self ? "member_left" : "member_removed");
     await this.prisma.db.$transaction(async (tx) => {
       // Their records stay; ownership and assignments are released so nothing points at someone who cannot see it.
       await tx.contact.updateMany({ where: { workspaceId: w.id, ownerId: target.userId }, data: { ownerId: null } });

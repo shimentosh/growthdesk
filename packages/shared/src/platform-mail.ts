@@ -19,6 +19,7 @@ export const PLATFORM_TEMPLATE_KEYS = [
   "account_deleted",
   "waitlist_confirmed",
   "signup_invite",
+  "account_exists",
 ] as const;
 export type PlatformTemplateKey = (typeof PLATFORM_TEMPLATE_KEYS)[number];
 
@@ -45,6 +46,13 @@ export const PLATFORM_TEMPLATES: Record<
     label: "Reset password",
     category: "account",
     variables: [{ key: "action_url", label: "Reset link", sample: "https://app.example.com/reset-password?token=…" }],
+    required: ["action_url"],
+  },
+  /** Sent instead of an error when someone signs up with an address that already has an account. */
+  account_exists: {
+    label: "Sign-up with an existing account",
+    category: "account",
+    variables: [{ key: "action_url", label: "Sign-in link", sample: "https://app.example.com/login" }],
     required: ["action_url"],
   },
   invitation: {

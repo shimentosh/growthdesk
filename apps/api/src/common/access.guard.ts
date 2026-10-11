@@ -18,6 +18,7 @@ import {
   IS_PUBLIC,
   NEEDS_PERMISSION,
   NEEDS_PLATFORM,
+  SAME_ORIGIN,
 } from "./decorators.js";
 import { ApiError, forbidden, locked, notFound, unauthorized, unavailable } from "./errors.js";
 
@@ -36,7 +37,8 @@ const SCOPE_PERMISSIONS: Record<string, string[]> = {
  * One global guard, in this order:
  *   1. request context (id, trusted client IP, user agent)
  *   2. API key (Bearer) for routes that accept one, else the session cookie
- *   3. cross-site write refusal (Origin must be ours for cookie-authenticated writes)
+ *   3. cross-site write refusal (Origin must be ours for cookie-authenticated writes,
+ *      and for public sign-in/sign-up writes marked @SameOrigin)
  *   4. maintenance mode (writes refused except for platform admins)
  *   5. platform-admin rank, for /admin routes
  *   6. workspace membership, from the :workspaceId in the path — never from
@@ -87,15 +89,13 @@ export class AccessGuard implements CanActivate {
       ctx.identity = resolved.identity;
       if (resolved.renew && token) this.sessions.setCookie(res, token);
     }
-    if (isPublic) return true;
+    if (isPublic) {
+      if (UNSAFE.has(req.method) && meta<boolean>(SAME_ORIGIN)) this.assertSameOrigin(req);
+      return true;
+    }
     if (!ctx.identity) throw unauthorized();
 
-    if (UNSAFE.has(req.method)) {
-      const origin = req.headers.origin;
-      if (origin && !this.config.allowedOrigins.includes(origin.replace(/\/$/, ""))) {
-        throw forbidden("Cross-site requests are not accepted");
-      }
-    }
+    if (UNSAFE.has(req.method)) this.assertSameOrigin(req);
 
     const platformMin = meta<"support" | "admin" | "owner">(NEEDS_PLATFORM);
     if (platformMin) {
@@ -151,6 +151,14 @@ export class AccessGuard implements CanActivate {
     }
     this.checkPermission(ctx, meta<string[]>(NEEDS_PERMISSION));
     return true;
+  }
+
+  /** Browsers always send Origin on a cross-site POST; a request without one is not from a browser form. */
+  private assertSameOrigin(req: Req) {
+    const origin = req.headers.origin;
+    if (origin && !this.config.allowedOrigins.includes(origin.replace(/\/$/, ""))) {
+      throw forbidden("Cross-site requests are not accepted");
+    }
   }
 
   private checkPermission(ctx: RequestContext, needed: string[] | undefined) {

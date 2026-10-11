@@ -37,7 +37,11 @@ const nextConfig: NextConfig = {
   // Dev only: keeps the Next badge off the sidebar's pinned Settings link.
   devIndicators: { position: "bottom-right" },
   async headers() {
-    return [{ source: "/:path*", headers: securityHeaders }];
+    return [
+      { source: "/:path*", headers: securityHeaders },
+      // Pages get a per-request nonce policy from src/proxy.ts; the API proxy never serves a document.
+      { source: "/api/:path*", headers: [{ key: "Content-Security-Policy", value: "default-src 'none'; frame-ancestors 'none'" }] },
+    ];
   },
 };
 

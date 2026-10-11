@@ -10,6 +10,7 @@ import {
 import type { Prisma } from "../generated/prisma/client.js";
 import { PrismaService } from "../prisma/prisma.service.js";
 import { AuditService, type AuditInput } from "../core/audit.service.js";
+import { CredentialReleaseService } from "../core/credential-release.service.js";
 import { PlatformSettingsService, type PlatformSettings } from "../core/platform-settings.service.js";
 import { SessionService } from "../auth/session.service.js";
 import { EntitlementsService } from "../billing/entitlements.service.js";
@@ -74,6 +75,7 @@ export class AdminService {
     private readonly entitlements: EntitlementsService,
     private readonly billing: BillingService,
     private readonly revenue: RevenueService,
+    private readonly credentials: CredentialReleaseService,
   ) {}
 
   private record(ctx: RequestContext, input: AuditInput) {
@@ -213,6 +215,8 @@ export class AdminService {
     this.assertMayManage(actor, user, "disable");
     await this.prisma.db.user.update({ where: { id }, data: { suspendedAt: user.suspendedAt ?? new Date(), suspendedReason: reason } });
     await this.sessions.revokeAllFor(id);
+    // Sessions alone are not enough: their API keys would keep working. Re-enabling the account does not bring them back.
+    await this.credentials.releaseEverywhere(ctx, id, "user_disabled", "platform_admin");
     await this.record(ctx, { action: "platform.user_disabled", targetType: "user", targetId: id, metadata: { email: user.email, reason } });
     return this.userDetail(id);
   }

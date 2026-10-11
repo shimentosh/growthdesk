@@ -1,4 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
+import { contentSecurityPolicy } from "@growthdesk/shared";
 import { PATH_HEADER, SESSION_COOKIE } from "@/lib/constants";
 
 /*
@@ -16,14 +17,27 @@ function isPublic(pathname: string): boolean {
   return pathname === "/login" || pathname.startsWith("/login/") || pathname === "/api" || pathname.startsWith("/api/");
 }
 
+/*
+ * The Content-Security-Policy, with a fresh nonce per request
+ * (packages/shared/src/csp.ts). Next reads the nonce from the policy on the
+ * request and puts it on every script it renders, so the policy goes on both
+ * the request and the response.
+ */
+function next(request: NextRequest, extra: Record<string, string> = {}): NextResponse {
+  const nonce = btoa(crypto.randomUUID());
+  const policy = contentSecurityPolicy({ nonce, dev: process.env.NODE_ENV === "development" });
+  const headers = new Headers(request.headers);
+  for (const [k, v] of Object.entries(extra)) headers.set(k, v);
+  headers.set("content-security-policy", policy);
+  const response = NextResponse.next({ request: { headers } });
+  response.headers.set("Content-Security-Policy", policy);
+  return response;
+}
+
 export function proxy(request: NextRequest) {
   const { pathname, search } = request.nextUrl;
-  if (isPublic(pathname)) return NextResponse.next();
-  if (request.cookies.has(SESSION_COOKIE)) {
-    const headers = new Headers(request.headers);
-    headers.set(PATH_HEADER, pathname + search);
-    return NextResponse.next({ request: { headers } });
-  }
+  if (isPublic(pathname)) return next(request);
+  if (request.cookies.has(SESSION_COOKIE)) return next(request, { [PATH_HEADER]: pathname + search });
 
   const login = request.nextUrl.clone();
   login.pathname = "/login";
