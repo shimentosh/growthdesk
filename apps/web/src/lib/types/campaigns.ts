@@ -103,7 +103,8 @@ export type CampaignPatchBody = {
 };
 
 export type SkipItem = { reason: string; label: string; count: number };
-export type CampaignProblem = { field: string; message: string };
+/** `fix.href` is a link inside the workspace (pass it through ws.href). */
+export type CampaignProblem = { field: string; message: string; fix?: { label: string; href: string } };
 
 /** GET /campaigns/:id/readiness */
 export type CampaignReadiness = {

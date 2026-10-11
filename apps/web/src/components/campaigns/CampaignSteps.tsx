@@ -16,6 +16,11 @@ import { lockedReason, useCampaignPatch } from "./common";
  * StepsEditor and saved as a whole list (PATCH steps). Editable while draft
  * or paused; the API re-validates and answers field errors keyed
  * steps.<i>.config.<key>, which the editor shows on the step.
+ *
+ * Once anyone is enrolled the existing steps keep their number, kind and
+ * branch sizes (an enrollment's place is a step number): content and timing
+ * can change and steps can be added at the end. The same rule is checked
+ * here, to say so before saving, and enforced by the API.
  */
 export function CampaignSteps({ campaign }: { campaign: CampaignDetail }) {
   const ws = useWorkspace();
@@ -26,14 +31,16 @@ export function CampaignSteps({ campaign }: { campaign: CampaignDetail }) {
   const readOnly = Boolean(locked) || !ws.can("campaigns.write");
   const dirty = JSON.stringify(baseline) !== JSON.stringify(steps);
   const startedBefore = campaign.status === "paused" && campaign.stats.enrolled > 0;
+  const restructured = startedBefore && dirty && changesStructure(baseline, steps);
   const fields = save.error?.fields ?? {};
 
   return (
     <div className="flex flex-col gap-3">
       {locked && <Callout tone="info">{locked}</Callout>}
       {!locked && startedBefore && (
-        <Callout tone="warn">
-          Contacts already enrolled stay at their current step number when you save, so inserting or removing steps before where they are moves what they get next.
+        <Callout tone={restructured ? "bad" : "info"}>
+          Contacts are already enrolled, and each one&apos;s place is kept by step number. You can edit what a step sends and when, and add steps at the end, but not insert,
+          remove, reorder or change the kind of existing steps. Duplicate the campaign to restructure it.
         </Callout>
       )}
       {save.error && !save.error.isPlanLimit && !Object.keys(fields).some((k) => k.startsWith("steps")) && <FormError error={save.error.message} />}
@@ -58,7 +65,7 @@ export function CampaignSteps({ campaign }: { campaign: CampaignDetail }) {
           )}
           <Button
             variant="primary"
-            disabled={!dirty}
+            disabled={!dirty || restructured}
             loading={save.isPending}
             onClick={() =>
               save.mutate(
@@ -79,4 +86,12 @@ export function CampaignSteps({ campaign }: { campaign: CampaignDetail }) {
       )}
     </div>
   );
+}
+
+const lanes = (s: SequenceStep) => `${Number(s.config.thenLength ?? 0)}/${Number(s.config.elseLength ?? 0)}`;
+
+/** Mirrors the API's structureChange: true when an existing step is removed, moved, swapped or its branch resized. */
+function changesStructure(before: SequenceStep[], after: SequenceStep[]): boolean {
+  if (after.length < before.length) return true;
+  return before.some((s, i) => s.type !== after[i]!.type || (s.type === "branch" && lanes(s) !== lanes(after[i]!)));
 }

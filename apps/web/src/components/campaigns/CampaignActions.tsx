@@ -10,15 +10,17 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import { useApiMutation, useApiQuery } from "@/lib/query";
 import { useFormat, useWorkspace } from "@/lib/session";
 import type { CampaignDetail, CampaignReadiness, LaunchResult } from "@/lib/types/campaigns";
-import { SkippedList, plural, skippedTotal } from "./common";
+import { FixLink, SkippedList, plural, skippedTotal } from "./common";
 
 type Dialog = "launch" | "stop" | "delete" | null;
 
 /**
  * Launch / pause / resume / stop, duplicate and delete, with a confirmation
  * for anything that starts or ends sending. The launch confirmation shows the
- * readiness check (GET /readiness); the result lists who was enrolled and why
- * the rest were skipped, in the API's own words.
+ * readiness check (GET /readiness): each blocking problem links to where it
+ * is fixed, and the confirm button stays disabled until there are none. The
+ * result lists who was enrolled and why the rest were skipped, in the API's
+ * own words.
  */
 export function CampaignActions({ campaign }: { campaign: CampaignDetail }) {
   const ws = useWorkspace();
@@ -32,8 +34,19 @@ export function CampaignActions({ campaign }: { campaign: CampaignDetail }) {
   const base = `/campaigns/${campaign.id}`;
   const invalidate = [ws.key("campaigns")];
 
-  const readiness = useApiQuery<CampaignReadiness>(ws.key("campaigns", campaign.id, "readiness"), dialog === "launch" ? ws.path(`${base}/readiness`) : null);
-  const launch = useApiMutation<LaunchResult, void>({ path: ws.path(`${base}/launch`), invalidate, errorToast: false, onSuccess: (r) => setResult(r) });
+  // Always re-checked when the dialog opens: a fix made on another tab must clear its problem.
+  const readiness = useApiQuery<CampaignReadiness>(ws.key("campaigns", campaign.id, "readiness"), dialog === "launch" ? ws.path(`${base}/readiness`) : null, { staleTime: 0 });
+  const launch = useApiMutation<LaunchResult, void>({
+    path: ws.path(`${base}/launch`),
+    invalidate,
+    errorToast: false,
+    onSuccess: (r) => {
+      setDialog(null);
+      setResult(r);
+    },
+    // A 422 means something changed since the check; show the fresh list of problems.
+    onError: () => void readiness.refetch(),
+  });
   const pause = useApiMutation<CampaignDetail, void>({ path: ws.path(`${base}/pause`), invalidate, success: "Campaign paused" });
   const resume = useApiMutation<CampaignDetail, void>({ path: ws.path(`${base}/resume`), invalidate, success: "Campaign resumed" });
   const stop = useApiMutation<CampaignDetail, void>({ path: ws.path(`${base}/stop`), invalidate, success: "Campaign stopped", errorToast: false });
@@ -54,6 +67,13 @@ export function CampaignActions({ campaign }: { campaign: CampaignDetail }) {
 
   const future = campaign.startAt && new Date(campaign.startAt).getTime() > Date.now();
   const r = readiness.data;
+  const closeLaunch = (o: boolean) => {
+    if (launch.isPending) return;
+    if (!o) launch.reset();
+    setDialog(o ? "launch" : null);
+  };
+  // Launch only once the check has come back clean (the API refuses otherwise anyway).
+  const launchBlocked = !r || readiness.isFetching || r.problems.length > 0;
   const canDelete = canWrite && s !== "running" && s !== "scheduled";
 
   return (
@@ -98,21 +118,28 @@ export function CampaignActions({ campaign }: { campaign: CampaignDetail }) {
         </DropdownMenu>
       )}
 
-      <ConfirmDialog
+      <Modal
         open={dialog === "launch"}
-        onOpenChange={(o) => {
-          if (!o) launch.reset();
-          setDialog(o ? "launch" : null);
-        }}
-        tone="default"
+        onOpenChange={closeLaunch}
         title={`Launch “${campaign.name}”?`}
-        confirmLabel={future ? "Schedule" : "Launch"}
         description={
           future
             ? `Contacts are enrolled now and the first steps run from ${f.dateTime(campaign.startAt)}, inside the send window.`
             : "Contacts are enrolled now and the first steps run inside the send window, at most the daily new-contact limit per day."
         }
-        onConfirm={() => launch.mutateAsync()}
+        footer={
+          <>
+            {r && r.problems.length > 0 && !readiness.isFetching && (
+              <span className="mr-auto self-center text-xs text-text-3">Fix {r.problems.length === 1 ? "the problem" : "the problems"} above to launch.</span>
+            )}
+            <Button disabled={launch.isPending} onClick={() => closeLaunch(false)}>
+              Cancel
+            </Button>
+            <Button variant="primary" icon={<Rocket />} loading={launch.isPending} disabled={launchBlocked} onClick={() => launch.mutate()}>
+              {future ? "Schedule" : "Launch"}
+            </Button>
+          </>
+        }
       >
         {readiness.isPending ? (
           <p className="text-sm text-text-3">Checking the campaign…</p>
@@ -120,11 +147,19 @@ export function CampaignActions({ campaign }: { campaign: CampaignDetail }) {
           <p className="text-sm text-bad-ink">{readiness.error.message}</p>
         ) : r ? (
           <div className="flex flex-col gap-3">
+            {launch.error && (
+              <p role="alert" className="text-sm text-bad-ink">
+                {launch.error.message}
+              </p>
+            )}
             {r.problems.length > 0 && (
               <Callout tone="bad" title="Not ready to launch">
-                <ul className="list-disc pl-4">
+                <ul className="flex flex-col gap-1.5">
                   {r.problems.map((p, i) => (
-                    <li key={i}>{p.message}</li>
+                    <li key={i} className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-0.5">
+                      <span>{p.message}</span>
+                      {p.fix && <FixLink fix={p.fix} onNavigate={() => closeLaunch(false)} />}
+                    </li>
                   ))}
                 </ul>
               </Callout>
@@ -152,7 +187,7 @@ export function CampaignActions({ campaign }: { campaign: CampaignDetail }) {
             </div>
           </div>
         ) : null}
-      </ConfirmDialog>
+      </Modal>
 
       <ConfirmDialog
         open={dialog === "stop"}

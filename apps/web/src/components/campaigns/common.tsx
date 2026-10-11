@@ -1,10 +1,23 @@
 "use client";
 
+import Link from "next/link";
+import { ArrowRight } from "lucide-react";
 import type { CampaignStatus } from "@growthdesk/shared";
 import { formatNumber } from "@/lib/format";
 import { useApiMutation } from "@/lib/query";
 import { useWorkspace } from "@/lib/session";
-import { EDITABLE_STATUSES, type CampaignDetail, type CampaignPatchBody, type SkipItem } from "@/lib/types/campaigns";
+import { EDITABLE_STATUSES, type CampaignDetail, type CampaignPatchBody, type CampaignProblem, type SkipItem } from "@/lib/types/campaigns";
+
+/** The readiness problem's "fix it here" link (a campaign tab, mailbox settings or billing), as the API names it. */
+export function FixLink({ fix, onNavigate }: { fix: NonNullable<CampaignProblem["fix"]>; onNavigate?: () => void }) {
+  const ws = useWorkspace();
+  return (
+    <Link href={ws.href(fix.href)} onClick={onNavigate} className="inline-flex shrink-0 items-center gap-1 text-xs font-medium text-accent-ink hover:underline">
+      {fix.label}
+      <ArrowRight aria-hidden className="size-3" />
+    </Link>
+  );
+}
 
 /** PATCH /campaigns/:id — every tab saves its own fields through this. Errors are shown inline (`error.fields`). */
 export function useCampaignPatch(campaignId: string, success = "Campaign saved") {
