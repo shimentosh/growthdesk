@@ -88,8 +88,16 @@ export class CompaniesService {
     };
   }
 
+  /** An owner must belong to this workspace, as for contacts and deals: any other id would leak a stranger's name. */
+  private async assertOwnerIsMember(workspaceId: string, ownerId: string | null | undefined) {
+    if (!ownerId) return;
+    const m = await this.prisma.db.membership.findUnique({ where: { workspaceId_userId: { workspaceId, userId: ownerId } } });
+    if (!m) throw badRequest("The owner must be a member of this workspace", { ownerId: "Not a member of this workspace" });
+  }
+
   async create(ctx: RequestContext, input: CompanyInputT) {
     const w = ws(ctx);
+    await this.assertOwnerIsMember(w.id, input.ownerId);
     const domain = normalizeDomain(input.domain ?? input.website ?? null);
     if (domain) {
       const existing = await this.prisma.db.company.findFirst({ where: { workspaceId: w.id, domain, deletedAt: null } });
@@ -129,6 +137,7 @@ export class CompaniesService {
     const w = ws(ctx);
     const existing = await this.prisma.db.company.findFirst({ where: { id, workspaceId: w.id, deletedAt: null } });
     if (!existing) throw notFound("That company");
+    await this.assertOwnerIsMember(w.id, input.ownerId);
     const data: Prisma.CompanyUpdateInput = {};
     for (const key of ["website", "industry", "size", "country", "region", "city", "phone", "description"] as const) {
       if (input[key] !== undefined) data[key] = input[key];

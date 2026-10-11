@@ -11,6 +11,7 @@ export const NEEDS_PLATFORM = "gd:platform";
 export const API_KEY_SCOPE = "gd:api-key-scope";
 export const ALLOW_UNVERIFIED = "gd:allow-unverified";
 export const ALLOW_SUSPENDED = "gd:allow-suspended";
+export const SAME_ORIGIN = "gd:same-origin";
 
 /** No sign-in required. The guard still resolves a session if one is present. */
 export const Public = () => SetMetadata(IS_PUBLIC, true);
@@ -26,6 +27,12 @@ export const ApiKeyScope = (scope: string) => SetMetadata(API_KEY_SCOPE, scope);
 export const AllowUnverified = () => SetMetadata(ALLOW_UNVERIFIED, true);
 /** Reachable while the workspace is suspended (billing, export, workspace profile). */
 export const AllowSuspended = () => SetMetadata(ALLOW_SUSPENDED, true);
+/**
+ * Public writes that must still come from our own pages (sign-in, sign-up,
+ * password reset): a cross-site form must not sign a visitor into an account
+ * the attacker controls. Signed-in writes are always checked.
+ */
+export const SameOrigin = () => SetMetadata(SAME_ORIGIN, true);
 
 export const Ctx = createParamDecorator((_: unknown, context: ExecutionContext): RequestContext => {
   return context.switchToHttp().getRequest<Req>().ctx;

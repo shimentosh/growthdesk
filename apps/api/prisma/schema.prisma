@@ -1772,6 +1772,8 @@ model WebhookEndpoint {
   secretSealed   String
   events         String[]
   enabled        Boolean   @default(true)
+  /// Who created the endpoint or last pointed it at a new URL. When they leave the workspace (or are disabled) it is paused for review.
+  createdById    String?   @db.Uuid
   failureCount   Int       @default(0)
   lastDeliveryAt DateTime?
   lastError      String    @default("")

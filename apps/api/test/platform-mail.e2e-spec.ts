@@ -1,6 +1,7 @@
 import http from "node:http";
 import type { AddressInfo } from "node:net";
 import { vi } from "vitest";
+import { PLATFORM_TEMPLATE_KEYS } from "@growthdesk/shared";
 import { bootApp, signUp, wait, type Agent, type TestApp } from "./helpers.js";
 import { PlatformMailProcessorsModule } from "../src/platform-mail/platform-mail.processors.js";
 import { PlatformMailService } from "../src/platform-mail/platform-mail.service.js";
@@ -441,7 +442,7 @@ describe("Platform mail", () => {
 
     it("lists every template with its state", async () => {
       const list = (await support.get("/v1/admin/email/templates").expect(200)).body.data;
-      expect(list).toHaveLength(10);
+      expect(list).toHaveLength(PLATFORM_TEMPLATE_KEYS.length);
       expect(list.find((x: { key: string }) => x.key === "verify_email")).toMatchObject({ label: "Confirm email", category: "account", customised: false, activeVersion: null });
       await support.get("/v1/admin/email/templates/nope").expect(404);
     });

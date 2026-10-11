@@ -140,11 +140,20 @@ export class AuthService {
     return { joined: true };
   }
 
+  /**
+   * A new account signs straight in. An address that already has an account
+   * gets the same answer (no session) and an email telling its owner, so the
+   * form cannot be used to discover who has an account. Null = no session.
+   */
   async register(input: { name: string; email: string; password: string; inviteToken?: string; marketingConsent?: boolean }, ctx: RequestContext, attribution: SignupAttributionT | null = null) {
     const invite = await this.assertSignupAllowed(input.email, input.inviteToken);
-    const existing = await this.prisma.db.user.findUnique({ where: { email: input.email } });
-    if (existing) throw conflict("An account with that email already exists. Sign in instead.", { email: "Already registered" });
+    // Hashed before the lookup so both answers spend the same scrypt work.
     const passwordHash = await hashPassword(input.password);
+    const existing = await this.prisma.db.user.findUnique({ where: { email: input.email } });
+    if (existing) {
+      await this.notifyAccountExists(existing);
+      return null;
+    }
     const user = await this.prisma.db.$transaction(async (tx) => {
       if (invite) await this.claimInvite(tx, invite.id);
       // The invitation was emailed to this address, so following it proves the address (as workspace invitations do).
@@ -161,6 +170,16 @@ export class AuthService {
       "user",
     );
     return this.sessions.start(user.id, ctx.ip, ctx.userAgent);
+  }
+
+  /** At most three of these an hour per account, so the sign-up form cannot be used to flood someone's inbox. */
+  private async notifyAccountExists(user: { id: string; email: string; name: string; suspendedAt: Date | null }) {
+    if (user.suspendedAt) return;
+    const recent = await this.prisma.db.emailLog.count({
+      where: { userId: user.id, template: "account_exists", createdAt: { gt: new Date(Date.now() - 3600_000) } },
+    });
+    if (recent >= 3) return;
+    await this.mail.accountExists(user.email, user.name, user.id);
   }
 
   async sendVerification(userId: string, email: string, name: string) {
@@ -253,7 +272,8 @@ export class AuthService {
       throw badRequest("That reset link is invalid or has expired. Ask for a new one.");
     }
     await this.prisma.db.$transaction([
-      this.prisma.db.authToken.update({ where: { id: row.id }, data: { usedAt: new Date() } }),
+      // Every outstanding reset link dies with this one, not just the link that was followed.
+      this.prisma.db.authToken.updateMany({ where: { userId: row.userId, kind: "reset_password", usedAt: null }, data: { usedAt: new Date() } }),
       // Proving control of the mailbox also verifies it.
       this.prisma.db.user.update({
         where: { id: row.userId },
@@ -270,7 +290,11 @@ export class AuthService {
     if (user.passwordHash && !(current && (await verifyPassword(current, user.passwordHash)))) {
       throw badRequest("Your current password is not right.", { currentPassword: "Incorrect" });
     }
-    await this.prisma.db.user.update({ where: { id: userId }, data: { passwordHash: await hashPassword(next) } });
+    await this.prisma.db.$transaction([
+      this.prisma.db.user.update({ where: { id: userId }, data: { passwordHash: await hashPassword(next) } }),
+      // A reset link requested earlier must not undo the new password.
+      this.prisma.db.authToken.updateMany({ where: { userId, kind: "reset_password", usedAt: null }, data: { usedAt: new Date() } }),
+    ]);
     await this.sessions.revokeAllFor(userId, sessionId);
     return { changed: true };
   }

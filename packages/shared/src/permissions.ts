@@ -197,7 +197,8 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<WorkspaceRole, readonly string[]> 
     "integrations.read",
     "members.read",
   ],
-  viewer: [...READS.filter((p) => p !== "billing.read"), "records.view_all"],
+  // Not billing, and not the audit log: it lists every member's IP address and browser.
+  viewer: [...READS.filter((p) => p !== "billing.read" && p !== "audit.read"), "records.view_all"],
 };
 
 /** The rank used for "you cannot manage someone above you". */

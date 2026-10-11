@@ -26,6 +26,7 @@ export function configureApp(app: NestExpressApplication) {
     .addCookieAuth("gd_session")
     .build();
   const document = SwaggerModule.createDocument(app, doc);
-  SwaggerModule.setup("v1/docs", app, document, { jsonDocumentUrl: "v1/docs.json" });
+  // The OpenAPI JSON is the published contract (docs/BUSINESS_OS_API.md); the interactive UI is for development only.
+  SwaggerModule.setup("v1/docs", app, document, { jsonDocumentUrl: "v1/docs.json", ui: process.env.NODE_ENV !== "production", raw: ["json"] });
   return app;
 }

@@ -29,8 +29,10 @@ describe("Authentication", () => {
     expect(after.body.data.user.emailVerified).toBe(true);
   });
 
-  it("rejects duplicate registration, weak passwords and wrong passwords", async () => {
-    await t.http().post("/v1/auth/register").send({ name: "A", email: "ada@example.com", password: "Correct-horse-9" }).expect(409);
+  it("does not sign in a duplicate registration, and rejects weak and wrong passwords", async () => {
+    // A duplicate gets the generic answer without a session (security.e2e-spec.ts covers the email).
+    const dup = await t.http().post("/v1/auth/register").send({ name: "A", email: "ada@example.com", password: "Correct-horse-9" }).expect(201);
+    expect(dup.headers["set-cookie"]).toBeUndefined();
     const weak = await t.http().post("/v1/auth/register").send({ name: "B", email: "b@example.com", password: "short" }).expect(400);
     expect(weak.body.error.fields.password).toBeDefined();
     const wrong = await t.http().post("/v1/auth/login").send({ email: "ada@example.com", password: "nope-nope-nope" }).expect(401);

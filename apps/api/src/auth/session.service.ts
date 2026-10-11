@@ -81,17 +81,22 @@ export class SessionService {
     });
   }
 
+  /** Cookies are Secure whenever the app is served over https (every production install). */
+  get secureCookies(): boolean {
+    return this.config.PUBLIC_APP_URL.startsWith("https://");
+  }
+
   setCookie(res: Response, token: string) {
     res.cookie(SESSION_COOKIE, token, {
       httpOnly: true,
       sameSite: "lax",
-      secure: this.config.PUBLIC_APP_URL.startsWith("https://"),
+      secure: this.secureCookies,
       path: "/",
       maxAge: this.maxAgeMs,
     });
   }
 
   clearCookie(res: Response) {
-    res.clearCookie(SESSION_COOKIE, { path: "/", httpOnly: true, sameSite: "lax", secure: this.config.PUBLIC_APP_URL.startsWith("https://") });
+    res.clearCookie(SESSION_COOKIE, { path: "/", httpOnly: true, sameSite: "lax", secure: this.secureCookies });
   }
 }

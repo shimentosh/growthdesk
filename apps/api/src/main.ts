@@ -16,7 +16,8 @@ async function bootstrap() {
   configureApp(app);
   // The API binds to loopback by default: browsers reach it through the web app's /api proxy.
   await app.listen(config.API_PORT, config.API_HOST);
-  new Logger("api").log(`listening on http://${config.API_HOST}:${config.API_PORT}/v1 (docs at /v1/docs)`);
+  const docs = config.NODE_ENV === "production" ? "OpenAPI at /v1/docs.json" : "docs at /v1/docs";
+  new Logger("api").log(`listening on http://${config.API_HOST}:${config.API_PORT}/v1 (${docs})`);
 }
 
 await bootstrap();

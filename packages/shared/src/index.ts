@@ -15,6 +15,7 @@ export * from "./calls.js";
 export * from "./email-design.js";
 export * from "./marketing.js";
 export * from "./patch.js";
+export * from "./csp.js";
 export * from "./platform-mail.js";
 export * from "./platform-site.js";
 export * from "./platform-users.js";

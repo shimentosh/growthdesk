@@ -9,7 +9,7 @@ import { Callout } from "@/components/ui/Callout";
 import { Checkbox } from "@/components/ui/Checkbox";
 import { Field, FormError } from "@/components/ui/Field";
 import { Input } from "@/components/ui/Input";
-import { fieldsOf, isApiError, messageOf, post } from "@/lib/api";
+import { fieldsOf, get, isApiError, messageOf, post } from "@/lib/api";
 import { GOOGLE_ERROR_MESSAGES } from "../oauth-errors";
 
 /** GET /auth/signup-policy — apps/api/src/auth/auth.service.ts `signupPolicy()` */
@@ -43,7 +43,9 @@ function initialView(policy: SignupPolicy): View {
 
 /**
  * Registering signs the person in; the verification email goes out at the
- * same time (an invitation link already proves the address). What shows
+ * same time (an invitation link already proves the address). An address that
+ * already has an account is not signed in: its owner gets an email, and the
+ * page says to check the inbox (it never says whether the account exists). What shows
  * depends on the install's sign-up mode: the form, a waitlist form, an
  * "invitation needed" notice, or a closed notice.
  */
@@ -56,6 +58,7 @@ export function RegisterForm({ next, invite, error: initialError, policy }: { ne
   const [consent, setConsent] = useState(false);
   const [busy, setBusy] = useState(false);
   const [joined, setJoined] = useState(false);
+  const [checkInbox, setCheckInbox] = useState(false);
   const [error, setError] = useState<string | null>(initialError ? (ERROR_MESSAGES[initialError] ?? null) : null);
   const [fields, setFields] = useState<Record<string, string>>({});
   const signInHref = next === "/" ? "/login" : `/login?next=${encodeURIComponent(next)}`;
@@ -72,7 +75,16 @@ export function RegisterForm({ next, invite, error: initialError, policy }: { ne
         { name, email, password, marketingConsent: consent, ...(invite && policy.invite?.valid ? { inviteToken: invite } : {}) },
         { noAuthRedirect: true },
       );
-      window.location.assign(next);
+      // An address that already has an account gets the same answer but no session; its owner is emailed instead.
+      const signedIn = await get("/auth/me", { noAuthRedirect: true }).then(
+        () => true,
+        () => false,
+      );
+      if (signedIn) window.location.assign(next);
+      else {
+        setCheckInbox(true);
+        setBusy(false);
+      }
     } catch (err) {
       // The policy may have changed since the page loaded.
       if (isApiError(err) && err.code === "signup_waitlist") setView("waitlist");
@@ -148,6 +160,17 @@ export function RegisterForm({ next, invite, error: initialError, policy }: { ne
             Join the waitlist
           </Button>
         </form>
+        {footer}
+      </AuthCard>
+    );
+  }
+
+  if (checkInbox) {
+    return (
+      <AuthCard title="Check your inbox" description={`We've sent an email to ${email} with the next step.`}>
+        <p className="text-sm text-text-2">
+          If you already have an account with this address, sign in instead. Forgot your password? Reset it from the sign-in page.
+        </p>
         {footer}
       </AuthCard>
     );

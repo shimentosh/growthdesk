@@ -119,4 +119,9 @@ describe("permissions", () => {
   it("gives viewers read-only access", () => {
     expect(DEFAULT_ROLE_PERMISSIONS.viewer.every((p) => p.endsWith(".read") || p === "records.view_all")).toBe(true);
   });
+
+  it("keeps the audit log and billing away from viewers", () => {
+    expect(permissionsFor("viewer")).not.toContain("audit.read");
+    expect(permissionsFor("viewer")).not.toContain("billing.read");
+  });
 });

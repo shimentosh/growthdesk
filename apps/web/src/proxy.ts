@@ -1,4 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
+import { ANALYTICS_CONNECT_HOSTS, contentSecurityPolicy } from "@growthdesk/shared";
 
 /*
  * Next 16's request proxy (formerly middleware). First job: a visitor with no
@@ -62,9 +63,26 @@ function firstTouch(request: NextRequest): string | null {
   return value.length <= 2048 ? value : null;
 }
 
+/*
+ * Third job: the Content-Security-Policy, with a fresh nonce per request
+ * (packages/shared/src/csp.ts). Next reads the nonce from the policy on the
+ * request and puts it on every script it renders, so the policy has to be on
+ * both the request and the response. Every page is rendered per request
+ * already (the root layout reads cookies), so nothing static is lost.
+ */
+function withCsp(request: NextRequest): NextResponse {
+  const nonce = btoa(crypto.randomUUID());
+  const policy = contentSecurityPolicy({ nonce, dev: process.env.NODE_ENV === "development", connect: ANALYTICS_CONNECT_HOSTS });
+  const headers = new Headers(request.headers);
+  headers.set("content-security-policy", policy);
+  const response = NextResponse.next({ request: { headers } });
+  response.headers.set("Content-Security-Policy", policy);
+  return response;
+}
+
 function route(request: NextRequest): NextResponse {
   const { pathname, search } = request.nextUrl;
-  if (!isAppRoute(pathname) || request.cookies.has(SESSION_COOKIE)) return NextResponse.next();
+  if (!isAppRoute(pathname) || request.cookies.has(SESSION_COOKIE)) return withCsp(request);
 
   const login = request.nextUrl.clone();
   login.pathname = "/login";
