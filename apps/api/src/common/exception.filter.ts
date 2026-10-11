@@ -9,6 +9,7 @@ import {
 import type { Request, Response } from "express";
 import { ApiError, isApiError } from "./errors.js";
 import { TenantScopeError } from "../prisma/tenant-guard.js";
+import { reportError } from "./sentry.js";
 
 /*
  * Turns anything a handler threw into `{ error: { code, message, fields?, details? } }`.
@@ -94,7 +95,10 @@ export class ApiExceptionFilter implements ExceptionFilter {
 
     if (!isApiError(thrown) && !(thrown instanceof HttpException) && error.status >= 500) {
       // Includes upstream (payment provider) failures: logged in full here, generic for the client.
-      this.log.error(`unhandled on ${request.method} ${request.path}`, thrown instanceof Error ? thrown.stack : String(thrown));
+      // The request id is on the line (and echoed to the client), so a support report finds it.
+      const requestId = String(request.headers?.["x-request-id"] ?? "");
+      this.log.error(`unhandled on ${request.method} ${request.path} [request ${requestId}]`, thrown instanceof Error ? thrown.stack : String(thrown));
+      reportError(thrown, { requestId, tags: { method: request.method, route: request.route?.path ?? request.path } });
     }
 
     response.setHeader("x-content-type-options", "nosniff");

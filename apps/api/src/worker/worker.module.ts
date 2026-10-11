@@ -14,6 +14,7 @@ import { MaintenanceProcessorsModule } from "./maintenance.processors.js";
 import { MarketingProcessorsModule } from "../marketing/marketing.processors.js";
 import { PlatformMailProcessorsModule } from "../platform-mail/platform-mail.processors.js";
 import { PlatformGrowthProcessorsModule } from "../platform-growth/platform-growth.processors.js";
+import { WorkerOpsModule } from "./worker-ops.module.js";
 
 /** The background worker: every feature's services plus the BullMQ processors and recurring schedules. */
 @Module({
@@ -33,6 +34,7 @@ import { PlatformGrowthProcessorsModule } from "../platform-growth/platform-grow
     MarketingProcessorsModule,
     PlatformMailProcessorsModule,
     PlatformGrowthProcessorsModule,
+    WorkerOpsModule,
   ],
 })
 export class WorkerModule {}

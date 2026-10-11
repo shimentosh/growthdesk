@@ -87,6 +87,8 @@ model Session {
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId])
+  @@index([expiresAt])
+  @@index([revokedAt])
 }
 
 enum AuthTokenKind {
@@ -106,6 +108,7 @@ model AuthToken {
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId, kind])
+  @@index([expiresAt])
 }
 
 /// Failed sign-ins, keyed by email *and* client address so a stranger cannot
@@ -121,6 +124,7 @@ model SignInFailure {
   user    User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([email, ip])
+  @@index([lastAt])
 }
 
 /// Single-use two-factor recovery codes; only their SHA-256 is stored.
@@ -299,6 +303,7 @@ model BillingEvent {
 
   @@unique([provider, providerEventId])
   @@index([billingAccountId])
+  @@index([receivedAt])
 }
 
 /// Metered usage per workspace per calendar month (UTC, "YYYY-MM").
@@ -759,6 +764,7 @@ model Activity {
   @@index([workspaceId, contactId, occurredAt])
   @@index([workspaceId, dealId, occurredAt])
   @@index([workspaceId, type, occurredAt])
+  @@index([type, occurredAt])
 }
 
 enum ImportStatus {
@@ -1046,6 +1052,8 @@ model Task {
   dueAt          DateTime?
   remindAt       DateTime?
   reminderSentAt DateTime?
+  /// When `task.overdue` was emitted for the current due date (cleared when dueAt changes).
+  overdueSentAt  DateTime?
   completedAt    DateTime?
   completedById  String?    @db.Uuid
   assigneeId     String?    @db.Uuid
@@ -1071,6 +1079,8 @@ model Task {
   @@index([workspaceId, status, dueAt])
   @@index([workspaceId, contactId])
   @@index([status, remindAt])
+  /// The cross-tenant overdue sweep (TasksService.emitOverdue).
+  @@index([status, dueAt])
 }
 
 // ─── Mailboxes, templates ────────────────────────────────────────────────────
@@ -1154,6 +1164,7 @@ model MailboxDailyCount {
 
   @@unique([mailboxId, day])
   @@index([workspaceId, day])
+  @@index([day])
 }
 
 enum Channel {
@@ -1543,6 +1554,7 @@ model MessageEvent {
   @@unique([workspaceId, providerEventId])
   @@index([messageId])
   @@index([workspaceId, type, occurredAt])
+  @@index([occurredAt])
 }
 
 model ConversationNote {
@@ -1714,6 +1726,7 @@ model WorkflowRun {
   @@unique([workflowId, eventId])
   @@index([status, resumeAt])
   @@index([workspaceId, createdAt])
+  @@index([finishedAt])
 }
 
 /// Transactional outbox. Written in the same transaction as the change it
@@ -1733,6 +1746,8 @@ model DomainEvent {
 
   @@index([dispatchedAt, occurredAt])
   @@index([workspaceId, type, occurredAt])
+  /// task.overdue lookups by subject across workspaces, and call.completed checks.
+  @@index([type, subjectId])
 }
 
 model Notification {
@@ -1750,6 +1765,7 @@ model Notification {
   user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([workspaceId, userId, readAt])
+  @@index([createdAt])
 }
 
 // ─── Public API: keys, webhooks, idempotency ────────────────────────────────
@@ -1816,6 +1832,7 @@ model WebhookDelivery {
 
   @@unique([endpointId, eventId])
   @@index([workspaceId, createdAt])
+  @@index([status, createdAt])
 }
 
 model IdempotencyKey {
@@ -1830,6 +1847,7 @@ model IdempotencyKey {
   workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
 
   @@unique([workspaceId, key])
+  @@index([createdAt])
 }
 
 // ─── AI ──────────────────────────────────────────────────────────────────────
@@ -1849,6 +1867,7 @@ model AiUsage {
   workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
 
   @@index([workspaceId, createdAt])
+  @@index([createdAt])
 }
 
 model AiCache {
@@ -1863,6 +1882,7 @@ model AiCache {
   workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
 
   @@unique([workspaceId, key])
+  @@index([expiresAt])
 }
 
 // ─── Platform ────────────────────────────────────────────────────────────────

@@ -199,6 +199,7 @@ export class TasksService {
         if (input[key] !== undefined) (data as Record<string, unknown>)[key] = input[key];
       }
       if (input.remindAt !== undefined) data.reminderSentAt = null;
+      if (input.dueAt !== undefined) data.overdueSentAt = null;
       if (input.status && input.status !== existing.status) {
         data.status = input.status;
         data.completedAt = input.status === "done" ? new Date() : null;
@@ -242,34 +243,33 @@ export class TasksService {
     return due.length;
   }
 
-  /** Worker: emits task.overdue once per task (the event id is idempotent per task). */
+  /**
+   * Worker: emits task.overdue once per due date. `overdueSentAt` is claimed in the
+   * same transaction as the event, so two sweeps can never both announce a task,
+   * and rescheduling a task (update clears the flag) lets it go overdue again.
+   */
   async emitOverdue(now = new Date()) {
-    // Unscoped: a scheduler discovering due work across every workspace. Pages through the whole
-    // window by id so tasks already announced can never crowd newer ones out of a fixed batch.
     let emitted = 0;
-    let cursor: string | undefined;
     for (;;) {
+      // Unscoped: a scheduler discovering due work across every workspace (index Task(status, dueAt)).
+      // Claimed tasks drop out of the filter, so each pass sees only tasks not yet announced.
       const overdue = await this.prisma.unscoped.task.findMany({
-        where: { status: "open", dueAt: { lt: now, gt: new Date(now.getTime() - 7 * 86_400_000) } },
+        where: { status: "open", overdueSentAt: null, dueAt: { lt: now, gt: new Date(now.getTime() - 7 * 86_400_000) } },
         select: { id: true, workspaceId: true, contactId: true, assigneeId: true },
         orderBy: { id: "asc" },
         take: 500,
-        ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
       });
       if (!overdue.length) break;
-      cursor = overdue[overdue.length - 1]!.id;
-      // Unscoped: the batch spans workspaces; subject ids are task ids, unique across tenants.
-      const announced = await this.prisma.unscoped.domainEvent.findMany({
-        where: { type: "task.overdue", subjectId: { in: overdue.map((t) => t.id) } },
-        select: { subjectId: true },
-      });
-      const done = new Set(announced.map((e) => e.subjectId));
       for (const t of overdue) {
-        if (done.has(t.id)) continue;
-        await this.prisma.db.domainEvent.create({
-          data: { workspaceId: t.workspaceId, type: "task.overdue", subjectType: "task", subjectId: t.id, payload: { contactId: t.contactId, assigneeId: t.assigneeId } },
+        const sent = await this.prisma.db.$transaction(async (tx) => {
+          const claimed = await tx.task.updateMany({ where: { id: t.id, workspaceId: t.workspaceId, overdueSentAt: null }, data: { overdueSentAt: now } });
+          if (!claimed.count) return false;
+          await tx.domainEvent.create({
+            data: { workspaceId: t.workspaceId, type: "task.overdue", subjectType: "task", subjectId: t.id, payload: { contactId: t.contactId, assigneeId: t.assigneeId } },
+          });
+          return true;
         });
-        emitted += 1;
+        if (sent) emitted += 1;
       }
     }
     if (emitted) await this.events.kick();

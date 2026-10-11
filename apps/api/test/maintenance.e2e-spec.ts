@@ -4,6 +4,8 @@ import { Queues, type QueueName } from "../src/queues/queues.js";
 import { MailboxesProcessorsModule, MailProcessor } from "../src/mailboxes/mailboxes.processors.js";
 import { ImportsProcessor, MaintenanceProcessorsModule } from "../src/worker/maintenance.processors.js";
 import { hashToken, seal } from "../src/common/crypto.js";
+import { RetentionService } from "../src/worker/retention.service.js";
+import { Prisma } from "../src/generated/prisma/client.js";
 
 /*
  * The worker side: imports, mailbox sync and health checks, task reminders,
@@ -240,6 +242,14 @@ describe("Worker: imports, mailboxes and maintenance", () => {
       await run("maintenance", "task-overdue");
       const events = await t.prisma.db.domainEvent.findMany({ where: { workspaceId: w, type: "task.overdue", subjectId: task.id } });
       expect(events).toHaveLength(1);
+      // The flag on the task, not the event, remembers it: pruning the event does not announce it again.
+      expect((await t.prisma.db.task.findFirstOrThrow({ where: { id: task.id, workspaceId: w } })).overdueSentAt).not.toBeNull();
+      await t.prisma.db.domainEvent.deleteMany({ where: { workspaceId: w, type: "task.overdue", subjectId: task.id } });
+      expect((await run("maintenance", "task-overdue")).emitted).toBe(0);
+      // Rescheduling re-arms it: the new due date can go overdue again.
+      await owner.patch(`/v1/workspaces/${w}/tasks/${task.id}`).send({ dueAt: new Date(now - 60_000).toISOString() }).expect(200);
+      expect((await run("maintenance", "task-overdue")).emitted).toBe(1);
+      expect(await t.prisma.db.domainEvent.count({ where: { workspaceId: w, type: "task.overdue", subjectId: task.id } })).toBe(1);
     });
 
     it("expires an unpaid trial and emails the owner; data is kept", async () => {
@@ -316,6 +326,84 @@ describe("Worker: imports, mailboxes and maintenance", () => {
 
       // A second run finds nothing.
       const again = await run("maintenance", "cleanup");
+      expect(Object.values(again).every((n) => n === 0)).toBe(true);
+    });
+
+    it("prunes old history in batches, keeping what is recent, pending or still referenced", async () => {
+      const ancient = new Date(Date.now() - 1000 * DAY);
+      const fresh = new Date(Date.now() - DAY);
+      const db = t.prisma.db;
+      const ids = async <T extends { id: string }>(rows: Promise<T>[]) => (await Promise.all(rows)).map((r) => r.id);
+
+      // Domain events: old dispatched ones go, unless undispatched, still needed by a waiting run or a pending delivery, or a kept marker type.
+      const event = (data: { type?: string; occurredAt?: Date; dispatchedAt?: Date | null; workspaceId?: string }) =>
+        db.domainEvent.create({ data: { workspaceId: data.workspaceId ?? w, type: data.type ?? "contact.updated", occurredAt: data.occurredAt ?? ancient, dispatchedAt: data.dispatchedAt === undefined ? ancient : data.dispatchedAt } });
+      const doomedEvents = await ids([event({}), event({}), event({}), event({ workspaceId: other })]);
+      const [undispatched, freshEvent, marker, awaited, delivering] = (await ids([
+        event({ dispatchedAt: null }),
+        event({ occurredAt: fresh, dispatchedAt: fresh }),
+        event({ type: "call.completed" }),
+        event({}),
+        event({}),
+      ])) as [string, string, string, string, string];
+      const workflow = await db.workflow.create({ data: { workspaceId: w, name: "Retention test", trigger: "contact.updated" } });
+      await db.workflowRun.create({ data: { workspaceId: w, workflowId: workflow.id, eventId: awaited, status: "waiting", resumeAt: new Date(Date.now() + DAY) } });
+      const endpoint = await db.webhookEndpoint.create({ data: { workspaceId: w, url: "https://example.test/retention", secretSealed: seal("s"), events: ["contact.updated"] } });
+      await db.webhookDelivery.create({ data: { workspaceId: w, endpointId: endpoint.id, eventId: delivering, eventType: "contact.updated", status: "pending" } });
+
+      // Workflow runs: finished and old go; old but unfinished, or recently finished, stay.
+      const run1 = await db.workflowRun.create({ data: { workspaceId: w, workflowId: workflow.id, eventId: crypto.randomUUID(), status: "succeeded", finishedAt: ancient } });
+      const keptRun = await db.workflowRun.create({ data: { workspaceId: w, workflowId: workflow.id, eventId: crypto.randomUUID(), status: "failed", finishedAt: fresh } });
+
+      // Message events.
+      const contact = await db.contact.create({ data: { workspaceId: w, email: `retention-${RUN}@acme.test` } });
+      const convo = await db.conversation.create({ data: { workspaceId: w, channel: "email", contactId: contact.id, externalKey: `retention-${RUN}` } });
+      const message = await db.message.create({ data: { workspaceId: w, conversationId: convo.id, channel: "email", direction: "outbound", status: "sent", sentAt: ancient, openedAt: ancient } });
+      await db.messageEvent.create({ data: { workspaceId: w, messageId: message.id, type: "opened", occurredAt: ancient } });
+      await db.messageEvent.create({ data: { workspaceId: w, messageId: message.id, type: "clicked", occurredAt: fresh } });
+
+      // Timeline: only automated click entries are noise.
+      await db.activity.create({ data: { workspaceId: w, contactId: contact.id, type: "email.clicked", summary: "Clicked (old, automated)", occurredAt: ancient } });
+      await db.activity.create({ data: { workspaceId: w, contactId: contact.id, type: "email.clicked", summary: "Clicked (recent)", occurredAt: fresh } });
+      await db.activity.create({ data: { workspaceId: w, contactId: contact.id, type: "email.sent", summary: "Sent (old, kept)", occurredAt: ancient } });
+      await db.activity.create({ data: { workspaceId: w, contactId: contact.id, actorId: owner.userId, type: "note.added", summary: "A note (old, kept)", occurredAt: ancient } });
+
+      // AI usage and billing webhooks.
+      await db.aiUsage.create({ data: { workspaceId: w, feature: "x", provider: "none", model: "m", createdAt: ancient } });
+      await db.aiUsage.create({ data: { workspaceId: w, feature: "x", provider: "none", model: "m", createdAt: fresh } });
+      await db.billingEvent.create({ data: { provider: "stripe", providerEventId: `evt_old_${RUN}`, type: "invoice.paid", payload: {}, receivedAt: ancient, processedAt: ancient } });
+      await db.billingEvent.create({ data: { provider: "stripe", providerEventId: `evt_err_${RUN}`, type: "invoice.paid", payload: {}, receivedAt: ancient, processedAt: ancient, error: "boom" } });
+      await db.billingEvent.create({ data: { provider: "stripe", providerEventId: `evt_new_${RUN}`, type: "invoice.paid", payload: {}, receivedAt: fresh, processedAt: fresh } });
+
+      // Marketing sends: every row of a campaign that finished long ago; none of a recent one. The counters stay.
+      const oldCampaign = await db.marketingCampaign.create({ data: { workspaceId: w, name: "Old news", status: "sent", completedAt: ancient, sentCount: 1 } });
+      const newCampaign = await db.marketingCampaign.create({ data: { workspaceId: w, name: "New news", status: "sent", completedAt: fresh, sentCount: 1 } });
+      await db.marketingSend.create({ data: { workspaceId: w, campaignId: oldCampaign.id, contactId: contact.id, email: contact.email!, status: "sent", sentAt: ancient } });
+      await db.marketingSend.create({ data: { workspaceId: w, campaignId: newCampaign.id, contactId: contact.id, email: contact.email!, status: "sent", sentAt: fresh } });
+
+      // A tiny batch size proves the loop: three rows, two per statement.
+      const deleted = await t.app.get(RetentionService).deleteInBatches("DomainEvent", Prisma.sql`t."id"::text IN (${Prisma.join(doomedEvents.slice(0, 3))})`, 2);
+      expect(deleted).toBe(3);
+      // The job takes the fourth (another workspace's: the sweep is platform-wide).
+
+      const counts = await run("maintenance", "retention");
+      expect(counts).toMatchObject({ domainEvents: 1, workflowRuns: 1, messageEvents: 1, activityNoise: 1, aiUsage: 1, billingEvents: 1, marketingSends: 1, stepExecutions: 0 });
+
+      const left = await t.prisma.unscoped.domainEvent.findMany({ where: { id: { in: [...doomedEvents, undispatched, freshEvent, marker, awaited, delivering] } }, select: { id: true } });
+      expect(left.map((e) => e.id).sort()).toEqual([undispatched, freshEvent, marker, awaited, delivering].sort());
+      expect(await db.workflowRun.count({ where: { workspaceId: w, id: { in: [run1.id, keptRun.id] } } })).toBe(1);
+      expect(await db.messageEvent.count({ where: { workspaceId: w, messageId: message.id } })).toBe(1);
+      expect(await db.message.findFirst({ where: { id: message.id, workspaceId: w } })).toMatchObject({ openedAt: ancient });
+      expect((await db.activity.findMany({ where: { workspaceId: w, contactId: contact.id }, select: { summary: true } })).map((a) => a.summary).sort()).toEqual(
+        ["A note (old, kept)", "Clicked (recent)", "Sent (old, kept)"].sort(),
+      );
+      expect(await db.aiUsage.count({ where: { workspaceId: w } })).toBe(1);
+      expect(await db.billingEvent.count({ where: { providerEventId: { in: [`evt_err_${RUN}`, `evt_new_${RUN}`] } } })).toBe(2);
+      expect(await db.marketingSend.count({ where: { workspaceId: w, campaignId: oldCampaign.id } })).toBe(0);
+      expect(await db.marketingSend.count({ where: { workspaceId: w, campaignId: newCampaign.id } })).toBe(1);
+      expect((await db.marketingCampaign.findFirstOrThrow({ where: { id: oldCampaign.id, workspaceId: w } })).sentCount).toBe(1);
+
+      const again = await run("maintenance", "retention");
       expect(Object.values(again).every((n) => n === 0)).toBe(true);
     });
   });

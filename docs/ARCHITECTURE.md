@@ -99,6 +99,9 @@ Each area registers processors in its `*.processors.ts` module (imported only by
 `@Processor(QUEUES.x)` classes extending `WorkerHost`, and registers recurring schedules with
 `queue.upsertJobScheduler(...)` in `onModuleInit` — guarded by `config.RUN_WORKERS` so the API process
 never schedules. Jobs are idempotent: the database is the source of truth and processors re-check state.
+The worker also runs `WorkerOpsModule` (src/worker/worker-ops.module.ts): one failed-job listener for every
+queue (logs each failed attempt with queue, job, workspaceId and error; Sentry on the last one) and a heartbeat
+in Redis that `/health` reports. Log lines carry the request id via `common/logger.ts`; no call site passes it.
 
 ## Conventions
 

@@ -16,6 +16,9 @@ COPY tsconfig.base.json ./
 COPY packages/shared packages/shared
 COPY apps/web apps/web
 ENV NEXT_TELEMETRY_DISABLED=1
+# Optional browser error reporting (src/instrumentation-client.ts); inlined by `next build`, blank = none.
+ARG NEXT_PUBLIC_SENTRY_DSN=
+ENV NEXT_PUBLIC_SENTRY_DSN=${NEXT_PUBLIC_SENTRY_DSN}
 RUN pnpm --filter @growthdesk/shared run build && pnpm --filter @growthdesk/web run build
 
 FROM ${NODE_IMAGE} AS runtime
