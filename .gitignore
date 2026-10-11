@@ -18,3 +18,4 @@ apps/admin/playwright-report/
 dist-worker/
 .env.production
 backups/
+.claude/worktrees/

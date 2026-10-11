@@ -13,8 +13,11 @@ export default async function setup(): Promise<void> {
   } finally {
     await admin.end();
   }
-  execFileSync(path.resolve("node_modules/.bin/prisma"), ["migrate", "deploy"], {
+  // On Windows the bin entry is a .cmd shim, which only runs through a shell.
+  const windows = process.platform === "win32";
+  execFileSync(path.resolve(`node_modules/.bin/prisma${windows ? ".cmd" : ""}`), ["migrate", "deploy"], {
     env: { ...process.env, DATABASE_URL: TEST_DATABASE_URL },
     stdio: ["ignore", "ignore", "inherit"],
+    shell: windows,
   });
 }
