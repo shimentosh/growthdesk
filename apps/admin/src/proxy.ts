@@ -4,8 +4,8 @@ import { PATH_HEADER, SESSION_COOKIE } from "@/lib/constants";
 /*
  * Next 16's request proxy (formerly middleware). Every page of the operator
  * console needs a signed-in person, so a visitor with no session cookie goes
- * to /login?next=… before any app code renders. /login and the /api proxy are
- * the only exceptions.
+ * to /login?next=… before any app code renders. /login, the /api proxy and the
+ * container healthcheck (/healthz) are the only exceptions.
  *
  * It only checks that the cookie exists. A stale cookie gets through here; the
  * (panel) layout's /auth/me call answers 401 and redirects to the same place,
@@ -13,7 +13,7 @@ import { PATH_HEADER, SESSION_COOKIE } from "@/lib/constants";
  */
 
 function isPublic(pathname: string): boolean {
-  return pathname === "/login" || pathname.startsWith("/login/") || pathname === "/api" || pathname.startsWith("/api/");
+  return pathname === "/login" || pathname.startsWith("/login/") || pathname === "/api" || pathname.startsWith("/api/") || pathname === "/healthz";
 }
 
 export function proxy(request: NextRequest) {

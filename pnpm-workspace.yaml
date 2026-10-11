@@ -14,6 +14,8 @@ allowBuilds:
   sharp: true
   unrs-resolver: false
   "@swc/core": true
+  # Sentry's CLI binary uploads source maps at build time; Growthdesk does not use it (docs/DEPLOYMENT.md → Error reporting).
+  "@sentry/cli": false
 
 # mailparser 3.9.23 pins nodemailer 10.0.1, whose address parser has two
 # quadratic-backtracking DoS advisories (GHSA-v53p-9fqp-m79j, GHSA-prgh-xp8r-p3m5).

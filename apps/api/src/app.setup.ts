@@ -1,11 +1,15 @@
+import { Logger } from "@nestjs/common";
 import type { NestExpressApplication } from "@nestjs/platform-express";
 import { DocumentBuilder, SwaggerModule } from "@nestjs/swagger";
 import cookieParser from "cookie-parser";
 import helmet from "helmet";
+import { assignRequestId, requestLogScope } from "./common/logger.js";
 
 /** Shared by main.ts and the e2e tests so both run the same HTTP stack. */
 export function configureApp(app: NestExpressApplication) {
   app.disable("x-powered-by");
+  // x-request-id first, so every answer carries one (common/logger.ts).
+  app.use(assignRequestId);
   app.use(helmet({ contentSecurityPolicy: false, crossOriginResourcePolicy: false, hsts: process.env.NODE_ENV === "production" }));
   app.use(cookieParser());
   // CSV imports arrive as JSON text; 20 MB covers the 15 MB file limit.
@@ -13,6 +17,8 @@ export function configureApp(app: NestExpressApplication) {
   app.useBodyParser("urlencoded", { extended: false, limit: "1mb" });
   // Amazon SNS posts bounce/complaint notifications as text/plain JSON (marketing webhooks).
   app.useBodyParser("text", { type: "text/plain", limit: "256kb" });
+  // After the body parsers: from here on every log line carries the request id.
+  app.use(requestLogScope(new Logger("http")));
   app.setGlobalPrefix("v1");
   app.enableShutdownHooks();
 

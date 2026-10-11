@@ -3,6 +3,8 @@
  * kept apart from Nest so they can be unit-tested.
  */
 
+import type { AppConfig } from "../config/config.js";
+
 const DAY = 86_400_000;
 
 /**
@@ -41,6 +43,47 @@ export function retentionCutoffs(now: Date): RetentionCutoffs {
   out.mailboxDay = out.mailboxDailyCounts.toISOString().slice(0, 10);
   return out;
 }
+
+/**
+ * History tables pruned by the daily `retention` job (worker/retention.service.ts),
+ * each with the env setting that holds its retention in days (config.ts; 0 = keep).
+ * Unlike RETENTION above these rows still mean something to a customer, so the
+ * periods are long, configurable, and each rule only takes rows nothing reads any more.
+ */
+export const DATA_RETENTION = {
+  domainEvents: "RETENTION_DOMAIN_EVENT_DAYS",
+  messageEvents: "RETENTION_MESSAGE_EVENT_DAYS",
+  workflowRuns: "RETENTION_WORKFLOW_RUN_DAYS",
+  stepExecutions: "RETENTION_STEP_EXECUTION_DAYS",
+  activityNoise: "RETENTION_ACTIVITY_NOISE_DAYS",
+  aiUsage: "RETENTION_AI_USAGE_DAYS",
+  billingEvents: "RETENTION_BILLING_EVENT_DAYS",
+  marketingSends: "RETENTION_MARKETING_SEND_DAYS",
+} as const satisfies Record<string, keyof AppConfig>;
+
+export type DataRetentionKey = keyof typeof DATA_RETENTION;
+type DataRetentionSetting = (typeof DATA_RETENTION)[DataRetentionKey];
+/** For each history table, the moment before which rows may go; null = kept forever. */
+export type DataRetentionCutoffs = Record<DataRetentionKey, Date | null>;
+
+export function dataRetentionCutoffs(config: Pick<AppConfig, DataRetentionSetting>, now: Date): DataRetentionCutoffs {
+  const out = {} as DataRetentionCutoffs;
+  for (const [k, setting] of Object.entries(DATA_RETENTION) as [DataRetentionKey, DataRetentionSetting][]) {
+    const days = config[setting];
+    out[k] = days > 0 ? new Date(now.getTime() - days * DAY) : null;
+  }
+  return out;
+}
+
+/**
+ * Domain events that double as "already happened" markers and so are never
+ * pruned: CallsService.settle checks for call.completed before writing the
+ * timeline entry and the event, and a call's outcome can be edited much later.
+ */
+export const KEPT_EVENT_TYPES = ["call.completed"] as const;
+
+/** Timeline entries written automatically (no actor) that the activity rule may prune. Everything else is kept. */
+export const NOISE_ACTIVITY_TYPES = ["email.clicked"] as const;
 
 /** BullMQ: true when this run is the job's last attempt (no retry follows a throw). */
 export function isFinalAttempt(job: { attemptsMade: number; opts: { attempts?: number } }): boolean {

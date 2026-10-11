@@ -6,13 +6,13 @@ import type { NestExpressApplication } from "@nestjs/platform-express";
 import { AppModule } from "./app.module.js";
 import { configureApp } from "./app.setup.js";
 import { loadConfig } from "./config/config.js";
+import { createLogger } from "./common/logger.js";
+import { initSentry } from "./common/sentry.js";
 
 async function bootstrap() {
   const config = loadConfig();
-  const app = await NestFactory.create<NestExpressApplication>(AppModule, {
-    rawBody: true,
-    logger: config.LOG_LEVEL === "debug" ? ["debug", "log", "warn", "error"] : config.LOG_LEVEL === "log" ? ["log", "warn", "error"] : config.LOG_LEVEL === "warn" ? ["warn", "error"] : ["error"],
-  });
+  await initSentry(config, "api");
+  const app = await NestFactory.create<NestExpressApplication>(AppModule, { rawBody: true, logger: createLogger(config, "api") });
   configureApp(app);
   // The API binds to loopback by default: browsers reach it through the web app's /api proxy.
   await app.listen(config.API_PORT, config.API_HOST);

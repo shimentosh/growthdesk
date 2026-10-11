@@ -9,12 +9,22 @@ import { z } from "zod";
 
 const blankAsUndefined = (v: unknown) => (typeof v === "string" && v.trim() === "" ? undefined : v);
 const opt = () => z.preprocess(blankAsUndefined, z.string().optional());
+/** Retention in days; blank means the default (a bare z.coerce would read "" as 0 = keep forever). */
+const days = (fallback: number) => z.preprocess(blankAsUndefined, z.coerce.number().int().min(0).default(fallback));
 const bool = (fallback: boolean) =>
   z.preprocess((v) => (blankAsUndefined(v) === undefined ? fallback : String(v) === "true" || String(v) === "1"), z.boolean());
 
 const Env = z.object({
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
   LOG_LEVEL: z.enum(["debug", "log", "warn", "error"]).default("log"),
+  /** json = one JSON object per line (log shippers); pretty = Nest's coloured lines. Default: json in production. */
+  LOG_FORMAT: z.preprocess(blankAsUndefined, z.enum(["json", "pretty"]).optional()),
+  /** Optional error reporting (Sentry or a compatible server such as GlitchTip). Off unless set. */
+  SENTRY_DSN: opt(),
+  /** Sentry's environment tag. Defaults to NODE_ENV. */
+  SENTRY_ENVIRONMENT: opt(),
+  /** Sentry's release tag, e.g. the image tag or git sha. */
+  SENTRY_RELEASE: opt(),
   API_PORT: z.coerce.number().int().default(3601),
   API_HOST: z.string().default("127.0.0.1"),
   /** Where people open the app. Links in emails, tracking URLs and webhook URLs are built from it. */
@@ -71,6 +81,31 @@ const Env = z.object({
    * so the send flow can be tried locally. Ignored when NODE_ENV=production.
    */
   MARKETING_SKIP_DNS_CHECKS: bool(false),
+
+  /*
+   * Data retention (days) for the high-volume history tables, pruned daily by
+   * the worker's `retention` job (worker/retention.service.ts). 0 keeps rows
+   * forever. Customer records themselves (contacts, messages, deals, notes)
+   * are never pruned.
+   */
+  /** Domain events, once dispatched and no workflow run or webhook delivery still needs them. */
+  RETENTION_DOMAIN_EVENT_DAYS: days(30),
+  /** Per-message delivery/open/click events (Message keeps its own sentAt/openedAt/… columns). */
+  RETENTION_MESSAGE_EVENT_DAYS: days(365),
+  /** Finished workflow runs (the Runs tab of a workflow). */
+  RETENTION_WORKFLOW_RUN_DAYS: days(90),
+  /** Step executions of finished enrollments in completed or canceled campaigns. Kept by default: the per-step report reads them. */
+  RETENTION_STEP_EXECUTION_DAYS: days(0),
+  /** Automated open/click entries on the contact timeline. Every other timeline entry is kept. */
+  RETENTION_ACTIVITY_NOISE_DAYS: days(365),
+  /** Per-call AI usage rows (monthly allowances are counted separately, in UsageCounter). */
+  RETENTION_AI_USAGE_DAYS: days(400),
+  /** Processed payment-provider webhooks (the raw log; invoices and subscriptions are kept). */
+  RETENTION_BILLING_EVENT_DAYS: days(400),
+  /** Per-recipient rows of marketing campaigns that finished this long ago. Their counters stay on the campaign. */
+  RETENTION_MARKETING_SEND_DAYS: days(730),
+  /** Rows deleted per statement, so a large backlog never holds long locks. */
+  RETENTION_BATCH_SIZE: z.preprocess(blankAsUndefined, z.coerce.number().int().min(100).max(50_000).default(5000)),
 });
 
 export type AppConfig = z.infer<typeof Env> & { allowedOrigins: string[] };

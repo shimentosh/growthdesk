@@ -2,6 +2,7 @@ import { Global, Inject, Injectable, Module, type OnModuleDestroy } from "@nestj
 import { BullModule, getQueueToken } from "@nestjs/bullmq";
 import type { JobsOptions, Queue } from "bullmq";
 import { APP_CONFIG, type AppConfig, loadConfig } from "../config/config.js";
+import { SharedRedis } from "./redis.js";
 
 /*
  * Background work runs on BullMQ (Redis). The database stays the source of
@@ -122,8 +123,8 @@ export class Queues implements OnModuleDestroy {
     }),
     ...ALL_QUEUES.map((name) => BullModule.registerQueue({ name })),
   ],
-  providers: [Queues],
-  exports: [Queues, BullModule],
+  providers: [Queues, SharedRedis],
+  exports: [Queues, SharedRedis, BullModule],
 })
 export class QueuesModule {}
 

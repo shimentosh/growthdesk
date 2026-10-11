@@ -15,6 +15,7 @@ import { RevenueModule } from "../revenue/revenue.module.js";
 import { RevenueService } from "../revenue/revenue.service.js";
 import { isApiError } from "../common/errors.js";
 import { isFinalAttempt, IMPORT_STALL_MS, retentionCutoffs, stalledImports } from "./maintenance-policy.js";
+import { RetentionService } from "./retention.service.js";
 
 /*
  * The `imports` queue (owned by CRM):
@@ -36,6 +37,9 @@ import { isFinalAttempt, IMPORT_STALL_MS, retentionCutoffs, stalledImports } fro
  *                                    also queued once at start-up while no snapshot exists. History is never back-filled.
  *   cleanup           daily 03:00  — deletes rows past their usefulness (sessions, tokens, idempotency keys,
  *                                    finished webhook deliveries, read notifications…; see RETENTION)
+ *   retention         daily 03:20  — prunes old history (domain/message events, workflow runs, AI usage,
+ *                                    billing webhooks, marketing sends…; DATA_RETENTION, RetentionService)
+ * Both delete in batches (RetentionService.deleteInBatches).
  * Every job is safe to run twice: each re-reads state and claims work atomically.
  */
 
@@ -110,6 +114,7 @@ export class MaintenanceProcessor extends WorkerHost {
     private readonly tasks: TasksService,
     private readonly billing: BillingService,
     private readonly revenue: RevenueService,
+    private readonly retention: RetentionService,
   ) {
     super();
   }
@@ -130,6 +135,8 @@ export class MaintenanceProcessor extends WorkerHost {
         return this.revenue.snapshot();
       case "cleanup":
         return this.cleanup();
+      case "retention":
+        return this.retention.prune();
       default:
         this.log.warn(`unknown maintenance job ${job.name}`);
         return null;
@@ -161,21 +168,21 @@ export class MaintenanceProcessor extends WorkerHost {
    */
   async cleanup(now = new Date()) {
     const c = retentionCutoffs(now);
-    const db = this.prisma.db;
-    // Unscoped below by necessity: one retention sweep across every workspace. Each delete only matches rows past their cut-off; nothing is read back.
-    const all = this.prisma.unscoped;
+    const del = (table: Parameters<RetentionService["deleteInBatches"]>[0], where: Prisma.Sql) => this.retention.deleteInBatches(table, where);
+    // Batched raw deletes across every workspace: one retention sweep. Each only matches rows past their cut-off; nothing is read back.
     const counts = {
-      sessions: (await db.session.deleteMany({ where: { OR: [{ expiresAt: { lt: c.sessions } }, { revokedAt: { lt: c.sessions } }] } })).count,
-      authTokens: (await db.authToken.deleteMany({ where: { expiresAt: { lt: c.authTokens } } })).count,
-      signInFailures: (await db.signInFailure.deleteMany({ where: { lastAt: { lt: c.signInFailures } } })).count,
-      idempotencyKeys: (await all.idempotencyKey.deleteMany({ where: { createdAt: { lt: c.idempotencyKeys } } })).count,
-      webhookDeliveries: (await all.webhookDelivery.deleteMany({ where: { status: { in: ["succeeded", "failed"] }, createdAt: { lt: c.webhookDeliveries } } })).count,
-      notifications: (await all.notification.deleteMany({ where: { readAt: { not: null }, createdAt: { lt: c.readNotifications } } })).count,
-      aiCache: (await all.aiCache.deleteMany({ where: { expiresAt: { lt: now } } })).count,
-      mailboxDailyCounts: (await all.mailboxDailyCount.deleteMany({ where: { day: { lt: c.mailboxDay } } })).count,
-      emailLog: (await db.emailLog.deleteMany({ where: { createdAt: { lt: c.emailLog } } })).count,
+      sessions: await del("Session", Prisma.sql`t."expiresAt" < ${c.sessions} OR t."revokedAt" < ${c.sessions}`),
+      authTokens: await del("AuthToken", Prisma.sql`t."expiresAt" < ${c.authTokens}`),
+      signInFailures: await del("SignInFailure", Prisma.sql`t."lastAt" < ${c.signInFailures}`),
+      idempotencyKeys: await del("IdempotencyKey", Prisma.sql`t."createdAt" < ${c.idempotencyKeys}`),
+      webhookDeliveries: await del("WebhookDelivery", Prisma.sql`t."status" IN ('succeeded', 'failed') AND t."createdAt" < ${c.webhookDeliveries}`),
+      notifications: await del("Notification", Prisma.sql`t."createdAt" < ${c.readNotifications} AND t."readAt" IS NOT NULL`),
+      aiCache: await del("AiCache", Prisma.sql`t."expiresAt" < ${now}`),
+      mailboxDailyCounts: await del("MailboxDailyCount", Prisma.sql`t."day" < ${c.mailboxDay}`),
+      emailLog: await del("EmailLog", Prisma.sql`t."createdAt" < ${c.emailLog}`),
+      // Unscoped by necessity (as above); clears a column, never deletes the import.
       importRows: (
-        await all.import.updateMany({
+        await this.prisma.unscoped.import.updateMany({
           where: { status: { in: ["completed", "failed"] }, finishedAt: { lt: c.importRows }, rows: { not: Prisma.DbNull } },
           data: { rows: Prisma.DbNull },
         })
@@ -209,6 +216,7 @@ export class MaintenanceSchedules implements OnModuleInit {
     await maintenance.upsertJobScheduler("billing-reconcile", { pattern: "30 3 * * *", tz: "UTC" }, { name: "billing-reconcile", data: {}, opts });
     await maintenance.upsertJobScheduler("billing-notices", { pattern: "10 * * * *", tz: "UTC" }, { name: "billing-notices", data: {}, opts });
     await maintenance.upsertJobScheduler("cleanup", { pattern: "0 3 * * *", tz: "UTC" }, { name: "cleanup", data: {}, opts });
+    await maintenance.upsertJobScheduler("retention", { pattern: "20 3 * * *", tz: "UTC" }, { name: "retention", data: {}, opts });
     await maintenance.upsertJobScheduler("revenue-snapshot", { pattern: "15 0 * * *", tz: "UTC" }, { name: "revenue-snapshot", data: {}, opts });
     // A fresh install starts its MRR series today instead of waiting for 00:15; earlier days stay empty.
     if ((await this.prisma.db.platformRevenueSnapshot.count()) === 0) {
@@ -220,6 +228,6 @@ export class MaintenanceSchedules implements OnModuleInit {
 
 @Module({
   imports: [CrmModule, PipelineModule, BillingModule, RevenueModule],
-  providers: [ImportsProcessor, MaintenanceProcessor, MaintenanceSchedules],
+  providers: [ImportsProcessor, MaintenanceProcessor, MaintenanceSchedules, RetentionService],
 })
 export class MaintenanceProcessorsModule {}

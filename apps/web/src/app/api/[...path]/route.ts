@@ -66,6 +66,10 @@ async function proxy(request: Request): Promise<Response> {
   // address from the right of this chain, knowing how many hops it runs behind.
   const forwardedFor = request.headers.get("x-forwarded-for");
   if (forwardedFor) headers.set("x-forwarded-for", forwardedFor);
+  // The API echoes and logs this id (docs/DEPLOYMENT.md → Logs). A proxy in front may set it
+  // (nginx $request_id); otherwise one is made here so this hop's own errors carry it too.
+  const requestId = request.headers.get("x-request-id") || crypto.randomUUID();
+  headers.set("x-request-id", requestId);
 
   // Raw bytes, read whole: a streamed body needs duplex negotiation, and
   // nothing this API accepts is large enough to be worth it.
@@ -81,10 +85,10 @@ async function proxy(request: Request): Promise<Response> {
       cache: "no-store",
     });
   } catch (e) {
-    console.error("[api proxy] could not reach the API at", target(), "-", e instanceof Error ? e.message : e);
+    console.error(`[api proxy] request ${requestId}: could not reach the API at`, target(), "-", e instanceof Error ? e.message : e);
     return Response.json(
       { error: { code: "api_unreachable", message: "Could not reach the Growthdesk API. Is it running?" } },
-      { status: 502, headers: { "cache-control": "no-store" } },
+      { status: 502, headers: { "cache-control": "no-store", "x-request-id": requestId } },
     );
   }
 

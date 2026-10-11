@@ -1,4 +1,40 @@
-import { IMPORT_STALL_MS, RETENTION, isFinalAttempt, retentionCutoffs, stalledImports } from "./maintenance-policy.js";
+import { DATA_RETENTION, IMPORT_STALL_MS, RETENTION, dataRetentionCutoffs, isFinalAttempt, retentionCutoffs, stalledImports } from "./maintenance-policy.js";
+import { loadConfig } from "../config/config.js";
+
+describe("dataRetentionCutoffs", () => {
+  const now = new Date("2026-10-10T12:00:00.000Z");
+  const config = loadConfig({ DATABASE_URL: "postgresql://x", ENCRYPTION_KEY: Buffer.alloc(32, 1).toString("base64") } as NodeJS.ProcessEnv);
+
+  it("has defaults for every table, long enough to cover reports and retries", () => {
+    const c = dataRetentionCutoffs(config, now);
+    const days = (d: Date | null) => (d ? (now.getTime() - d.getTime()) / 86_400_000 : null);
+    expect(days(c.domainEvents)).toBe(30);
+    expect(days(c.messageEvents)).toBe(365);
+    expect(days(c.workflowRuns)).toBe(90);
+    expect(days(c.activityNoise)).toBe(365);
+    expect(days(c.aiUsage)).toBeGreaterThan(366); // a full year of monthly AI reports
+    expect(days(c.billingEvents)).toBeGreaterThan(366);
+    expect(days(c.marketingSends)).toBe(730);
+    // The per-step campaign report reads step executions, so they are kept unless an operator opts in.
+    expect(c.stepExecutions).toBeNull();
+  });
+
+  it("reads each setting, and 0 keeps rows forever", () => {
+    const c = dataRetentionCutoffs({ ...config, RETENTION_DOMAIN_EVENT_DAYS: 7, RETENTION_MESSAGE_EVENT_DAYS: 0 }, now);
+    expect(c.domainEvents?.toISOString()).toBe("2026-10-03T12:00:00.000Z");
+    expect(c.messageEvents).toBeNull();
+    expect(Object.keys(c).sort()).toEqual(Object.keys(DATA_RETENTION).sort());
+  });
+
+  it("reads a blank setting (compose passes `${VAR:-}`) as the default, not as 0", () => {
+    const blank = loadConfig({ DATABASE_URL: "postgresql://x", ENCRYPTION_KEY: Buffer.alloc(32, 1).toString("base64"), RETENTION_DOMAIN_EVENT_DAYS: "" } as NodeJS.ProcessEnv);
+    expect(blank.RETENTION_DOMAIN_EVENT_DAYS).toBe(30);
+  });
+
+  it("refuses a negative setting at boot", () => {
+    expect(() => loadConfig({ DATABASE_URL: "postgresql://x", ENCRYPTION_KEY: Buffer.alloc(32, 1).toString("base64"), RETENTION_AI_USAGE_DAYS: "-1" } as NodeJS.ProcessEnv)).toThrow(/RETENTION_AI_USAGE_DAYS/);
+  });
+});
 
 describe("retentionCutoffs", () => {
   const now = new Date("2026-10-10T12:00:00.000Z");
