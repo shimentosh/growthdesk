@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, type FormEvent } from "react";
+import { useState, type FormEvent } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { History, ListFilter, Play, Settings2, Trash2, Workflow as WorkflowIcon, Zap } from "lucide-react";
 import type { z } from "zod";
@@ -25,6 +25,7 @@ import { ConditionEditor } from "@/components/automation/ConditionEditor";
 import { RunsList } from "@/components/automation/RunsList";
 import { TriggerLabel } from "@/components/automation/glyphs";
 import { formatNumber } from "@/lib/format";
+import { useUnsavedChanges } from "@/lib/unsaved";
 import { useApiMutation, useApiQuery } from "@/lib/query";
 import { useFormat, useWorkspace } from "@/lib/session";
 import { TRIGGER_LABELS, type Workflow, type WorkflowAction, type WorkflowCondition } from "@/lib/types/automation";
@@ -74,13 +75,8 @@ function Editor({ workflow }: { workflow: Workflow | null }) {
   const dirty = JSON.stringify(baseline) !== JSON.stringify(draft);
   const set = <K extends keyof Draft>(k: K, v: Draft[K]) => setDraft((d) => ({ ...d, [k]: v }));
 
-  // Leaving with unsaved edits asks first (reloads and closing the tab; in-app links are not intercepted).
-  useEffect(() => {
-    if (!dirty || !canWrite) return;
-    const warn = (e: BeforeUnloadEvent) => e.preventDefault();
-    window.addEventListener("beforeunload", warn);
-    return () => window.removeEventListener("beforeunload", warn);
-  }, [dirty, canWrite]);
+  // Leaving with unsaved edits asks first: reloads, closing the tab, and in-app links (the sidebar included).
+  useUnsavedChanges(dirty && canWrite, "Your changes to this workflow will be lost.");
 
   const save = useApiMutation<Workflow, WorkflowInputT>({
     method: workflow ? "PATCH" : "POST",

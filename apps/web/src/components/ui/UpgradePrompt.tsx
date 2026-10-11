@@ -39,6 +39,7 @@ export function UpgradePrompt({
   details,
   message,
   bare,
+  upgradeHref,
   className,
 }: {
   /** The ApiError from a 402 (its `details` carry the numbers). */
@@ -49,6 +50,8 @@ export function UpgradePrompt({
   message?: string;
   /** No card chrome (inside a dialog). */
   bare?: boolean;
+  /** Where "See plans and upgrade" goes when there is no current workspace (e.g. onboarding). */
+  upgradeHref?: string;
   className?: string;
 }) {
   const ws = useOptionalWorkspace();
@@ -72,6 +75,10 @@ export function UpgradePrompt({
           <div className="mt-4 flex flex-wrap items-center gap-2">
             {ws && canBilling ? (
               <Button variant="primary" href={ws.href("/billing")} onClick={closeUpgrade}>
+                See plans and upgrade
+              </Button>
+            ) : !ws && upgradeHref ? (
+              <Button variant="primary" href={upgradeHref}>
                 See plans and upgrade
               </Button>
             ) : (

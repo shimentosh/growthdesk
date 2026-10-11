@@ -23,6 +23,8 @@ type Props = {
   pipelineId?: string;
   /** Preselect a stage (the column's "+" button). */
   stageId?: string;
+  /** Prefill the contact (and their company), e.g. "New deal" from a conversation or a contact record. */
+  contact?: { id: string; label: string; company?: { id: string; name: string } | null } | null;
   onCreated?: (deal: DealDetail) => void;
 };
 
@@ -32,7 +34,7 @@ export function NewDealModal(props: Props) {
   return <NewDealDialog key={key} {...props} />;
 }
 
-function NewDealDialog({ open, onOpenChange, pipelines, pipelineId: initialPipeline, stageId: initialStage, onCreated }: Props) {
+function NewDealDialog({ open, onOpenChange, pipelines, pipelineId: initialPipeline, stageId: initialStage, contact, onCreated }: Props) {
   const ws = useWorkspace();
   const currencyOptions = useMemo(() => currencies().map((c) => ({ value: c.code, label: c.label })), []);
   const [name, setName] = useState("");
@@ -42,16 +44,17 @@ function NewDealDialog({ open, onOpenChange, pipelines, pipelineId: initialPipel
   const [stageId, setStageId] = useState(initialStage ?? firstOpen(pipeline));
   const [value, setValue] = useState("");
   const [currency, setCurrency] = useState(ws.currency);
-  const [contactId, setContactId] = useState<string | null>(null);
-  const [companyId, setCompanyId] = useState<string | null>(null);
-  const [companyLabel, setCompanyLabel] = useState<string | null>(null);
+  const [contactId, setContactId] = useState<string | null>(contact?.id ?? null);
+  const [companyId, setCompanyId] = useState<string | null>(contact?.company?.id ?? null);
+  const [companyLabel, setCompanyLabel] = useState<string | null>(contact?.company?.name ?? null);
   const [ownerId, setOwnerId] = useState<string | null>(null);
   const [closeDate, setCloseDate] = useState("");
   const [description, setDescription] = useState("");
 
   const create = useApiMutation<DealDetail, Record<string, unknown>>({
     path: ws.path("/deals"),
-    invalidate: [ws.key("deals")],
+    // Contacts, companies and conversations list their deals too.
+    invalidate: [ws.key("deals"), ws.key("contacts"), ws.key("companies"), ws.key("inbox")],
     success: (d) => `Deal “${d.name}” created`,
     errorToast: false,
     onSuccess: (d) => {
@@ -129,6 +132,7 @@ function NewDealDialog({ open, onOpenChange, pipelines, pipelineId: initialPipel
           <Field label="Contact" error={errors.contactId}>
             <ContactPicker
               value={contactId}
+              valueLabel={contact && contactId === contact.id ? contact.label : undefined}
               onChange={(id, c) => {
                 setContactId(id);
                 // Fill the company from the contact when none is chosen yet.

@@ -26,8 +26,18 @@ export function TabsTrigger({ className, ...rest }: ComponentProps<typeof T.Trig
   return <T.Trigger {...rest} className={cn(TRIGGER, "data-[state=active]:border-solid-line data-[state=active]:text-text-hi", className)} />;
 }
 
-export function TabsContent({ className, ...rest }: ComponentProps<typeof T.Content>) {
-  return <T.Content {...rest} className={cn("pt-4 outline-none", className)} />;
+/**
+ * `keepMounted`: the panel stays mounted (hidden) while another tab is shown,
+ * so a half-edited form in it keeps its unsaved state across tab switches.
+ */
+export function TabsContent({ className, keepMounted, ...rest }: ComponentProps<typeof T.Content> & { keepMounted?: boolean }) {
+  return (
+    <T.Content
+      {...rest}
+      {...(keepMounted ? { forceMount: true as const } : {})}
+      className={cn("pt-4 outline-none", keepMounted && "data-[state=inactive]:hidden", className)}
+    />
+  );
 }
 
 export type NavTab = { href: string; label: ReactNode; icon?: ReactNode; count?: number; /** Active only on an exact match. */ exact?: boolean };

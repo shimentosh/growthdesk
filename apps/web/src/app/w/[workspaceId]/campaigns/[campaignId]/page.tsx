@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense } from "react";
+import { Suspense, useState, type ReactNode } from "react";
 import { CalendarClock, LayoutDashboard, ListOrdered, Mail, UserCheck, Users } from "lucide-react";
 import { useParams, usePathname, useRouter, useSearchParams } from "next/navigation";
 import { StatusBadge } from "@/components/ui/Badge";
@@ -74,6 +74,14 @@ function CampaignWorkspace({ campaign }: { campaign: CampaignDetail }) {
   const pathname = usePathname();
   const raw = sp.get("tab");
   const tab: Tab = TABS.some((t) => t.value === raw) ? (raw as Tab) : "overview";
+  // Tabs mount when first opened and then stay mounted (hidden), so unsaved edits in one tab survive a switch to another.
+  const [visited, setVisited] = useState<ReadonlySet<Tab>>(() => new Set([tab]));
+  if (!visited.has(tab)) setVisited(new Set([...visited, tab]));
+  const panel = (value: Tab, children: ReactNode) => (
+    <TabsContent value={value} keepMounted>
+      {visited.has(value) ? children : null}
+    </TabsContent>
+  );
   const setTab = (next: string) => {
     const p = new URLSearchParams();
     if (next !== "overview") p.set("tab", next);
@@ -114,27 +122,18 @@ function CampaignWorkspace({ campaign }: { campaign: CampaignDetail }) {
           </TabsList>
         </div>
         {/* Each form is keyed by the saved values it edits, so it restarts from the stored version after a save or a status change. */}
-        <TabsContent value="overview">
-          <CampaignOverview campaign={c} />
-        </TabsContent>
-        <TabsContent value="steps">
-          <CampaignSteps key={`${c.id}-${c.status}`} campaign={c} />
-        </TabsContent>
-        <TabsContent value="audience">
-          <AudienceEditor key={`${c.id}-${c.status}-${JSON.stringify(c.audience)}`} campaign={c} />
-        </TabsContent>
-        <TabsContent value="schedule">
+        {panel("overview", <CampaignOverview campaign={c} />)}
+        {panel("steps", <CampaignSteps key={`${c.id}-${c.status}`} campaign={c} />)}
+        {panel("audience", <AudienceEditor key={`${c.id}-${c.status}-${JSON.stringify(c.audience)}`} campaign={c} />)}
+        {panel(
+          "schedule",
           <div className="flex flex-col gap-4">
             <CampaignDetailsForm key={`${c.name}-${c.description}-${c.ownerId}`} campaign={c} />
             <CampaignScheduleForm key={`${c.status}-${JSON.stringify([c.schedule, c.settings, c.startAt])}`} campaign={c} />
-          </div>
-        </TabsContent>
-        <TabsContent value="mailboxes">
-          <MailboxesEditor key={`${c.status}-${c.mailboxes.map((m) => m.id).join()}`} campaign={c} />
-        </TabsContent>
-        <TabsContent value="enrollments">
-          <EnrollmentsPanel campaign={c} initialStatus={sp.get("status") ?? undefined} />
-        </TabsContent>
+          </div>,
+        )}
+        {panel("mailboxes", <MailboxesEditor key={`${c.status}-${c.mailboxes.map((m) => m.id).join()}`} campaign={c} />)}
+        {panel("enrollments", <EnrollmentsPanel campaign={c} initialStatus={sp.get("status") ?? undefined} />)}
       </Tabs>
     </>
   );

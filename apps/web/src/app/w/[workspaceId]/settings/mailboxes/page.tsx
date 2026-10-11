@@ -1,10 +1,12 @@
 "use client";
 
 import Link from "next/link";
-import { Suspense, useEffect, useRef } from "react";
+import { Suspense, useEffect, useRef, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { CircleAlert, Inbox, Mail } from "lucide-react";
 import { Badge, StatusBadge } from "@/components/ui/Badge";
+import { Button } from "@/components/ui/Button";
+import { Callout } from "@/components/ui/Callout";
 import { Card } from "@/components/ui/Card";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { ChannelTile, EntityTile } from "@/components/ui/icons";
@@ -23,7 +25,8 @@ import { MAILBOX_PROVIDER_LABELS, type Mailbox } from "@/lib/types/integrations"
 /**
  * Where Google / Microsoft send the browser back after "Connect": the API's
  * callback redirects here with ?connected=1&mailbox=<id> or ?error=<message>.
- * Says what happened once, then drops the parameters from the address.
+ * Says what happened once, then drops the parameters from the address. A
+ * failure stays on the page (until dismissed) so its reason can be read.
  */
 function OAuthLanding() {
   const ws = useWorkspace();
@@ -32,6 +35,7 @@ function OAuthLanding() {
   const pathname = usePathname();
   const invalidate = useInvalidate();
   const handled = useRef<string | null>(null);
+  const [failure, setFailure] = useState<string | null>(null);
 
   useEffect(() => {
     const connected = params.get("connected");
@@ -41,15 +45,31 @@ function OAuthLanding() {
     if (handled.current === sig) return;
     handled.current = sig;
     if (connected) {
+      setFailure(null);
       toast.success("Mailbox connected", { description: "We'll start reading replies in a moment." });
-      void invalidate(ws.key("mailboxes"), workspaceDetailKey(ws.id));
+      // Campaign launch readiness and the onboarding checklist both check for a connected mailbox.
+      void invalidate(ws.key("mailboxes"), ws.key("campaigns"), workspaceDetailKey(ws.id));
     } else if (error) {
-      toast.error(error);
+      setFailure(error.slice(0, 300));
     }
     router.replace(pathname, { scroll: false });
   }, [params, router, pathname, invalidate, ws]);
 
-  return null;
+  if (!failure) return null;
+  return (
+    <Callout
+      tone="bad"
+      title="The mailbox was not connected"
+      className="mb-4"
+      action={
+        <Button size="sm" variant="ghost" onClick={() => setFailure(null)}>
+          Dismiss
+        </Button>
+      }
+    >
+      {failure}
+    </Callout>
+  );
 }
 
 function MailboxRow({ box }: { box: Mailbox }) {
@@ -99,15 +119,15 @@ export default function MailboxesPage() {
 
   return (
     <RequirePermission permission="integrations.read">
-      <Suspense fallback={null}>
-        <OAuthLanding />
-      </Suspense>
       <PageHeader
         icon={<EntityTile of="mailboxes" />}
         title="Mailboxes"
         description="The addresses campaigns send from. Each one is signed in to for real, sends within its daily limit, and reads replies back when IMAP is on."
         actions={manage && mailboxes.data && mailboxes.data.length > 0 ? <ConnectMailboxMenu /> : undefined}
       />
+      <Suspense fallback={null}>
+        <OAuthLanding />
+      </Suspense>
       <QueryState
         query={mailboxes}
         loading={

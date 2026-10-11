@@ -49,12 +49,12 @@ function Lines({ title, sub }: { title: ReactNode; sub?: ReactNode }) {
   );
 }
 
-export function DealsCard({ deals, empty }: { deals: RelatedDeal[]; empty?: string }) {
+export function DealsCard({ deals, empty, action }: { deals: RelatedDeal[]; empty?: string; action?: ReactNode }) {
   const ws = useWorkspace();
   const f = useFormat();
   const canDeals = ws.can("deals.read");
   return (
-    <RelatedCard title="Deals" count={deals.length} empty={empty}>
+    <RelatedCard title="Deals" count={deals.length} empty={empty} action={action}>
       {deals.map((d) => (
         <Row key={d.id} href={canDeals ? ws.href(`/deals/${d.id}`) : undefined}>
           <Lines title={d.name} sub={d.stage.name} />

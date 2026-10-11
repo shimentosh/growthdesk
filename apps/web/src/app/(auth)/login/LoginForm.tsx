@@ -3,16 +3,16 @@
 import Link from "next/link";
 import { useState, type FormEvent } from "react";
 import { AuthCard, AuthFooter } from "@/components/account/AuthFrame";
-import { Button } from "@/components/ui/Button";
+import { Button, buttonClass } from "@/components/ui/Button";
 import { Field, FormError } from "@/components/ui/Field";
 import { Input } from "@/components/ui/Input";
 import { fieldsOf, messageOf, post } from "@/lib/api";
 
-export function LoginForm({ next }: { next: string }) {
+export function LoginForm({ next, googleEnabled, error: initialError }: { next: string; googleEnabled: boolean; error: string | null }) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(initialError);
   const [fields, setFields] = useState<Record<string, string>>({});
 
   async function submit(e: FormEvent) {
@@ -53,6 +53,11 @@ export function LoginForm({ next }: { next: string }) {
           Sign in
         </Button>
       </form>
+      {googleEnabled && (
+        <a href="/api/auth/google/start" className={buttonClass({ variant: "secondary", className: "w-full" })}>
+          Continue with Google
+        </a>
+      )}
       <AuthFooter>
         New here?{" "}
         <Link href={next === "/" ? "/register" : `/register?next=${encodeURIComponent(next)}`} className="font-medium text-accent-hi hover:underline">

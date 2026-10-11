@@ -3,6 +3,7 @@
 import type { ReactNode } from "react";
 import { Toaster } from "@/components/ui/Toast";
 import { TooltipProvider } from "@/components/ui/Tooltip";
+import { UnsavedChangesGuard } from "@/components/ui/UnsavedChangesGuard";
 import { QueryProvider } from "@/lib/query";
 
 export function Providers({ children }: { children: ReactNode }) {
@@ -11,6 +12,7 @@ export function Providers({ children }: { children: ReactNode }) {
       <TooltipProvider>
         {children}
         <Toaster />
+        <UnsavedChangesGuard />
       </TooltipProvider>
     </QueryProvider>
   );

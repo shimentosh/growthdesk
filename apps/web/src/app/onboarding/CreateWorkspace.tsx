@@ -3,13 +3,15 @@
 import { useState, type FormEvent } from "react";
 import { BUSINESS_TYPES } from "@growthdesk/shared";
 import { AuthCard } from "@/components/account/AuthFrame";
+import { MaintenanceBanner } from "@/components/shell/PlatformNotices";
 import { Button } from "@/components/ui/Button";
 import { Callout } from "@/components/ui/Callout";
 import { Field, FormError } from "@/components/ui/Field";
 import { Input, NativeSelect } from "@/components/ui/Input";
 import { LoadingBlock } from "@/components/ui/Skeleton";
+import { UpgradePrompt } from "@/components/ui/UpgradePrompt";
 import { toast } from "@/components/ui/Toast";
-import { fieldsOf, messageOf, post } from "@/lib/api";
+import { ApiError, fieldsOf, messageOf, post } from "@/lib/api";
 import { browserTimeZone } from "@/lib/format";
 import { signOut, useMe } from "@/lib/session";
 
@@ -37,18 +39,24 @@ export function CreateWorkspace() {
   const [resending, setResending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [fields, setFields] = useState<Record<string, string>>({});
+  // A 402: the billing account already has as many workspaces as its plan allows.
+  const [limit, setLimit] = useState<ApiError | null>(null);
 
   async function submit(e: FormEvent) {
     e.preventDefault();
     setBusy(true);
     setError(null);
     setFields({});
+    setLimit(null);
     try {
       const ws = await post<{ id: string }>("/workspaces", { name, businessType, timezone: browserTimeZone() });
       window.location.assign(`/w/${ws.id}`);
     } catch (err) {
-      setFields(fieldsOf(err));
-      setError(messageOf(err));
+      if (err instanceof ApiError && err.isPlanLimit) setLimit(err);
+      else {
+        setFields(fieldsOf(err));
+        setError(messageOf(err));
+      }
       setBusy(false);
     }
   }
@@ -69,6 +77,8 @@ export function CreateWorkspace() {
   if (me.isError) return <Callout tone="bad">{messageOf(me.error)}</Callout>;
 
   const user = me.data.user;
+  // New workspaces join the billing account this person owns; its owner role is where billing lives.
+  const billingHome = me.data.workspaces.find((w) => w.role === "owner");
   return (
     <AuthCard
       title="Set up your workspace"
@@ -81,7 +91,19 @@ export function CreateWorkspace() {
         </>
       }
     >
-      {!user.emailVerified && me.data.emailVerificationRequired !== false ? (
+      <MaintenanceBanner className="mb-3" />
+      {limit ? (
+        <div className="flex flex-col gap-3">
+          <UpgradePrompt error={limit} upgradeHref={billingHome ? `/w/${billingHome.id}/billing` : undefined} />
+          {billingHome && (
+            <div className="flex justify-end">
+              <Button variant="ghost" href={`/w/${billingHome.id}`}>
+                Back to {billingHome.name}
+              </Button>
+            </div>
+          )}
+        </div>
+      ) : !user.emailVerified && me.data.emailVerificationRequired !== false ? (
         <Callout
           tone="warn"
           title="Confirm your email first"

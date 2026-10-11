@@ -20,7 +20,7 @@ import { Select } from "@/components/ui/Select";
 import { SkeletonText } from "@/components/ui/Skeleton";
 import { cn } from "@/lib/cn";
 import { useApiMutation, useApiQuery } from "@/lib/query";
-import { ME_KEY, useFormat, useMe, useWorkspace } from "@/lib/session";
+import { ME_KEY, useFormat, useMe, useWorkspace, workspaceDetailKey } from "@/lib/session";
 import type { Member, MembersResponse } from "@/lib/types";
 import type { ChangeRoleResult, EditableRole, InvitationRow, InviteResult } from "@/lib/types/admin";
 import { assignableRoles, outranks, ROLE_DESCRIPTIONS, table } from "./labels";
@@ -32,7 +32,7 @@ function InviteModal({ open, onOpenChange }: { open: boolean; onOpenChange: (ope
   const [role, setRole] = useState<EditableRole | undefined>(roles.includes("member") ? "member" : roles[roles.length - 1]);
   const invite = useApiMutation<InviteResult, { email: string; role: EditableRole }>({
     path: ws.path("/invitations"),
-    invalidate: [ws.key("members")],
+    invalidate: [ws.key("members"), workspaceDetailKey(ws.id)],
     success: (r) => `Invitation sent to ${r.email}`,
     errorToast: false,
     onSuccess: () => {

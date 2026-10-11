@@ -6,10 +6,12 @@ import { MailService } from "./mail.service.js";
 import { BrandingService } from "./branding.service.js";
 import { SessionService } from "../auth/session.service.js";
 import { EntitlementsService } from "../billing/entitlements.service.js";
+import { StatusController } from "./status.controller.js";
 
 /** Services nearly every feature needs; global so feature modules stay small. */
 @Global()
 @Module({
+  controllers: [StatusController],
   providers: [PlatformSettingsService, BrandingService, AuditService, EventsService, MailService, SessionService, EntitlementsService],
   exports: [PlatformSettingsService, BrandingService, AuditService, EventsService, MailService, SessionService, EntitlementsService],
 })

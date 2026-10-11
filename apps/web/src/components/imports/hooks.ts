@@ -3,7 +3,7 @@
 import { useEffect, useRef } from "react";
 import type { QueryKey } from "@tanstack/react-query";
 import { useInvalidate } from "@/lib/query";
-import { useWorkspace } from "@/lib/session";
+import { useWorkspace, workspaceDetailKey } from "@/lib/session";
 import type { ImportStatus } from "@growthdesk/shared";
 
 export const isActiveImport = (status: ImportStatus | string) => status === "pending" || status === "processing";
@@ -29,7 +29,7 @@ export function useRefreshWhenImportsFinish(activeIds: string[], extra: QueryKey
     const now = new Set(signature ? signature.split(",") : []);
     const finished = [...previous.current].some((id) => !now.has(id));
     previous.current = now;
-    if (finished) void invalidate(ws.key("contacts"), ws.key("companies"), ws.key("tags"), ...extraRef.current);
+    if (finished) void invalidate(ws.key("contacts"), ws.key("companies"), ws.key("tags"), workspaceDetailKey(ws.id), ...extraRef.current);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [signature]);
 }
