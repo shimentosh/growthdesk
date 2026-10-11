@@ -181,7 +181,9 @@ export class OutboundEmailService {
     if (!(await this.reserveSlot(mailbox, input.kind === "campaign"))) {
       return { status: "deferred", reason: `${mailbox.email} has reached its daily limit of ${mailbox.dailyLimit}.`, retryAt: startOfNextUtcDay() };
     }
-    if (!(await this.entitlements.consume(workspaceId, workspace.billingAccountId, "monthlyEmails", 1))) {
+    // The metering period the email is counted in: a failed send refunds that one, even after a month boundary.
+    const meteredPeriod = await this.entitlements.consume(workspaceId, workspace.billingAccountId, "monthlyEmails", 1);
+    if (!meteredPeriod) {
       await this.releaseSlot(mailbox);
       if (input.kind === "campaign") return { status: "deferred", reason: "This month's email allowance is used up.", retryAt: null };
       return { status: "failed", reason: "This month's email allowance on your plan is used up. Upgrade to send more." };
@@ -280,7 +282,7 @@ export class OutboundEmailService {
     // Nothing went out: give back the capacity and the allowance.
     await this.releaseSlot(mailbox);
     await this.prisma.db.usageCounter.updateMany({
-      where: { workspaceId, metric: "emails", period: new Date().toISOString().slice(0, 7), value: { gt: 0 } },
+      where: { workspaceId, metric: "emails", period: meteredPeriod, value: { gt: 0 } },
       data: { value: { decrement: 1 } },
     });
     if (failure.outcome === "deferred") {

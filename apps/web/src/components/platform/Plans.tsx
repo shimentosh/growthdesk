@@ -17,14 +17,16 @@ import { SkeletonText } from "@/components/ui/Skeleton";
 import { cn } from "@/lib/cn";
 import { formatNumber } from "@/lib/format";
 import { useApiMutation, useApiQuery } from "@/lib/query";
+import { toast } from "@/components/ui/Toast";
 import type { AdminPlan } from "@/lib/types/platform";
 import { platformEmpty, PlatformTile, platformKey, table, usePlatform } from "./common";
 
 /*
  * Plans (docs/BILLING.md): prices, trial, limits, features and the payment
  * provider's price ids. The amounts here are what customers are shown; what
- * checkout charges is the provider price the id points at, so keep the two
- * in step.
+ * checkout charges is the provider price the id points at, so saving a plan
+ * checks each id and copies its amount and currency over the form's (when the
+ * provider is not configured the form's amounts are kept, with a warning).
  */
 
 type Draft = {
@@ -75,7 +77,11 @@ function PlanDialog({ plan, open, onOpenChange }: { plan: AdminPlan | null; open
     invalidate: [platformKey("plans"), platformKey("settings")],
     success: plan ? "Plan saved" : "Plan created",
     errorToast: false,
-    onSuccess: () => onOpenChange(false),
+    onSuccess: (saved) => {
+      // The amounts come from the provider's prices; say so when they could not be checked.
+      for (const notice of saved.priceNotices ?? []) toast.warn(notice);
+      onOpenChange(false);
+    },
   });
   const fields = save.error?.fields ?? {};
 
@@ -155,10 +161,10 @@ function PlanDialog({ plan, open, onOpenChange }: { plan: AdminPlan | null; open
         </div>
 
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-          <Field label="Stripe monthly price id" hint="Must charge the monthly price above.">
+          <Field label="Stripe monthly price id" hint="Saving copies its amount and currency into the plan.">
             <Input value={d.stripeMonth} onChange={(e) => set("stripeMonth", e.target.value)} placeholder="price_…" className="font-mono" />
           </Field>
-          <Field label="Stripe annual price id" hint="Must charge the annual price above.">
+          <Field label="Stripe annual price id" hint="Saving copies its amount and currency into the plan.">
             <Input value={d.stripeYear} onChange={(e) => set("stripeYear", e.target.value)} placeholder="price_…" className="font-mono" />
           </Field>
         </div>

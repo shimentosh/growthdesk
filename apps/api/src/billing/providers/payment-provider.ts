@@ -53,6 +53,23 @@ export type NormalizedInvoice = {
   billingAccountId: string | null;
 };
 
+/** A refund or a dispute (chargeback) on a payment. */
+export type NormalizedCharge = {
+  kind: "refund" | "dispute";
+  providerChargeId: string;
+  /** Null for a dispute, whose payload names only the charge: resolve it with customerForCharge. */
+  providerCustomerId: string | null;
+  /** Refunded or disputed amount, in the smallest currency unit. */
+  amountCents: number;
+  /** Upper-case ISO currency. */
+  currency: string;
+  /** refund: true when the whole charge was refunded. */
+  fullRefund: boolean;
+  /** dispute: the card network's reason (e.g. "fraudulent"). */
+  reason: string;
+  billingAccountId: string | null;
+};
+
 export type NormalizedEvent = {
   id: string;
   type: string;
@@ -62,6 +79,11 @@ export type NormalizedEvent = {
   subscription?: NormalizedSubscription;
   invoice?: NormalizedInvoice;
   paymentFailed?: boolean;
+  /** The invoice's payment needs the customer to confirm it (SCA / 3-D Secure) on the hosted invoice page. */
+  actionRequired?: boolean;
+  /** The provider has given up collecting the invoice (dunning exhausted). */
+  uncollectible?: boolean;
+  charge?: NormalizedCharge;
   raw: unknown;
 };
 
@@ -91,6 +113,24 @@ export interface PaymentProvider {
   findLiveSubscription(providerCustomerId: string): Promise<string | null>;
   setCancelAtPeriodEnd(providerSubscriptionId: string, cancel: boolean): Promise<void>;
   fetchSubscription(providerSubscriptionId: string): Promise<NormalizedSubscription>;
+  /** The customer a charge belongs to (disputes name only the charge). */
+  customerForCharge(providerChargeId: string): Promise<string | null>;
+  /**
+   * Reads a recurring price, to check a plan's price id when the plan is saved:
+   * its amount per interval, currency and interval. Throws when it does not exist.
+   */
+  fetchPrice(priceId: string): Promise<ProviderPrice>;
 }
+
+export type ProviderPrice = {
+  id: string;
+  active: boolean;
+  /** Smallest currency unit per `interval`; null for tiered or metered prices. */
+  amountCents: number | null;
+  /** Upper-case ISO currency. */
+  currency: string;
+  interval: string | null;
+  intervalCount: number;
+};
 
 export const PAYMENT_PROVIDERS = Symbol("PAYMENT_PROVIDERS");

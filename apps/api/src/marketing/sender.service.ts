@@ -158,9 +158,10 @@ export class MarketingSenderService {
         await db.marketingSend.updateMany({ where: { id: row.id, workspaceId, status: "queued" }, data: { status: "skipped", error: skip } });
         continue;
       }
-      const period = new Date().toISOString().slice(0, 7);
-      if (!(await this.entitlements.consume(workspaceId, ws.billingAccountId, "monthlyMarketingEmails"))) {
-        await this.pauseCampaign(workspaceId, campaignId, "This month's marketing email allowance is used up. It renews on the 1st (UTC), or upgrade the plan.");
+      // The period the email is counted in, so a refund gives it back to the same month.
+      const period = await this.entitlements.consume(workspaceId, ws.billingAccountId, "monthlyMarketingEmails");
+      if (!period) {
+        await this.pauseCampaign(workspaceId, campaignId, "This month's marketing email allowance is used up. It renews on your billing day, or upgrade the plan.");
         break;
       }
       // Write-ahead: claim the row so no other run sends it.

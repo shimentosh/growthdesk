@@ -14,6 +14,7 @@ type SubObject = Record<string, unknown> & { id: string };
  * - `says(subId, patch)`: changes the current state directly, the way Stripe
  *   itself moves a subscription (for example, to past_due on a failed renewal).
  * - `live`, `priceChanges`, `checkouts`: what checkout() sees and asks for.
+ * - `prices`, `chargeCustomers`: what prices.retrieve and charges.retrieve return.
  */
 export function fakeStripe() {
   const fake = {
@@ -21,6 +22,10 @@ export function fakeStripe() {
     live: null as string | null,
     priceChanges: [] as { subId: string; priceId: string }[],
     checkouts: 0,
+    /** Charge id → customer id, for disputes (whose payload names only the charge). */
+    chargeCustomers: new Map<string, string>(),
+    /** Price id → what prices.retrieve returns (unknown ids are "No such price"). */
+    prices: new Map<string, { amountCents: number | null; currency: string; interval: string | null; active?: boolean; intervalCount?: number }>(),
     remember(event: { created?: number; data?: { object?: Record<string, unknown> } }) {
       const obj = event.data?.object;
       if (obj?.object !== "subscription") return;
@@ -47,6 +52,12 @@ export function fakeStripe() {
       provider.createCheckout = async () => {
         fake.checkouts++;
         return { url: "https://checkout.stripe.test/session" };
+      };
+      provider.customerForCharge = async (chargeId: string) => fake.chargeCustomers.get(chargeId) ?? null;
+      provider.fetchPrice = async (id: string) => {
+        const price = fake.prices.get(id);
+        if (!price) throw Object.assign(new Error(`No such price: '${id}'`), { statusCode: 404, code: "resource_missing" });
+        return { id, active: true, intervalCount: 1, ...price };
       };
       return fake;
     },

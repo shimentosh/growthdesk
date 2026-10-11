@@ -74,6 +74,10 @@ export type BillingInvoice = {
 
 /** GET /workspaces/:id/billing — billing.service.ts `overview()` */
 export type BillingOverview = {
+  /** account = the billing account owner (invoices, details, usage across workspaces); workspace = this workspace only. */
+  scope: "account" | "workspace";
+  /** When the monthly allowances next restart (the billing day). */
+  meterResetsAt: string;
   account: { id: string; name: string; billingEmail: string; country: string; taxId: string; address: string };
   plan: { key: string; name: string };
   effectivePlan: { key: string; name: string };

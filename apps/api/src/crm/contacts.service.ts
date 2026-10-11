@@ -30,7 +30,10 @@ export type UpsertOptions = {
   onDuplicate: "update" | "skip" | "error";
   defaultCountry?: string;
   actorId?: string | null;
-  /** Skip the per-contact plan check (bulk callers check capacity for the whole batch). */
+  /**
+   * Skip the up-front plan check (bulk callers check capacity for the whole batch). Creating a
+   * contact is always checked again under the account lock, inside the transaction.
+   */
   capacityChecked?: boolean;
   emitEvent?: "contact.created" | "lead.imported";
   /** When set, a row that would create a new contact is refused with this reason (plan limit reached mid-import). */
@@ -377,6 +380,9 @@ export class ContactsService {
 
         // 2. Create
         if (opts.createBlocked) throw new ApiError(402, "plan_limit", opts.createBlocked);
+        // The contact limit, counted under the account's advisory lock: parallel imports and API
+        // requests queue here, so together they cannot overshoot it (docs/GAP_PLAN.md §3.1.5).
+        await this.entitlements.assertCapacityIn(tx, billingAccountId, "contacts");
         let companyId = input.companyId ?? null;
         if (companyId) {
           const company = await tx.company.findFirst({ where: { workspaceId, id: companyId, deletedAt: null } });

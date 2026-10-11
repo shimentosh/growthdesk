@@ -31,6 +31,16 @@ Status: ☐ open · ◐ in progress · ☑ done.
 - ☑ 3.2: hourly notices (trial ending, grace ending, sending paused), each sent once, plus "payment received" and an **Update payment** button on the read-only banner (tests).
 - Not done from §3.1: tax/VAT (3.1.3) and the medium items 3.1.4–3.1.11.
 
+**Billing correctness (2026-10-12), §3.1.4–3.1.11** (tests in `test/billing.e2e-spec.ts`, "Billing correctness", and `src/billing/trial-guard.spec.ts`):
+- ☑ 3.1.4: `EntitlementsService.assertSeat(account, email)` runs on invite, on resending an invitation (an expired one stopped holding a seat) and on joining, both for a signed-in accept and before an invitee's account is created (test).
+- ☑ 3.1.5: contact creation checks the limit inside its transaction under a per-account advisory lock (`assertCapacityIn`), so every path (manual, CSV import, API ingest) is covered. Parallel creates and two parallel imports stop exactly at the limit (test).
+- ☑ 3.1.6: an assigned plan clears the old provider ids, is not overwritten by a late event for an ended Stripe subscription, lapses in entitlements at `currentPeriodEnd`, and the hourly job marks it expired and emails the owner (test).
+- ☑ 3.1.7: saving a plan reads each Stripe price (active, flat, every 1 month/year, one currency) and copies amount and currency into the plan. Without Stripe keys the ids are saved unchecked and the admin is warned (tests).
+- ☑ 3.1.8: the billing overview is scoped: only the billing-account owner gets invoices, billing details and account-wide usage; a workspace admin gets the plan and that workspace's usage (test).
+- ◐ 3.1.9: one trial per normalised email (lower-case, +tag removed, Gmail dots and googlemail.com unified; login emails unchanged) and `TRIALS_PER_IP_PER_DAY` (default 3) per signup IP. Withheld trials start on Free, audited (tests). Migration `20261012160000_billing_correctness` adds the keys and backfills existing accounts. Still open: an optional card-required trial.
+- ☑ 3.1.10: `invoice.payment_action_required` emails the hosted invoice link; `charge.refunded` and `charge.dispute.created` are audited and notify the customer or the platform admins; `invoice.marked_uncollectible` ends the grace period now. The policy is in docs/BILLING.md (test).
+- ☑ 3.1.11: `consume()` returns the period it counted in, and failed sends and AI calls refund that period. Meters renew on the subscription's billing day, not the 1st. Hidden plans can't be bought by key. Resume or cancel on an ended subscription is a 400 (tests).
+
 ---
 
 ## 1. Launch blockers (P0)
@@ -83,14 +93,14 @@ Status: ☐ open · ◐ in progress · ☑ done.
 | ☑ 3.1.1 | P1 | A late `invoice.payment_failed` overrides a successful payment. The account goes past due and gets a "payment failed" email after paying. | `billing/billing.service.ts:368-385` | Skip the event if the invoice is paid, or older than the last applied event. Otherwise re-fetch. |
 | ☑ 3.1.2 | P1 | Plan changes made in the Stripe portal skip the downgrade check. `assertFits` ignores contacts, campaigns and channels. | `billing/billing.service.ts:119-127` | Turn off plan switching in the portal, or enforce limits after the webhook. |
 | ☐ 3.1.3 | P1 | No tax or VAT handling, and billing details never reach Stripe. The UI's "Shown on invoices" is false. | `billing/providers/stripe.provider.ts:122-135`, `billing.service.ts:111`, `apps/web/src/components/admin/BillingSettings.tsx:450` | Stripe Tax, tax ID collection, `customers.update` and `taxIds.create`. |
-| ☐ 3.1.4 | P2 | The seat limit can be bypassed by resending an expired invitation, and accepting an invite does not re-check seats. | `workspaces/workspaces.service.ts:251-262,347` | Run `assertCapacity("seats")` on resend and on join. |
-| ☐ 3.1.5 | P2 | Contact limit races in imports and the ingest API: parallel requests overshoot. | `integrations/lead-ingest.service.ts:96`, `crm/imports.service.ts:178` | Take a per-account advisory lock, as `consume()` does. |
-| ☐ 3.1.6 | P2 | Admin-assigned plans never expire, and they keep stale Stripe ids. | `billing/entitlements.service.ts:98`, `billing.service.ts:403` | Lapse at `currentPeriodEnd`. Clear provider ids on manual assignment. |
-| ☐ 3.1.7 | P2 | The price shown is not the price charged: Stripe price ids are never checked. | `apps/web/src/components/admin/BillingSettings.tsx:203` | `prices.retrieve` when a plan is saved, copying amount and currency. |
-| ☐ 3.1.8 | P2 | A workspace admin in an agency sees the whole account's invoices, usage and tax ID. | `packages/shared/src/permissions.ts:140`, `billing.service.ts:76-108` | Limit billing read to billing-account owners, or scope the response. |
-| ☐ 3.1.9 | P2 | Unlimited 14-day Starter trials, one per email, with no card. Plus-addresses are not normalised. | `workspaces.service.ts:87-101`, `core/platform-settings.service.ts:31` | Normalise emails, rate-limit signups per domain or IP, and offer an optional card-required trial. |
-| ☐ 3.1.10 | P2 | Unhandled Stripe events: SCA `payment_action_required`, refunds, disputes, `marked_uncollectible`. | `billing/` | Handle them and email the customer for SCA. |
-| ☐ 3.1.11 | P3 | A failed send refunds the wrong month across a month boundary. Meters reset on the UTC calendar month. Hidden plans can be bought by key. Resume on a canceled subscription returns a 500. | `outbound-email.service.ts:270`, `billing.service.ts:142` | Small fixes. |
+| ☑ 3.1.4 | P2 | The seat limit can be bypassed by resending an expired invitation, and accepting an invite does not re-check seats. | `workspaces/workspaces.service.ts:251-262,347` | Run `assertCapacity("seats")` on resend and on join. |
+| ☑ 3.1.5 | P2 | Contact limit races in imports and the ingest API: parallel requests overshoot. | `integrations/lead-ingest.service.ts:96`, `crm/imports.service.ts:178` | Take a per-account advisory lock, as `consume()` does. |
+| ☑ 3.1.6 | P2 | Admin-assigned plans never expire, and they keep stale Stripe ids. | `billing/entitlements.service.ts:98`, `billing.service.ts:403` | Lapse at `currentPeriodEnd`. Clear provider ids on manual assignment. |
+| ☑ 3.1.7 | P2 | The price shown is not the price charged: Stripe price ids are never checked. | `apps/web/src/components/admin/BillingSettings.tsx:203` | `prices.retrieve` when a plan is saved, copying amount and currency. |
+| ☑ 3.1.8 | P2 | A workspace admin in an agency sees the whole account's invoices, usage and tax ID. | `packages/shared/src/permissions.ts:140`, `billing.service.ts:76-108` | Limit billing read to billing-account owners, or scope the response. |
+| ◐ 3.1.9 | P2 | Unlimited 14-day Starter trials, one per email, with no card. Plus-addresses are not normalised. | `workspaces.service.ts:87-101`, `core/platform-settings.service.ts:31` | Normalise emails, rate-limit signups per domain or IP, and offer an optional card-required trial. |
+| ☑ 3.1.10 | P2 | Unhandled Stripe events: SCA `payment_action_required`, refunds, disputes, `marked_uncollectible`. | `billing/` | Handle them and email the customer for SCA. |
+| ☑ 3.1.11 | P3 | A failed send refunds the wrong month across a month boundary. Meters reset on the UTC calendar month. Hidden plans can be bought by key. Resume on a canceled subscription returns a 500. | `outbound-email.service.ts:270`, `billing.service.ts:142` | Small fixes. |
 
 ### 3.2 Dunning and notices (missing)
 ☑ Trial-ending reminder · ☑ grace-period-ending warning · ☑ "service restricted" notice · ☑ "payment recovered" confirmation · ☑ a **Pay now** button on the read-only banner, plus routing 423 errors to billing (`apps/web/src/app/w/[workspaceId]/layout.tsx:73-78`).
