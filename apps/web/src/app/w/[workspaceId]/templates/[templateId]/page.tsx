@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, type FormEvent } from "react";
+import { useRef, useState, type FormEvent } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { useQueryClient } from "@tanstack/react-query";
 import { Archive, BadgeCheck, MessageSquareText, Trash2 } from "lucide-react";
@@ -23,6 +23,7 @@ import { toast } from "@/components/ui/Toast";
 import { TemplatePreviewPanel } from "@/components/templates/TemplatePreviewPanel";
 import { VariableMenu, focusAt, spliceToken, useTemplateVariables } from "@/components/templates/VariableMenu";
 import { VersionHistory } from "@/components/templates/VersionHistory";
+import { useUnsavedChanges } from "@/lib/unsaved";
 import { useApiMutation, useApiQuery } from "@/lib/query";
 import { useFormat, useWorkspace } from "@/lib/session";
 import type { Template, TemplateBody, TemplateDeleteResult } from "@/lib/types/templates";
@@ -65,12 +66,8 @@ function Editor({ template }: { template: Template | null }) {
   const set = <K extends keyof Draft>(k: K, v: Draft[K]) => setDraft((d) => ({ ...d, [k]: v }));
   const isEmail = draft.channel === "email";
 
-  useEffect(() => {
-    if (!dirty || !canWrite) return;
-    const warn = (e: BeforeUnloadEvent) => e.preventDefault();
-    window.addEventListener("beforeunload", warn);
-    return () => window.removeEventListener("beforeunload", warn);
-  }, [dirty, canWrite]);
+  // Leaving with unsaved edits asks first: reloads, closing the tab, and in-app links (the sidebar included).
+  useUnsavedChanges(dirty && canWrite, "Your changes to this template will be lost.");
 
   const save = useApiMutation<Template, TemplateBody>({
     method: template ? "PATCH" : "POST",

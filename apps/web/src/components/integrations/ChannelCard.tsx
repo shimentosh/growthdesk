@@ -66,7 +66,7 @@ export function ChannelCard({ row }: { row: ChannelIntegration }) {
 
   const verify = useApiMutation<ChannelIntegration, void>({
     path: ws.path(`/channels/${row.id}/verify`),
-    invalidate: [ws.key("channels")],
+    invalidate: [ws.key("channels"), ws.key("calls")],
     onSuccess: (r) => {
       if (r.status === "connected") toast.success(`${r.name} is working`);
       else toast.error(r.lastError || `${r.name} could not be verified`);
@@ -75,7 +75,7 @@ export function ChannelCard({ row }: { row: ChannelIntegration }) {
   const remove = useApiMutation<{ ok: boolean }, void>({
     method: "DELETE",
     path: ws.path(`/channels/${row.id}`),
-    invalidate: [ws.key("channels")],
+    invalidate: [ws.key("channels"), ws.key("calls")],
     success: `${row.name} disconnected`,
     errorToast: false,
   });

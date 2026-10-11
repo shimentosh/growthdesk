@@ -7,7 +7,7 @@ import { Modal } from "@/components/ui/Dialog";
 import { Field, FormError } from "@/components/ui/Field";
 import { Input, NativeSelect } from "@/components/ui/Input";
 import { useApiMutation, useApiQuery } from "@/lib/query";
-import { useWorkspace } from "@/lib/session";
+import { useWorkspace, workspaceDetailKey } from "@/lib/session";
 import type { Paged } from "@/lib/types";
 import type { CampaignCreateBody, CampaignDetail } from "@/lib/types/campaigns";
 import type { Sequence } from "@/lib/types/sequences";
@@ -25,7 +25,7 @@ export function NewCampaignModal({ open, onOpenChange }: { open: boolean; onOpen
   const sequences = useApiQuery<Paged<Sequence>>(ws.key("sequences", "list", "picker"), open ? ws.path("/sequences") : null, { query: { pageSize: 200 } });
   const create = useApiMutation<CampaignDetail, CampaignCreateBody>({
     path: ws.path("/campaigns"),
-    invalidate: [ws.key("campaigns")],
+    invalidate: [ws.key("campaigns"), workspaceDetailKey(ws.id)],
     success: "Campaign created",
     errorToast: false,
     onSuccess: (c) => {

@@ -42,7 +42,7 @@ export function MailboxSettingsCard({ mailbox, canManage }: { mailbox: Mailbox; 
   const save = useApiMutation<Mailbox, UpdateMailboxInputT>({
     method: "PATCH",
     path: ws.path(`/mailboxes/${mailbox.id}`),
-    invalidate: [ws.key("mailboxes")],
+    invalidate: [ws.key("mailboxes"), ws.key("campaigns")],
     success: (_, vars) => (vars.password ? "Password checked and saved" : "Mailbox saved"),
     errorToast: false,
     onSuccess: (box) => setV(formOf(box)),

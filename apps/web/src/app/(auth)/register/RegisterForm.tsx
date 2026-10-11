@@ -10,6 +10,7 @@ import { Checkbox } from "@/components/ui/Checkbox";
 import { Field, FormError } from "@/components/ui/Field";
 import { Input } from "@/components/ui/Input";
 import { fieldsOf, isApiError, messageOf, post } from "@/lib/api";
+import { GOOGLE_ERROR_MESSAGES } from "../oauth-errors";
 
 /** GET /auth/signup-policy — apps/api/src/auth/auth.service.ts `signupPolicy()` */
 export type SignupPolicy = {
@@ -19,8 +20,9 @@ export type SignupPolicy = {
   invite: { valid: boolean; email: string | null } | null;
 };
 
-/** The codes the Google callback sends back as ?error= when the sign-up policy refused. */
+/** The codes the Google round-trip sends back as ?error=: sign-up policy refusals, and Google's own failures. */
 const ERROR_MESSAGES: Record<string, string> = {
+  ...GOOGLE_ERROR_MESSAGES,
   signup_closed: "New sign-ups are closed right now.",
   signup_waitlist: "We're onboarding from a waitlist right now. Join it below and we'll email you an invitation.",
   signup_invite_required: "Sign-ups are by invitation only. Open the link in your invitation email.",

@@ -2,6 +2,7 @@
 
 import { useEffect, useState, type ReactNode } from "react";
 import { useParams, usePathname } from "next/navigation";
+import { MaintenanceBanner, SupportLink } from "@/components/shell/PlatformNotices";
 import { Sidebar } from "@/components/shell/Sidebar";
 import { Topbar } from "@/components/shell/Topbar";
 import { Button } from "@/components/ui/Button";
@@ -64,10 +65,12 @@ export default function WorkspaceLayout({ children }: { children: ReactNode }) {
         <div className="flex min-w-0 flex-1 flex-col">
           <Topbar onOpenNav={() => setNavOpen(true)} />
           <main className="min-h-0 flex-1 overflow-y-auto">
+            <MaintenanceBanner className="px-4 pt-4 nav:px-6" />
             {w.status === "suspended" && (
               <div className="px-4 pt-4 nav:px-6">
                 <Callout tone="bad" title="This workspace is suspended">
-                  {w.suspendedReason || "Changes are disabled. Contact support to restore access."}
+                  {w.suspendedReason || "Changes are disabled."}{" "}
+                  <SupportLink subject={`Suspended workspace: ${w.name}`}>Contact support</SupportLink> to restore access.
                 </Callout>
               </div>
             )}

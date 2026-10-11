@@ -2,6 +2,7 @@
 
 import type { ReactNode } from "react";
 import { ChevronLeft } from "lucide-react";
+import { MaintenanceBanner } from "@/components/shell/PlatformNotices";
 import { UserMenu } from "@/components/shell/Topbar";
 import { Button } from "@/components/ui/Button";
 import { useMe } from "@/lib/session";
@@ -33,6 +34,7 @@ export function AccountShell({ children }: { children: ReactNode }) {
         </span>
         <UserMenu />
       </header>
+      <MaintenanceBanner className="mx-auto max-w-3xl px-4 pt-4" />
       <main>{children}</main>
     </div>
   );

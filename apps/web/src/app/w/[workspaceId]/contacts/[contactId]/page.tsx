@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useState } from "react";
-import { Trash2 } from "lucide-react";
+import { Handshake, Link2, Plus, Trash2 } from "lucide-react";
 import type { ContactInputT } from "@growthdesk/shared";
 import { AiSummaryCard } from "@/components/ai/AiSummaryCard";
 import { ContactCallActions } from "@/components/calls/ContactCallActions";
@@ -14,12 +14,14 @@ import { ConsentCard, ContactActivityCards, DealsCard, IdentityCard, MarketingLi
 import { TagEditor } from "@/components/crm/Tags";
 import { Timeline } from "@/components/crm/Timeline";
 import { CompanyPicker, MemberPicker, contactLabel } from "@/components/pickers/Pickers";
+import { useContactDealActions } from "@/components/pipeline/ContactDealActions";
 import { Avatar } from "@/components/ui/Avatar";
 import { StatusBadge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { Callout } from "@/components/ui/Callout";
 import { Card, CardBody, CardHeader } from "@/components/ui/Card";
 import { ConfirmDialog } from "@/components/ui/Dialog";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/DropdownMenu";
 import { ErrorState } from "@/components/ui/ErrorState";
 import { Field } from "@/components/ui/Field";
 import { Page, PageHeader } from "@/components/ui/PageHeader";
@@ -98,6 +100,7 @@ function Loaded({ contact: c, onDeleted }: { contact: ContactDetail; onDeleted: 
   });
 
   const name = contactLabel(c);
+  const dealActions = useContactDealActions({ id: c.id, label: name, company: c.company });
   const subtitle = [c.jobTitle, c.company?.name].filter(Boolean).join(" at ");
   const tags = pendingTags ?? c.tags.map((t) => t.name);
 
@@ -233,7 +236,29 @@ function Loaded({ contact: c, onDeleted }: { contact: ContactDetail; onDeleted: 
             </CardBody>
           </Card>
 
-          <DealsCard deals={c.deals} />
+          <DealsCard
+            deals={c.deals}
+            empty={dealActions.canWrite ? "No deals yet." : undefined}
+            action={
+              dealActions.canWrite ? (
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button size="sm" variant="ghost" icon={<Plus />}>
+                      Deal
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end">
+                    <DropdownMenuItem icon={<Handshake />} disabled={dealActions.pipelinesLoading || dealActions.noPipeline} onSelect={dealActions.openNew}>
+                      {dealActions.noPipeline ? "New deal (set up a pipeline first)" : "New deal"}
+                    </DropdownMenuItem>
+                    <DropdownMenuItem icon={<Link2 />} onSelect={dealActions.openLink}>
+                      Link to existing deal
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              ) : undefined
+            }
+          />
           <ContactActivityCards contact={c} />
           <ConsentCard contact={c} />
           <MarketingListsCard contact={c} />
@@ -241,6 +266,7 @@ function Loaded({ contact: c, onDeleted }: { contact: ContactDetail; onDeleted: 
         </aside>
       </div>
 
+      {dealActions.dialogs}
       <ConfirmDialog
         open={confirmDelete}
         onOpenChange={setConfirmDelete}

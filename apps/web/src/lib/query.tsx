@@ -37,6 +37,7 @@ import {
 import { useState, type ReactNode } from "react";
 import { toast } from "@/components/ui/Toast";
 import { api, ApiError, get, type QueryParams } from "./api";
+import { PLATFORM_STATUS_KEY } from "./platform-status";
 import { showUpgrade } from "./upgrade";
 
 export function makeQueryClient() {
@@ -109,6 +110,20 @@ export type ApiMutationConfig<TData, TVars> = {
   onError?: (error: ApiError, vars: TVars) => void;
 };
 
+/**
+ * Reports are computed from everything else, so any change to workspace data
+ * makes them stale: each ["ws", id, …] key also invalidates ["ws", id,
+ * "analytics"]. Inactive report queries are only marked stale and refetch
+ * when next shown.
+ */
+function withAnalytics(keys: readonly QueryKey[]): QueryKey[] {
+  const extra = new Map<string, QueryKey>();
+  for (const k of keys) {
+    if (k[0] === "ws" && typeof k[1] === "string" && k[2] !== "analytics") extra.set(k[1], ["ws", k[1], "analytics"]);
+  }
+  return [...keys, ...extra.values()];
+}
+
 export function useApiMutation<TData = unknown, TVars = void>(
   config: ApiMutationConfig<TData, TVars>,
 ): UseMutationResult<TData, ApiError, TVars> {
@@ -122,12 +137,14 @@ export function useApiMutation<TData = unknown, TVars = void>(
     },
     onSuccess: async (data, vars) => {
       const keys = typeof config.invalidate === "function" ? config.invalidate(data, vars) : (config.invalidate ?? []);
-      await Promise.all(keys.map((queryKey) => qc.invalidateQueries({ queryKey })));
+      await Promise.all(withAnalytics(keys).map((queryKey) => qc.invalidateQueries({ queryKey })));
       if (config.success) toast.success(typeof config.success === "function" ? config.success(data, vars) : config.success);
       await config.onSuccess?.(data, vars);
     },
     onError: (error, vars) => {
       config.onError?.(error, vars);
+      // Maintenance mode refuses writes with 503: refetch the status so the banner appears at once.
+      if (error instanceof ApiError && error.status === 503) void qc.invalidateQueries({ queryKey: PLATFORM_STATUS_KEY });
       if (error instanceof ApiError && error.isPlanLimit) {
         if (!showUpgrade(error)) toast.warn(error.message);
         return;
@@ -141,7 +158,7 @@ export function useApiMutation<TData = unknown, TVars = void>(
 /** Refetch several keys (prefixes) at once: `const invalidate = useInvalidate(); invalidate(ws.key("tasks"))`. */
 export function useInvalidate() {
   const qc = useQueryClient();
-  return (...keys: QueryKey[]) => Promise.all(keys.map((queryKey) => qc.invalidateQueries({ queryKey })));
+  return (...keys: QueryKey[]) => Promise.all(withAnalytics(keys).map((queryKey) => qc.invalidateQueries({ queryKey })));
 }
 
 /** ["ws", workspaceId, ...parts] — the key prefix convention for workspace data. */

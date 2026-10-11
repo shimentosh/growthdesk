@@ -16,7 +16,7 @@ export function useMailboxMutations(box: Pick<Mailbox, "id" | "email">, opts: { 
   const ws = useWorkspace();
   const verify = useApiMutation<MailboxVerifyResult, void>({
     path: ws.path(`/mailboxes/${box.id}/verify`),
-    invalidate: [ws.key("mailboxes")],
+    invalidate: [ws.key("mailboxes"), ws.key("campaigns")],
     onSuccess: (r) => {
       if (r.status === "connected") toast.success(`${r.email} is working`, { description: r.checks.imap ? "SMTP and IMAP both accepted the sign-in." : "The SMTP server accepted the sign-in." });
       else toast.error(r.lastError || `${r.email} could not sign in`);
@@ -25,14 +25,14 @@ export function useMailboxMutations(box: Pick<Mailbox, "id" | "email">, opts: { 
   });
   const sync = useApiMutation<{ queued: boolean }, void>({
     path: ws.path(`/mailboxes/${box.id}/sync`),
-    invalidate: [ws.key("mailboxes")],
+    invalidate: [ws.key("mailboxes"), ws.key("campaigns")],
     success: "Checking for new mail — replies appear as they are read",
   });
   const remove = useApiMutation<{ deleted: boolean }, void>({
     method: "DELETE",
     path: ws.path(`/mailboxes/${box.id}`),
     // Only the list: refetching this mailbox's own record would 404 before the detail page navigates away.
-    invalidate: [ws.key("mailboxes", "list"), workspaceDetailKey(ws.id)],
+    invalidate: [ws.key("mailboxes", "list"), ws.key("campaigns"), workspaceDetailKey(ws.id)],
     success: `${box.email} removed`,
     errorToast: false,
     onSuccess: () => opts.onDeleted?.(),

@@ -58,7 +58,7 @@ export function SmtpConnectModal({ open, onOpenChange, onConnected }: { open: bo
 
   const connect = useApiMutation<Mailbox, SmtpMailboxInputT>({
     path: ws.path("/mailboxes/smtp"),
-    invalidate: [ws.key("mailboxes"), workspaceDetailKey(ws.id)],
+    invalidate: [ws.key("mailboxes"), ws.key("campaigns"), workspaceDetailKey(ws.id)],
     success: (box) => `${box.email} connected`,
     errorToast: false,
     onSuccess: (box) => {

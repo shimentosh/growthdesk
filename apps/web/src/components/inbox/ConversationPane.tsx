@@ -8,6 +8,8 @@ import {
   CheckSquare,
   ChevronLeft,
   Ellipsis,
+  Handshake,
+  Link2,
   Lock,
   Mail,
   MessagesSquare,
@@ -24,6 +26,7 @@ import {
 import { labelOf } from "@growthdesk/shared";
 import { AiReplyDraftButton } from "@/components/ai/AiReplyDraft";
 import { MemberPicker } from "@/components/pickers/Pickers";
+import { useContactDealActions } from "@/components/pipeline/ContactDealActions";
 import { formLevelError } from "@/components/pipeline/utils";
 import { Badge, StatusBadge } from "@/components/ui/Badge";
 import { Button, IconButton } from "@/components/ui/Button";
@@ -61,7 +64,7 @@ export function ConversationPane({ id, onBack, onShowDetails }: { id: string; on
   // Opening an unread conversation marks it read (for a role that may change it).
   const markRead = useApiMutation<unknown, void>({
     path: ws.path(`/inbox/conversations/${id}/read`),
-    invalidate: [ws.key("inbox")],
+    invalidate: [ws.key("inbox"), ws.key("tasks", "summary")],
     errorToast: false,
   });
   const marked = useRef<string | null>(null);
@@ -101,12 +104,15 @@ function Loaded({ d, onBack, onShowDetails }: { d: ConversationDetail; onBack: (
   const canAssign = ws.can("inbox.assign");
   const [taskOpen, setTaskOpen] = useState(false);
   const [customSnooze, setCustomSnooze] = useState(false);
+  const deals = useContactDealActions(
+    d.contact ? { id: d.contact.id, label: d.contact.fullName || d.contact.email || d.contact.phone || "this contact", company: d.contact.company } : null,
+  );
 
   const patch = useApiMutation<ConversationRow, PatchVars & { toast?: string }>({
     method: "PATCH",
     path: ws.path(`/inbox/conversations/${d.id}`),
     body: ({ toast: _toast, ...vars }) => vars,
-    invalidate: [ws.key("inbox")],
+    invalidate: [ws.key("inbox"), ws.key("tasks", "summary")],
     success: (_row, vars) => vars.toast ?? "Conversation updated",
   });
 
@@ -239,7 +245,7 @@ function Loaded({ d, onBack, onShowDetails }: { d: ConversationDetail; onBack: (
               </DropdownMenuContent>
             </DropdownMenu>
           )}
-          {(canWork || ws.can("tasks.write")) && (
+          {(canWork || ws.can("tasks.write") || deals.canWrite) && (
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <IconButton size="sm" label="More actions" icon={<Ellipsis />} />
@@ -255,6 +261,17 @@ function Loaded({ d, onBack, onShowDetails }: { d: ConversationDetail; onBack: (
                     Create follow-up task
                   </DropdownMenuItem>
                 )}
+                {deals.canWrite && (
+                  <>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem icon={<Handshake />} disabled={deals.pipelinesLoading || deals.noPipeline} onSelect={deals.openNew}>
+                      {deals.noPipeline ? "New deal (set up a pipeline first)" : "New deal"}
+                    </DropdownMenuItem>
+                    <DropdownMenuItem icon={<Link2 />} onSelect={deals.openLink}>
+                      Link to existing deal
+                    </DropdownMenuItem>
+                  </>
+                )}
               </DropdownMenuContent>
             </DropdownMenu>
           )}
@@ -266,6 +283,7 @@ function Loaded({ d, onBack, onShowDetails }: { d: ConversationDetail; onBack: (
       <Composer d={d} />
 
       <TaskFromConversationModal open={taskOpen} onOpenChange={setTaskOpen} conversation={d} />
+      {deals.dialogs}
       <CustomSnoozeModal
         open={customSnooze}
         onOpenChange={setCustomSnooze}
@@ -510,7 +528,7 @@ function ReplyForm({ d }: { d: ConversationDetail }) {
 
   const send = useApiMutation<InboxMessage, { body: string; subject?: string; mailboxId?: string }>({
     path: ws.path(`/inbox/conversations/${d.id}/reply`),
-    invalidate: [ws.key("inbox")],
+    invalidate: [ws.key("inbox"), ws.key("tasks", "summary"), ws.key("contacts")],
     success: "Sent",
     errorToast: false,
     onSuccess: () => {

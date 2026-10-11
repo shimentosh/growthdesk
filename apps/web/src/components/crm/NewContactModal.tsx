@@ -11,7 +11,7 @@ import { Field, FormError } from "@/components/ui/Field";
 import { Input, NativeSelect } from "@/components/ui/Input";
 import type { ApiError } from "@/lib/api";
 import { useApiMutation } from "@/lib/query";
-import { useWorkspace } from "@/lib/session";
+import { useWorkspace, workspaceDetailKey } from "@/lib/session";
 import type { ContactDetail } from "@/lib/types/crm";
 import { TagEditor } from "./Tags";
 
@@ -73,7 +73,7 @@ export function NewContactModal({
 
   const create = useApiMutation<ContactDetail, ContactInputT>({
     path: ws.path("/contacts"),
-    invalidate: [ws.key("contacts"), ws.key("companies"), ws.key("tags")],
+    invalidate: [ws.key("contacts"), ws.key("companies"), ws.key("tags"), workspaceDetailKey(ws.id)],
     success: "Contact created",
     errorToast: false,
     onSuccess: (contact) => {

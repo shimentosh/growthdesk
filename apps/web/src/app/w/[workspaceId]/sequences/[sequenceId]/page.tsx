@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, type FormEvent } from "react";
+import { useState, type FormEvent } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { useQueryClient } from "@tanstack/react-query";
 import { Copy, ListOrdered, Trash2 } from "lucide-react";
@@ -17,6 +17,7 @@ import { RequirePermission } from "@/components/ui/RequirePermission";
 import { SkeletonText } from "@/components/ui/Skeleton";
 import { toast } from "@/components/ui/Toast";
 import { StepsEditor } from "@/components/sequences/StepsEditor";
+import { useUnsavedChanges } from "@/lib/unsaved";
 import { useApiMutation, useApiQuery } from "@/lib/query";
 import { useFormat, useWorkspace } from "@/lib/session";
 import { cleanSteps, stepsOf, type SequenceBody, type SequenceDetail, type SequenceStep } from "@/lib/types/sequences";
@@ -39,12 +40,8 @@ function Builder({ sequence }: { sequence: SequenceDetail | null }) {
   const dirty = JSON.stringify(baseline) !== JSON.stringify(draft);
   const set = <K extends keyof Draft>(k: K, v: Draft[K]) => setDraft((d) => ({ ...d, [k]: v }));
 
-  useEffect(() => {
-    if (!dirty || !canWrite) return;
-    const warn = (e: BeforeUnloadEvent) => e.preventDefault();
-    window.addEventListener("beforeunload", warn);
-    return () => window.removeEventListener("beforeunload", warn);
-  }, [dirty, canWrite]);
+  // Leaving with unsaved edits asks first: reloads, closing the tab, and in-app links (the sidebar included).
+  useUnsavedChanges(dirty && canWrite, "Your changes to this sequence will be lost.");
 
   const save = useApiMutation<SequenceDetail, SequenceBody>({
     method: sequence ? "PATCH" : "POST",

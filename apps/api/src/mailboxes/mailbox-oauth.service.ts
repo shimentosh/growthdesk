@@ -86,6 +86,16 @@ export class MailboxOAuthService {
     }
   }
 
+  /** The workspace id in a state whose signature or expiry failed: only a well-formed UUID, for choosing where to redirect. */
+  private peekWorkspace(raw: string | undefined): string | null {
+    try {
+      const w = (JSON.parse(Buffer.from(String(raw ?? "").split(".")[0] ?? "", "base64url").toString("utf8")) as { w?: unknown })?.w;
+      return typeof w === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(w) ? w : null;
+    } catch {
+      return null;
+    }
+  }
+
   async start(ctx: RequestContext, provider: string) {
     if (!isOAuthProvider(provider)) throw notFound("That mailbox provider");
     const w = ws(ctx);
@@ -109,20 +119,21 @@ export class MailboxOAuthService {
 
   /** Handles the provider's redirect; returns where to send the browser next. */
   async callback(provider: string, query: { code?: string; state?: string; error?: string; error_description?: string }, ctx: RequestContext): Promise<string> {
-    if (!isOAuthProvider(provider)) return `${this.base()}/?error=${encodeURIComponent("Unknown mailbox provider")}`;
-    this.client(provider); // 503 when not configured
-    const state = this.readState(query.state);
-    if (!state || state.p !== provider) {
-      return `${this.base()}/?error=${encodeURIComponent("That sign-in link has expired or is not valid. Start connecting the mailbox again.")}`;
-    }
-    const page = `${this.base()}/w/${state.w}/settings/mailboxes`;
+    const state = isOAuthProvider(provider) ? this.readState(query.state) : null;
+    // Every outcome lands on the workspace's mailboxes page with ?error= (shown there). An expired or
+    // tampered state still names the workspace it was started from; that id only picks the page to
+    // land on (a non-member gets the app's own "not found"), never what is changed.
+    const workspaceId = state?.w ?? this.peekWorkspace(query.state);
+    const page = workspaceId ? `${this.base()}/w/${workspaceId}/settings/mailboxes` : `${this.base()}/`;
     const fail = (message: string) => `${page}?error=${encodeURIComponent(message.slice(0, 300))}`;
+    if (!isOAuthProvider(provider)) return fail("Unknown mailbox provider.");
+    if (!state || state.p !== provider) return fail("That sign-in link has expired or is not valid. Start connecting the mailbox again.");
     try {
+      this.client(provider); // not configured: its message says how to connect instead
       const box = await this.complete(provider, state, query, ctx);
       return `${page}?connected=1&mailbox=${encodeURIComponent(box.id)}`;
     } catch (e) {
       if (e instanceof FlowError) return fail(e.message);
-      if (isApiError(e) && e.status === 503) throw e;
       if (isApiError(e)) return fail(e.message);
       this.log.error(`${provider} callback failed: ${e instanceof Error ? e.stack : String(e)}`);
       return fail(`${LABEL[provider]} sign-in could not be completed. Try again.`);

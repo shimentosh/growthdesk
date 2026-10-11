@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import type { z } from "zod";
-import { BadgeCheck, ChevronDown, CircleDot, ListChecks, SquareCheckBig, Tag, Tags, Trash2, UserCheck, UserRound, UserX, Users, X } from "lucide-react";
+import { BadgeCheck, ChevronDown, CircleDot, ListChecks, Send, SquareCheckBig, Tag, Tags, Trash2, UserCheck, UserRound, UserX, Users, X } from "lucide-react";
 import { CONTACT_STATUSES, QUALIFICATIONS, labelOf, type BulkContactAction } from "@growthdesk/shared";
 import { AddToListModal } from "@/components/marketing/AddToListModal";
 import { MemberPicker } from "@/components/pickers/Pickers";
@@ -14,6 +14,7 @@ import { formatNumber } from "@/lib/format";
 import { useApiMutation } from "@/lib/query";
 import { useMe, useWorkspace } from "@/lib/session";
 import type { BulkResult } from "@/lib/types/crm";
+import { AddToCampaignModal } from "./AddToCampaignModal";
 import { TagEditor } from "./Tags";
 
 type BulkAction = Exclude<z.infer<typeof BulkContactAction>, { action: "enroll" }>;
@@ -21,8 +22,8 @@ type BulkAction = Exclude<z.infer<typeof BulkContactAction>, { action: "enroll" 
 const plural = (n: number) => `${formatNumber(n)} contact${n === 1 ? "" : "s"}`;
 
 /**
- * What can be done to the selected rows (POST /contacts/bulk). Enrolling in a
- * campaign is not here: the API sends that through the campaign instead.
+ * What can be done to the selected rows (POST /contacts/bulk). "Add to
+ * campaign" goes through the campaign instead (POST /campaigns/:id/enroll).
  */
 export function BulkActionsBar({ ids, onDone, onClear }: { ids: string[]; onDone: () => void; onClear: () => void }) {
   const ws = useWorkspace();
@@ -34,6 +35,8 @@ export function BulkActionsBar({ ids, onDone, onClear }: { ids: string[]; onDone
   const [deleting, setDeleting] = useState(false);
   const [listing, setListing] = useState(false);
   const [listed, setListed] = useState(false);
+  const [enrolling, setEnrolling] = useState(false);
+  const [enrolled, setEnrolled] = useState(false);
 
   const bulk = useApiMutation<BulkResult, BulkAction>({
     path: ws.path("/contacts/bulk"),
@@ -134,6 +137,12 @@ export function BulkActionsBar({ ids, onDone, onClear }: { ids: string[]; onDone
         </Button>
       )}
 
+      {ws.can("campaigns.launch") && (
+        <Button size="sm" icon={<Send />} onClick={() => setEnrolling(true)} disabled={bulk.isPending}>
+          Add to campaign
+        </Button>
+      )}
+
       {ws.can("contacts.delete") && (
         <Button size="sm" variant="danger" icon={<Trash2 />} onClick={() => setDeleting(true)} disabled={bulk.isPending}>
           Delete
@@ -211,6 +220,22 @@ export function BulkActionsBar({ ids, onDone, onClear }: { ids: string[]; onDone
           }}
           contactIds={ids}
           onAdded={(r) => setListed(r.added > 0)}
+        />
+      )}
+
+      {ws.can("campaigns.launch") && (
+        <AddToCampaignModal
+          open={enrolling}
+          onOpenChange={(o) => {
+            setEnrolling(o);
+            // As with lists: the selection is cleared once the result has been read.
+            if (!o && enrolled) {
+              setEnrolled(false);
+              onDone();
+            }
+          }}
+          contactIds={ids}
+          onEnrolled={(r) => setEnrolled(r.enrolled > 0)}
         />
       )}
 
