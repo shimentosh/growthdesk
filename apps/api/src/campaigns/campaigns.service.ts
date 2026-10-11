@@ -44,6 +44,7 @@ import { SKIP_LABELS, SKIP_REASONS, type Skipped, EnrollmentService } from "./en
 import { EngineService } from "./engine.service.js";
 import { StepRulesService } from "./step-rules.service.js";
 import { SequencesService, replaceSteps, stepDto } from "./sequences.service.js";
+import { replyTrackingProblem } from "../mailboxes/mailbox-upkeep.js";
 
 // ─── Request schemas ─────────────────────────────────────────────────────────
 
@@ -473,6 +474,19 @@ export class CampaignsService {
         }
       } else if (connected.length < selected.length) {
         warnings.push(`${selected.length - connected.length} of the campaign's mailboxes ${selected.length - connected.length === 1 ? "is" : "are"} not connected; emails go from the connected ones.`);
+      }
+      // Stop-on-reply only works for a sending mailbox whose replies are being read.
+      if (readSettings(c.settings).stopOnReply !== false) {
+        const senders = await this.prisma.db.mailbox.findMany({
+          where: { workspaceId: w.id, deletedAt: null, status: "connected", ...(selected.length ? { id: { in: connected.map((m) => m.id) } } : {}) },
+          select: { email: true, imapEnabled: true, imapHost: true, lastSyncedAt: true, syncError: true },
+          orderBy: { email: "asc" },
+        });
+        const now = new Date();
+        for (const box of senders) {
+          const problem = replyTrackingProblem(box, now);
+          if (problem) warnings.push(problem);
+        }
       }
     }
 

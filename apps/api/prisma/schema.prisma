@@ -1067,6 +1067,11 @@ model Mailbox {
   signature         String           @default("")
   imapUidValidity   String?
   imapUidNext       Int?
+  /// The INBOX uid the last pass could not file: the pointer is held there until it files or is given up on.
+  imapFailedUid     Int?
+  imapFailedAttempts Int             @default(0)
+  /// The Junk/Spam folder's read position: { path, uidValidity, uidNext, failedUid, failedAttempts }.
+  imapJunkState     Json?
   lastSyncedAt      DateTime?
   syncError         String           @default("")
   createdById       String?          @db.Uuid
