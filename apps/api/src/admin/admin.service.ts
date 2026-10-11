@@ -183,6 +183,7 @@ export class AdminService {
       profile: profileDetail(profile),
       hasPassword: Boolean(user.passwordHash),
       googleLinked: Boolean(user.googleSub),
+      twoFactorEnabledAt: user.totpEnabledAt,
       memberships: memberships.map((m) => ({ workspaceId: m.workspace.id, workspaceName: m.workspace.name, workspaceStatus: m.workspace.status, role: m.role, joinedAt: m.createdAt })),
       billingAccounts: accounts,
       sessions,

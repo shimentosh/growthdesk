@@ -6,9 +6,10 @@ import { OutboundEmailService } from "../src/messaging/outbound-email.service.js
 import { TRANSIENT_FAILURES_BEFORE_ERROR } from "../src/messaging/mailbox-faults.service.js";
 import { Queues, QUEUES } from "../src/queues/queues.js";
 import { seal } from "../src/common/crypto.js";
+import { localDay } from "@growthdesk/shared";
 
 /*
- * Sending reliability (docs/GAP_PLAN.md 0.6, 4.4, 4.5, 4.6, 4.11, 4.12)
+ * Sending reliability (docs/GAP_PLAN.md 0.6, 4.4, 4.5, 4.6, 4.7, 4.10, 4.11, 4.12)
  * against a fake SMTP server (test/fake-smtp.ts) that refuses "bad-*"
  * recipients with 550 5.1.1 and the password "wrong" with 535.
  */
@@ -36,8 +37,8 @@ describe("Sending reliability", () => {
   }
 
   /** A running campaign over these contacts, with every enrollment due now. */
-  async function campaign(name: string, steps: unknown[], contactIds: string[], mailboxIds: string[]): Promise<string> {
-    const id = (await owner.post(api("/campaigns")).send({ name, schedule: ALWAYS_OPEN, settings: { gapSeconds: 0 } }).expect(201)).body.data.id as string;
+  async function campaign(name: string, steps: unknown[], contactIds: string[], mailboxIds: string[], settings: Record<string, unknown> = {}): Promise<string> {
+    const id = (await owner.post(api("/campaigns")).send({ name, schedule: ALWAYS_OPEN, settings: { gapSeconds: 0, ...settings } }).expect(201)).body.data.id as string;
     await owner.patch(api(`/campaigns/${id}`)).send({ steps, mailboxIds, audience: { type: "contacts", contactIds } }).expect(200);
     await owner.post(api(`/campaigns/${id}/launch`)).expect(200);
     await t.prisma.db.enrollment.updateMany({ where: { workspaceId: w, campaignId: id }, data: { nextRunAt: new Date(Date.now() - 1000) } });
@@ -106,6 +107,57 @@ describe("Sending reliability", () => {
     expect(await t.prisma.db.message.count({ where: { workspaceId: w, campaignId: id, status: "sent" } })).toBe(1);
     const mb = await t.prisma.db.mailbox.findFirstOrThrow({ where: { id: box, workspaceId: w } });
     expect(mb.nextSendAt!.getTime()).toBeGreaterThanOrEqual(before + 59_000);
+  });
+
+  it("4.7: a start pushed onto a day that already had its new starts waits for the next day with room", async () => {
+    const box = await mailbox("quota-sender@fake.test");
+    const ids = await Promise.all([1, 2, 3].map((n) => contact({ fullName: `Quota ${n}`, email: `quota${n}@fake.test` })));
+    // One new contact a day. Launch spreads them over three days; forcing all three due now is what a
+    // reschedule (mailbox full, kill switch, pacing) can do to starts planned for earlier days.
+    const id = await campaign("Quota test", [{ type: "email", config: { subject: "Hi", body: "Hello." } }], ids, [box], { dailyNewLimit: 1 });
+    const [a, b, c] = await enrollments(id);
+    const today = localDay(new Date(), "UTC");
+    expect(await engine.runStep(w, a!.id, a!.stepRun)).toMatchObject({ outcome: "completed" });
+
+    const second = await engine.runStep(w, b!.id, b!.stepRun);
+    expect(second.outcome).toBe("rescheduled");
+    const day2 = localDay(second.nextRunAt!, "UTC");
+    expect(day2 > today).toBe(true);
+    // The next pushed start skips the day the previous one now holds.
+    const third = await engine.runStep(w, c!.id, c!.stepRun);
+    expect(third.outcome).toBe("rescheduled");
+    expect(localDay(third.nextRunAt!, "UTC") > day2).toBe(true);
+    expect(await t.prisma.db.message.count({ where: { workspaceId: w, campaignId: id } })).toBe(1);
+    expect((await t.prisma.db.enrollment.findFirstOrThrow({ where: { id: b!.id, workspaceId: w } })).nextRunAt).toEqual(second.nextRunAt);
+  });
+
+  it("4.10: with stop-on-reply, follow-ups wait while the thread's mailbox has not had its replies read", async () => {
+    const box = await mailbox("stale-sync@fake.test");
+    // Reply tracking on, but the last successful read was two hours ago (a failing sync looks the same).
+    await t.prisma.db.mailbox.update({ where: { id: box, workspaceId: w }, data: { imapEnabled: true, imapHost: "127.0.0.1", lastSyncedAt: new Date(Date.now() - 2 * 3600_000), syncError: "Connection refused" } });
+    const ids = await Promise.all(["stops", "ignores"].map((n) => contact({ fullName: n, email: `${n}-reply@fake.test` })));
+    const step = [{ type: "email", config: { subject: "Following up", body: "Any thoughts?" } }];
+    const stops = await campaign("Stale sync", step, [ids[0]!], [box]);
+    const ignores = await campaign("Stale sync, no stop", step, [ids[1]!], [box], { stopOnReply: false });
+    // The thread already went out from this mailbox (the sticky sender).
+    for (const c of [stops, ignores]) await t.prisma.db.enrollment.updateMany({ where: { workspaceId: w, campaignId: c }, data: { mailboxId: box } });
+
+    const [held] = await enrollments(stops);
+    const before = Date.now();
+    const out = await engine.runStep(w, held!.id, held!.stepRun);
+    expect(out.outcome).toBe("rescheduled");
+    expect(out.reason).toMatch(/^Waiting for replies to be read before sending: Reading replies for stale-sync@fake.test is failing/);
+    expect(out.nextRunAt!.getTime()).toBeGreaterThanOrEqual(before + 14 * 60_000);
+    expect(await t.prisma.db.message.count({ where: { workspaceId: w, campaignId: stops } })).toBe(0);
+    expect((await t.prisma.db.enrollment.findFirstOrThrow({ where: { id: held!.id, workspaceId: w } })).status).toBe("active");
+
+    // A campaign that does not stop on reply is not held.
+    const [free] = await enrollments(ignores);
+    expect(await engine.runStep(w, free!.id, free!.stepRun)).toMatchObject({ outcome: "completed" });
+
+    // Replies read again: the held follow-up goes out.
+    await t.prisma.db.mailbox.update({ where: { id: box, workspaceId: w }, data: { lastSyncedAt: new Date(), syncError: "" } });
+    expect(await engine.runStep(w, held!.id, held!.stepRun)).toMatchObject({ outcome: "completed" });
   });
 
   it("4.5: one transient failure does not stop a mailbox; repeated ones do, and admins are told once", async () => {

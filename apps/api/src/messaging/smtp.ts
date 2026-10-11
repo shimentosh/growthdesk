@@ -1,3 +1,4 @@
+import net from "node:net";
 import nodemailer, { type Transporter } from "nodemailer";
 
 /*
@@ -7,6 +8,12 @@ import nodemailer, { type Transporter } from "nodemailer";
  * fingerprint of the credentials, so a changed password or refreshed OAuth
  * token can never keep using a stale pooled connection; and XOAUTH2 is
  * supported for Gmail / Microsoft 365 mailboxes.
+ *
+ * DNS rebinding (GAP_PLAN 2.10): the caller may pass `address`, the IP that
+ * net-guard's resolvePinnedTarget vetted. The socket then opens to exactly
+ * that address, while `host` stays the name the TLS certificate (and SNI) is
+ * checked against, so a name that answers differently a moment later cannot
+ * steer the connection somewhere else.
  */
 
 export type SmtpAuth = { user: string; pass: string } | { user: string; accessToken: string };
@@ -14,6 +21,8 @@ export type SmtpAuth = { user: string; pass: string } | { user: string; accessTo
 export type SmtpSettings = {
   mailboxId: string;
   host: string;
+  /** The vetted IP to connect to instead of resolving `host` again (resolvePinnedTarget). */
+  address?: string;
   port: number;
   security: string;
   auth: SmtpAuth;
@@ -80,8 +89,33 @@ export function classifySmtpError(e: unknown): SendFailure {
   return { error, outcome: "unknown", mailboxAtFault: false };
 }
 
+// The address is part of it: when the name starts answering with another vetted IP, a fresh transport connects there.
 const fingerprint = (s: SmtpSettings) =>
-  [s.host, s.port, s.security, s.auth.user, "pass" in s.auth ? s.auth.pass : s.auth.accessToken].join("|");
+  [s.host, s.address ?? "", s.port, s.security, s.auth.user, "pass" in s.auth ? s.auth.pass : s.auth.accessToken].join("|");
+
+/**
+ * nodemailer options for one mailbox. With a pinned `address` the socket goes
+ * to that IP and `servername` carries the name for SNI and the certificate
+ * check (nodemailer hands it to tls.connect for both implicit TLS and
+ * STARTTLS). An IP literal host has no name to check, so none is set.
+ */
+export function transportOptions(s: SmtpSettings) {
+  const address = s.address && s.address !== s.host ? s.address : null;
+  const servername = address && !net.isIP(s.host) ? s.host : undefined;
+  return {
+    host: address ?? s.host,
+    port: s.port,
+    ...(servername ? { servername } : {}),
+    // 465 is TLS from the first byte; 587/25 start plain and upgrade with STARTTLS.
+    secure: s.security === "ssl" || s.port === 465,
+    requireTLS: s.security === "starttls",
+    ignoreTLS: s.security === "none",
+    auth: "pass" in s.auth ? { user: s.auth.user, pass: s.auth.pass } : { type: "OAuth2" as const, user: s.auth.user, accessToken: s.auth.accessToken },
+    tls: { rejectUnauthorized: !s.allowSelfSigned, ...(servername ? { servername } : {}) },
+    connectionTimeout: 15_000,
+    greetingTimeout: 15_000,
+  };
+}
 
 /*
  * Pooled transports, one per mailbox. A transport is never closed while it
@@ -137,20 +171,11 @@ export class TransportPool {
 
 const pool = new TransportPool((s) =>
   nodemailer.createTransport({
-    host: s.host,
-    port: s.port,
-    // 465 is TLS from the first byte; 587/25 start plain and upgrade with STARTTLS.
-    secure: s.security === "ssl" || s.port === 465,
-    requireTLS: s.security === "starttls",
-    ignoreTLS: s.security === "none",
-    auth: "pass" in s.auth ? { user: s.auth.user, pass: s.auth.pass } : { type: "OAuth2", user: s.auth.user, accessToken: s.auth.accessToken },
-    tls: { rejectUnauthorized: !s.allowSelfSigned },
+    ...transportOptions(s),
     pool: true,
     // One connection per mailbox: pacing, not throughput, is what protects a sending domain.
     maxConnections: 1,
     maxMessages: 100,
-    connectionTimeout: 15_000,
-    greetingTimeout: 15_000,
     socketTimeout: 60_000,
   }),
 );
@@ -189,18 +214,7 @@ export async function sendSmtp(s: SmtpSettings, mail: OutgoingMail): Promise<Sen
 
 /** Opens a connection and authenticates, without sending (used when connecting a mailbox). */
 export async function verifySmtp(s: SmtpSettings): Promise<{ ok: true } | { ok: false; error: string }> {
-  const t = nodemailer.createTransport({
-    host: s.host,
-    port: s.port,
-    secure: s.security === "ssl" || s.port === 465,
-    requireTLS: s.security === "starttls",
-    ignoreTLS: s.security === "none",
-    auth: "pass" in s.auth ? { user: s.auth.user, pass: s.auth.pass } : { type: "OAuth2", user: s.auth.user, accessToken: s.auth.accessToken },
-    tls: { rejectUnauthorized: !s.allowSelfSigned },
-    connectionTimeout: 15_000,
-    greetingTimeout: 15_000,
-    socketTimeout: 30_000,
-  });
+  const t = nodemailer.createTransport({ ...transportOptions(s), socketTimeout: 30_000 });
   try {
     await t.verify();
     return { ok: true };

@@ -1,4 +1,4 @@
-import { ERROR_RECHECK_MS, HEALTHY_RECHECK_MS, SYNC_STALE_MS, healthCheckDue, replyTrackingProblem, syncBlockedBySignIn } from "./mailbox-upkeep.js";
+import { ERROR_RECHECK_MS, HEALTHY_RECHECK_MS, SYNC_STALE_MS, healthCheckDue, replyTrackingProblem, replyTrackingStalled, syncBlockedBySignIn } from "./mailbox-upkeep.js";
 
 describe("syncBlockedBySignIn", () => {
   it("holds back syncing only while the IMAP or OAuth sign-in is known broken", () => {
@@ -47,5 +47,22 @@ describe("replyTrackingProblem", () => {
     expect(replyTrackingProblem({ ...box, syncError: "Connection refused" }, now)).toMatch(/failing \(Connection refused\)/);
     expect(replyTrackingProblem({ ...box, lastSyncedAt: null }, now)).toMatch(/not been read yet/);
     expect(replyTrackingProblem({ ...box, lastSyncedAt: new Date(now.getTime() - SYNC_STALE_MS) }, now)).toMatch(/last read 30 minutes ago/);
+  });
+});
+
+describe("replyTrackingStalled", () => {
+  const now = new Date("2026-10-10T12:00:00.000Z");
+  const box = { imapEnabled: true, imapHost: "imap.acme.test", lastSyncedAt: new Date(now.getTime() - 60_000) };
+
+  it("holds follow-ups only when replies are on but have not been read lately (or ever)", () => {
+    expect(replyTrackingStalled(box, now)).toBe(false);
+    expect(replyTrackingStalled({ ...box, lastSyncedAt: new Date(now.getTime() - SYNC_STALE_MS + 1000) }, now)).toBe(false);
+    expect(replyTrackingStalled({ ...box, lastSyncedAt: new Date(now.getTime() - SYNC_STALE_MS) }, now)).toBe(true);
+    expect(replyTrackingStalled({ ...box, lastSyncedAt: null }, now)).toBe(true);
+  });
+
+  it("never holds for a mailbox with IMAP off: a setting, not a stall", () => {
+    expect(replyTrackingStalled({ ...box, imapEnabled: false, lastSyncedAt: null }, now)).toBe(false);
+    expect(replyTrackingStalled({ ...box, imapHost: "", lastSyncedAt: null }, now)).toBe(false);
   });
 });

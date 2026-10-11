@@ -4,6 +4,7 @@ import { APP_CONFIG, type AppConfig } from "../config/config.js";
 import { PrismaService } from "../prisma/prisma.service.js";
 import { Prisma, type Mailbox } from "../generated/prisma/client.js";
 import { MailboxAuthService } from "../messaging/mailbox-auth.service.js";
+import { MailboxFaultService } from "../messaging/mailbox-faults.service.js";
 import { imapClient, imapErrorText, isImapAuthError } from "./imap.js";
 import { assertReachableTarget, isLocalHost } from "./net-guard.js";
 import { parseMail } from "./inbound-parse.js";
@@ -80,8 +81,10 @@ export function onMessageFailure(cursor: Pick<FolderCursor, "failedUid" | "faile
  *     a message we sent is filed from there (InboundEmailService).
  *
  * Credentials come from MailboxAuthService (password, or an OAuth access
- * token for XOAUTH2). An authentication failure marks the mailbox as errored;
- * anything else is recorded as `syncError` and retried by the next pass.
+ * token for XOAUTH2). An authentication failure puts the mailbox in error
+ * through MailboxFaultService, which tells owners and admins once, on the
+ * move from connected; anything else is recorded as `syncError` and retried
+ * by the next pass.
  */
 @Injectable()
 export class ImapSyncService {
@@ -91,6 +94,7 @@ export class ImapSyncService {
     private readonly prisma: PrismaService,
     private readonly auth: MailboxAuthService,
     private readonly inbound: InboundEmailService,
+    private readonly faults: MailboxFaultService,
     @Inject(APP_CONFIG) private readonly config: AppConfig,
   ) {}
 
@@ -103,9 +107,13 @@ export class ImapSyncService {
 
     const fail = async (error: string, authFailed: boolean) => {
       result.error = error;
+      const lastError = `IMAP sign-in failed: ${error}`.slice(0, 500);
+      // connected → error, and the one notification for that move. A mailbox already in error (or
+      // disconnected) is not moved or announced again; its error text is still brought up to date.
+      if (authFailed) await this.faults.failed(box, lastError, false);
       await db.mailbox.update({
         where: { id: box.id, workspaceId },
-        data: { syncError: error.slice(0, 1000), ...(authFailed ? { status: "error", lastError: `IMAP sign-in failed: ${error}`.slice(0, 500), lastCheckedAt: new Date() } : {}) },
+        data: { syncError: error.slice(0, 1000), ...(authFailed ? { lastCheckedAt: new Date(), ...(box.status === "error" ? { lastError } : {}) } : {}) },
       });
       return result;
     };

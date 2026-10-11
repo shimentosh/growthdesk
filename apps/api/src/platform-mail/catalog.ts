@@ -97,6 +97,17 @@ export const PLATFORM_TEMPLATE_DEFAULTS: Record<PlatformTemplateKey, PlatformTem
       ),
     ],
   },
+  two_factor_reset: {
+    subject: "Two-factor authentication was turned off for your {{product_name}} account",
+    preheader: "",
+    blocks: [
+      heading("h", "Two-factor authentication was reset"),
+      text(
+        "t",
+        "Hi {{name|there}},\n\nAt your request, our support team turned off two-factor authentication for your {{product_name}} account and signed it out everywhere. Your old recovery codes no longer work.\n\nSign in with your password and set up two-factor again from your account settings. If you did not ask for this, contact {{support_email|our support team}} right away.",
+      ),
+    ],
+  },
   account_deleted: {
     subject: "Your {{product_name}} account has been deleted",
     preheader: "",

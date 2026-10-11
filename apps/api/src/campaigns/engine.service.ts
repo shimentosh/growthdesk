@@ -7,9 +7,11 @@ import {
   branchPosition,
   evaluate,
   isOpenNow,
+  localDay,
   missingVariables,
   nextOpening,
   nextPosition,
+  planStarts,
   renderTemplate,
   threadOf,
   variablesFor,
@@ -28,6 +30,7 @@ import { NotificationsService } from "../notifications/notifications.service.js"
 import { CHAT_SENDER, type ChatSender } from "../channels/chat-sender.js";
 import { EntitlementsService } from "../billing/entitlements.service.js";
 import { PlatformSettingsService } from "../core/platform-settings.service.js";
+import { replyTrackingProblem, replyTrackingStalled } from "../mailboxes/mailbox-upkeep.js";
 import {
   ACTION_STEPS,
   MESSAGE_STEPS,
@@ -41,6 +44,7 @@ import {
   updateFieldTrouble,
 } from "./campaign-config.js";
 import { StepRulesService } from "./step-rules.service.js";
+import { EnrollmentService } from "./enrollment.service.js";
 
 /*
  * The durable sequence engine.
@@ -69,7 +73,13 @@ import { StepRulesService } from "./step-rules.service.js";
  *     and never retried;
  *   - a step job that keeps throwing is counted (errorCount): it backs off,
  *     and after MAX_ERRORS the enrollment fails and the campaign owner is told,
- *     instead of the step being re-claimed forever with no trace.
+ *     instead of the step being re-claimed forever with no trace;
+ *   - a first step is checked against the campaign's dailyNewLimit when it
+ *     runs, so a start the engine pushed back (mailbox full, pacing, kill
+ *     switch) cannot land on a day that already had its quota of new starts;
+ *   - with stop-on-reply on, a message step waits while the mailbox the thread
+ *     went out from has not had its replies read recently, instead of sending
+ *     a follow-up to someone whose reply nobody has seen yet.
  */
 
 const LEASE_MINUTES = 5;
@@ -82,6 +92,8 @@ const CLAIM_BATCH = 500;
 const KEEP_FAILED_JOBS = { age: 7 * 24 * 3600, count: 5000 };
 /** At most one "steps are failing" notification per campaign in this window. */
 const ENGINE_ALERT_WINDOW_MS = HOUR_MS;
+/** How long a message step waits before looking again at a mailbox whose replies have not been read. */
+const REPLY_SYNC_RECHECK_MS = 15 * 60_000;
 
 const CONTACT_INCLUDE = {
   company: { select: { name: true, domain: true } },
@@ -138,6 +150,7 @@ export class EngineService {
     private readonly rules: StepRulesService,
     private readonly entitlements: EntitlementsService,
     private readonly platform: PlatformSettingsService,
+    private readonly enrollment: EnrollmentService,
     @Inject(APP_CONFIG) private readonly config: AppConfig,
     @Optional() @Inject(CHAT_SENDER) private readonly chat?: ChatSender,
   ) {}
@@ -384,6 +397,11 @@ export class EngineService {
     if (!isOpenNow(run.schedule, run.now)) {
       return this.reschedule(run, retry?.position ?? e.position, nextOpening(run.schedule, run.now), null);
     }
+    // Not started yet (stepRun 0, nothing half-done): the first step counts against today's new starts.
+    if (!retry && e.stepRun === 0) {
+      const later = await this.dailyStartHold(run);
+      if (later) return this.reschedule(run, e.position, later, null);
+    }
     if (retry) return this.execute(run, retry.position, retry);
     return this.walk(run);
   }
@@ -404,6 +422,50 @@ export class EngineService {
       settings: readSettings(campaign.settings),
       now: new Date(),
     };
+  }
+
+  /**
+   * When today (in the campaign's zone) already has `dailyNewLimit` first
+   * steps, the next start planStarts allows (as enroll would have placed it),
+   * else null. Enrollment plans starts within the limit, but every engine
+   * reschedule of a not-yet-started enrollment (mailbox full, plan limit,
+   * kill switch, pacing) moves it without looking at the quota, so the check
+   * is made here, when the first step is about to run. Concurrent first steps
+   * of one campaign can each read the count before the others write theirs;
+   * per-mailbox pacing keeps that overshoot to a handful.
+   */
+  private async dailyStartHold(run: Run): Promise<Date | null> {
+    const { workspaceId, campaign, schedule, settings, now, e } = run;
+    const tz = schedule.timezone;
+    const today = localDay(now, tz);
+    const started = await this.enrollment.dayLoads(workspaceId, campaign, now, { waiting: false });
+    if ((started.get(today)?.count ?? 0) < settings.dailyNewLimit) return null;
+    const taken = await this.enrollment.dayLoads(workspaceId, campaign, now);
+    // This enrollment is one of the waiting starts it counts; it is the one being placed.
+    const own = taken.get(localDay(e.nextRunAt ?? now, tz));
+    if (own) own.count = Math.max(0, own.count - 1);
+    const [at] = planStarts(schedule, [now], { limit: settings.dailyNewLimit, gapMs: settings.gapSeconds * 1000, taken });
+    return at ?? null;
+  }
+
+  /**
+   * Why a message step should wait for replies to be read, or null. Only with
+   * stop-on-reply on and once a thread exists (the enrollment's sticky
+   * mailbox): a reply goes to the mailbox that sent the first email, and a
+   * reply nobody has read cannot stop the sequence. replyTrackingStalled
+   * decides: IMAP on but no successful pass in the last SYNC_STALE_MS, which
+   * is also what a failing sync turns into. IMAP off never holds — that was a
+   * choice made at launch, which readiness warns about, and waiting would not
+   * end.
+   */
+  private async replyHold(run: Run): Promise<string | null> {
+    if (run.settings.stopOnReply === false || !run.e.mailboxId) return null;
+    const box = await this.prisma.db.mailbox.findFirst({
+      where: { id: run.e.mailboxId, workspaceId: run.workspaceId, deletedAt: null },
+      select: { email: true, imapEnabled: true, imapHost: true, lastSyncedAt: true, syncError: true },
+    });
+    if (!box || !replyTrackingStalled(box, run.now)) return null;
+    return replyTrackingProblem(box, run.now);
   }
 
   /** Resolves an execution an earlier run of this same stepRun left behind. */
@@ -542,9 +604,15 @@ export class EngineService {
     return facts;
   }
 
-  private execute(run: Run, pos: number, retry: Retry | null): Promise<StepOutcome> {
+  private async execute(run: Run, pos: number, retry: Retry | null): Promise<StepOutcome> {
     const step = run.steps[pos];
     if (!step) return this.complete(run, pos, "Finished the sequence");
+    if (MESSAGE_STEPS.has(step.type)) {
+      const hold = await this.replyHold(run);
+      if (hold) {
+        return this.reschedule(run, pos, nextOpening(run.schedule, new Date(run.now.getTime() + REPLY_SYNC_RECHECK_MS)), `Waiting for replies to be read before sending: ${hold}`);
+      }
+    }
     switch (step.type) {
       case "email":
         return this.emailStep(run, pos, retry);

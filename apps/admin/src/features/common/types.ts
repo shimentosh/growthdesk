@@ -51,6 +51,8 @@ export type AdminAuditRow = {
 export type AdminUserDetail = AdminUserRow & {
   hasPassword: boolean;
   googleLinked: boolean;
+  /** When two-factor was turned on, or null when it is off. */
+  twoFactorEnabledAt: string | null;
   memberships: { workspaceId: string; workspaceName: string; workspaceStatus: string; role: WorkspaceRole; joinedAt: string }[];
   billingAccounts: { id: string; name: string }[];
   sessions: { id: string; ip: string; userAgent: string; createdAt: string; lastSeenAt: string }[];

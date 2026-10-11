@@ -9,7 +9,8 @@ import { InboundEmailService } from "../src/mailboxes/inbound-email.service.js";
  * server (127.0.0.1:3943, any x@growthdesk.test signs in with its own address
  * as password) and read by ImapSyncService, as the worker's sync job does.
  * Covers quoted opt-out footers, machine mail, the Junk folder, a failing
- * message holding the UID pointer, and the reply-tracking readiness warning.
+ * message holding the UID pointer, the reply-tracking readiness warning, and
+ * a refused IMAP sign-in.
  */
 
 const RUN = Date.now().toString(36);
@@ -254,5 +255,29 @@ describe("Inbound mail", () => {
     // A campaign that does not stop on reply has nothing to warn about.
     await t.prisma.db.campaign.update({ where: { id: campaignId, workspaceId: w }, data: { settings: { stopOnReply: false } } });
     expect((await warnings()).filter((m) => m.includes(BOX))).toEqual([]);
+  });
+
+  it("a refused IMAP sign-in puts the mailbox in error and tells owners and admins once", async () => {
+    // GreenMail takes any password, so the refusal comes from the credentials step: a stored
+    // password that cannot be opened is the same "sign in again" failure as a 535 from the server.
+    await t.prisma.db.mailbox.update({ where: { id: boxId, workspaceId: w }, data: { imapEnabled: true, status: "connected", lastError: "", secretSealed: "not-a-sealed-secret" } });
+    const alerts = () => t.prisma.db.notification.findMany({ where: { workspaceId: w, type: "mailbox.error" } });
+    expect(await alerts()).toHaveLength(0);
+
+    const first = await sync();
+    expect(first.error).toMatch(/could not be read/);
+    const after = await box();
+    expect(after).toMatchObject({ status: "error" });
+    expect(after.lastError).toMatch(/^IMAP sign-in failed: /);
+    expect(after.syncError).toBe(first.error);
+    expect(after.lastCheckedAt).not.toBeNull();
+    const sent = await alerts();
+    expect(sent).toHaveLength(1);
+    expect(sent[0]).toMatchObject({ userId: owner.userId, link: `/w/${w}/settings/mailboxes/${boxId}` });
+
+    // Still refused: no second notification for a mailbox already in error.
+    await sync();
+    expect(await alerts()).toHaveLength(1);
+    expect((await box()).status).toBe("error");
   });
 });

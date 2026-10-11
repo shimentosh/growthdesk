@@ -17,6 +17,7 @@ export const PLATFORM_TEMPLATE_KEYS = [
   "trial_ended",
   "email_changed",
   "account_deleted",
+  "two_factor_reset",
   "waitlist_confirmed",
   "signup_invite",
   "account_exists",
@@ -104,6 +105,12 @@ export const PLATFORM_TEMPLATES: Record<
   },
   account_deleted: {
     label: "Account deleted",
+    category: "account",
+    variables: [],
+    required: [],
+  },
+  two_factor_reset: {
+    label: "Two-factor reset by support",
     category: "account",
     variables: [],
     required: [],

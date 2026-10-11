@@ -22,8 +22,9 @@ import { badRequest } from "../common/errors.js";
  * DNS rebinding: assertReachableTarget only checks, and nodemailer/imapflow
  * resolve the name again when they connect, so an answer that changes between
  * the two is not caught. resolvePinnedTarget closes that gap by returning the
- * vetted address to connect to. The sync worker re-runs the check before every
- * pass; the SMTP send path (messaging/smtp.ts) does not pin yet (GAP_PLAN 2.10).
+ * vetted address to connect to: the SMTP send path (OutboundEmailService ->
+ * messaging/smtp.ts) and the SMTP sign-in checks connect to it. The sync
+ * worker re-runs the check before every pass.
  */
 
 /** Ports a mail server legitimately listens on (SMTP, submission, alt-submission, IMAP, POP). */
@@ -82,7 +83,8 @@ export type PinnedTarget = { address: string; servername: string };
 export async function resolvePinnedTarget(host: string, port: number, label: "SMTP" | "IMAP", allowPrivate: boolean, resolve: Lookup = systemLookup): Promise<PinnedTarget> {
   const name = (host ?? "").trim().toLowerCase();
   const addresses = await vetTarget(host, port, label, allowPrivate, resolve);
-  return { address: addresses[0] ?? name, servername: name };
+  // IPv4 first, as nodemailer itself resolves: a host without an IPv6 route still reaches a dual-stack server.
+  return { address: addresses.find((a) => net.isIPv4(a)) ?? addresses[0] ?? name, servername: name };
 }
 
 /** Every address the name resolves to, after checking them all (empty with allowPrivate: nothing was resolved). */

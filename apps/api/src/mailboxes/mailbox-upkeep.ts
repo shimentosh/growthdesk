@@ -53,3 +53,18 @@ export function replyTrackingProblem(box: ReplyTrackingState, now: Date): string
   if (age >= SYNC_STALE_MS) return `Replies to ${box.email} were last read ${Math.round(age / 60_000)} minutes ago, so stop-on-reply may act late.`;
   return null;
 }
+
+/**
+ * Whether follow-ups sent from this mailbox should wait (EngineService, for
+ * stop-on-reply campaigns): reply tracking is on, but no sync pass has
+ * succeeded within SYNC_STALE_MS, or none ever has. A failing sync never moves
+ * lastSyncedAt, so it goes stale too, after the same 30 minutes, so one
+ * passing blip does not stall every thread. Notes about single unreadable
+ * messages on a pass that succeeded hold nothing: replies are being read.
+ * IMAP off returns false: that is a setting, not a stall, and waiting for it
+ * would never end (launch readiness warns about it instead).
+ */
+export function replyTrackingStalled(box: Pick<ReplyTrackingState, "imapEnabled" | "imapHost" | "lastSyncedAt">, now: Date): boolean {
+  if (!box.imapEnabled || !box.imapHost) return false;
+  return !box.lastSyncedAt || now.getTime() - box.lastSyncedAt.getTime() >= SYNC_STALE_MS;
+}

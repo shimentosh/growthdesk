@@ -19,7 +19,7 @@ import { AdminUsersService } from "./admin-users.service.js";
 /*
  * /v1/admin/… — platform user management (super-admin Phase 3).
  * support: resend verification, notes, tags.
- * admin: verify email, password reset, change email, CSV export, waitlist, sign-up invitations.
+ * admin: verify email, password reset, change email, two-factor reset, CSV export, waitlist, sign-up invitations.
  * owner: delete (anonymise).
  *
  * Registered before AdminController so `users/export.csv` is matched here
@@ -86,6 +86,13 @@ export class AdminUsersController {
   @Put("users/:id/email")
   changeEmail(@Ctx() ctx: RequestContext, @Param("id") id: string, @Body(AdminChangeEmailInput) body: z.infer<typeof AdminChangeEmailInput>) {
     return this.users.changeEmail(ctx, id, body.email);
+  }
+
+  @Platform("admin")
+  @HttpCode(200)
+  @Post("users/:id/two-factor/reset")
+  resetTwoFactor(@Ctx() ctx: RequestContext, @Param("id") id: string) {
+    return this.users.resetTwoFactor(ctx, id);
   }
 
   @Platform("admin")
