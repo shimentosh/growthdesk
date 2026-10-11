@@ -1,0 +1,19 @@
+# Build context hygiene: nothing from the host's installs, builds or secrets
+# reaches an image. The Dockerfiles install, generate and build inside.
+.git
+**/node_modules
+**/.next
+**/dist
+**/dist-worker
+**/*.tsbuildinfo
+**/coverage
+**/test-results
+**/playwright-report
+apps/api/src/generated
+**/.DS_Store
+
+# Secrets: real env files never enter a build context.
+**/.env
+**/.env.*
+!**/.env.example
+!.env.production.example

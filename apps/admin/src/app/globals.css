@@ -1,0 +1,594 @@
+@import "tailwindcss";
+
+/*
+ * Growthdesk design tokens.
+ *
+ * Ported from LinkDesk's token layer (packages/core/src/globals.css): neutral
+ * oklch greys, a near-black solid primary that inverts in dark mode, blue only
+ * for actions / focus / selection, status colour as soft 8% chips, 1px
+ * hairlines, one radius that the whole scale derives from.
+ *
+ * Three ways to land on an appearance:
+ *   <html>              no class   → follows the OS (prefers-color-scheme)
+ *   <html class="light">           → light, whatever the OS says
+ *   <html class="dark">            → dark, whatever the OS says
+ * The class comes from the `gd_theme` cookie (src/lib/theme.ts), read on the
+ * server, so the first paint is already right.
+ *
+ * Components never name a colour: they use the Tailwind colours mapped from
+ * these tokens in `@theme inline` below (bg-panel, text-text-2, border-line,
+ * bg-solid, text-accent …). Tailwind's default palette is switched off on
+ * purpose, so `bg-blue-500` does not exist and cannot drift from the system.
+ */
+
+:root {
+  color-scheme: light;
+
+  /* Apple's grouped look: a soft grey ground, white panels floating on it. */
+  --bg: #f5f5f7;
+  --bg-deep: #f5f5f7;
+
+  --mat-sidebar: #ececf0;
+  --mat-panel: #ffffff;
+  --mat-popover: #ffffff;
+
+  --ctl: rgba(0, 0, 0, 0.04);
+  --ctl-hover: rgba(0, 0, 0, 0.07);
+  --ctl-active: rgba(0, 0, 0, 0.1);
+  --ctl-face: #ffffff;
+  --hover: rgba(0, 0, 0, 0.04);
+  --field: #ffffff;
+  --well: rgba(0, 0, 0, 0.045);
+  --sidebar-accent: rgba(0, 0, 0, 0.055);
+
+  --line: rgba(0, 0, 0, 0.07);
+  --line-strong: rgba(0, 0, 0, 0.13);
+
+  --elev-card: 0 0.5px 1px rgba(0, 0, 0, 0.04), 0 1px 3px rgba(0, 0, 0, 0.03);
+  --elev-sm: 0 1px 2px rgba(0, 0, 0, 0.05);
+  --elev-md: 0 6px 16px -6px rgba(0, 0, 0, 0.12), 0 1px 3px rgba(0, 0, 0, 0.04);
+  --elev-lg: 0 16px 40px -14px rgba(0, 0, 0, 0.18), 0 2px 6px rgba(0, 0, 0, 0.04);
+  --elev-sheet: 0 28px 70px -20px rgba(0, 0, 0, 0.28), 0 0 0 0.5px rgba(0, 0, 0, 0.06);
+  --solid-sheen: inset 0 1px 0 rgba(255, 255, 255, 0.18);
+
+  --radius: 0.75rem;
+  --r-xs: calc(var(--radius) - 4px);
+  --r-sm: calc(var(--radius) - 2px);
+  --r-md: var(--radius);
+  --r-lg: calc(var(--radius) + 2px);
+  --r-xl: calc(var(--radius) + 6px);
+
+  /* Apple label greys: primary, secondary, tertiary (tertiary still passes 4.5:1 on white). */
+  --text: #1d1d1f;
+  --text-2: #48484c;
+  --text-3: #6e6e73;
+  --text-hi: #000000;
+
+  --solid: #1d1d1f;
+  --solid-hover: #000000;
+  --on-solid: #ffffff;
+
+  /* Apple system blue. */
+  --accent: #0071e3;
+  --accent-hi: #0077ed;
+  --accent-deep: #0062c4;
+  --accent-soft: rgba(0, 113, 227, 0.1);
+  --accent-ring: rgba(0, 113, 227, 0.32);
+  --accent-ink: #0066cc;
+  --on-accent: #ffffff;
+  --tint-pick: rgba(0, 113, 227, 0.07);
+  --tint-pick-hi: rgba(0, 113, 227, 0.11);
+
+  --ok: oklch(0.596 0.145 163.225);
+  --ok-soft: rgba(5, 150, 105, 0.12);
+  --ok-ink: oklch(0.508 0.118 165.612);
+  --ok-chip: rgba(5, 150, 105, 0.08);
+  --warn: oklch(0.646 0.152 70.08);
+  --warn-soft: rgba(217, 119, 6, 0.12);
+  --warn-ink: oklch(0.555 0.135 66.442);
+  --warn-chip: rgba(217, 119, 6, 0.08);
+  --bad: oklch(0.577 0.245 27.325);
+  --bad-soft: rgba(220, 38, 38, 0.1);
+  --bad-ink: oklch(0.505 0.213 27.518);
+  --bad-chip: rgba(220, 38, 38, 0.08);
+  --alt: oklch(0.558 0.288 302.321);
+  --alt-ink: oklch(0.496 0.265 301.924);
+  --alt-chip: rgba(147, 51, 234, 0.08);
+  --a-chip: rgba(0, 113, 227, 0.08);
+  --mute-chip: rgba(0, 0, 0, 0.05);
+
+  /* Contrast ladder against the ground — the one family that inverts. */
+  --s-1: rgba(0, 0, 0, 0.012);
+  --s-2: rgba(0, 0, 0, 0.025);
+  --s-3: rgba(0, 0, 0, 0.04);
+  --s-4: rgba(0, 0, 0, 0.06);
+  --s-5: rgba(0, 0, 0, 0.09);
+  --s-6: rgba(0, 0, 0, 0.14);
+  --s-7: rgba(0, 0, 0, 0.22);
+  --s-8: rgba(0, 0, 0, 0.38);
+
+  /* Washes, for toasts and callouts. */
+  --a-1: rgba(0, 113, 227, 0.06);
+  --a-3: rgba(0, 113, 227, 0.16);
+  --ok-1: rgba(5, 150, 105, 0.08);
+  --ok-3: rgba(5, 150, 105, 0.3);
+  --warn-1: rgba(217, 119, 6, 0.08);
+  --warn-3: rgba(217, 119, 6, 0.3);
+  --bad-1: rgba(220, 38, 38, 0.07);
+  --bad-3: rgba(220, 38, 38, 0.26);
+
+  --scrim: rgba(0, 0, 0, 0.32);
+
+  /* Apple system colours, for icon tiles (IconTile) — the same in both appearances. */
+  --tint-blue: #007aff;
+  --tint-cyan: #32ade6;
+  --tint-teal: #30b0c7;
+  --tint-mint: #00c7be;
+  --tint-green: #34c759;
+  --tint-yellow: #ffcc00;
+  --tint-orange: #ff9500;
+  --tint-red: #ff3b30;
+  --tint-pink: #ff2d55;
+  --tint-purple: #af52de;
+  --tint-indigo: #5856d6;
+  --tint-brown: #a2845e;
+  --tint-gray: #8e8e93;
+}
+
+/* Dark, when the OS asks for it and the person has not pinned light. */
+@media (prefers-color-scheme: dark) {
+  :root:not(.light) {
+    color-scheme: dark;
+
+    /* A near-black ground with panels lifted a step, as in macOS dark. */
+    --bg: #111113;
+    --bg-deep: #111113;
+    --mat-sidebar: #18181b;
+    --mat-panel: #1c1c1e;
+    --mat-popover: #232326;
+
+    --ctl: rgba(255, 255, 255, 0.05);
+    --ctl-hover: rgba(255, 255, 255, 0.09);
+    --ctl-active: rgba(255, 255, 255, 0.13);
+    --ctl-face: rgba(255, 255, 255, 0.04);
+    --hover: rgba(255, 255, 255, 0.05);
+    --field: rgba(255, 255, 255, 0.03);
+    --well: rgba(0, 0, 0, 0.22);
+    --sidebar-accent: rgba(255, 255, 255, 0.07);
+
+    --line: rgba(255, 255, 255, 0.08);
+    --line-strong: rgba(255, 255, 255, 0.12);
+
+    --elev-card: 0 0 0 0.5px rgba(255, 255, 255, 0.02), 0 1px 3px rgba(0, 0, 0, 0.35);
+    --elev-card: 0 0 0 0.5px rgba(255, 255, 255, 0.02), 0 1px 3px rgba(0, 0, 0, 0.35);
+  --elev-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
+    --elev-md: 0 4px 14px -4px rgba(0, 0, 0, 0.5);
+    --elev-lg: 0 14px 36px -12px rgba(0, 0, 0, 0.6);
+    --elev-sheet: 0 28px 68px -20px rgba(0, 0, 0, 0.7);
+
+    --text: oklch(0.97 0 0);
+    --text-2: #c7c7cc;
+    --text-3: #98989d;
+    --text-hi: #ffffff;
+
+    --solid: oklch(0.97 0 0);
+    --solid-hover: oklch(0.88 0 0);
+    --on-solid: oklch(0.269 0 0);
+
+    --accent: #0a84ff;
+    --accent-hi: #409cff;
+    --accent-deep: #0071e3;
+    --accent-soft: rgba(10, 132, 255, 0.18);
+    --accent-ring: rgba(10, 132, 255, 0.45);
+    --accent-ink: #64b0ff;
+    --tint-pick: rgba(10, 132, 255, 0.1);
+    --tint-pick-hi: rgba(10, 132, 255, 0.15);
+
+    --ok: oklch(0.696 0.17 162.48);
+    --ok-soft: rgba(16, 185, 129, 0.16);
+    --ok-ink: oklch(0.845 0.143 164.978);
+    --ok-chip: rgba(16, 185, 129, 0.16);
+    --warn: oklch(0.769 0.188 70.08);
+    --warn-soft: rgba(245, 158, 11, 0.16);
+    --warn-ink: oklch(0.879 0.169 91.605);
+    --warn-chip: rgba(245, 158, 11, 0.16);
+    --bad: oklch(0.637 0.237 25.331);
+    --bad-soft: rgba(239, 68, 68, 0.16);
+    --bad-ink: oklch(0.808 0.114 19.571);
+    --bad-chip: rgba(239, 68, 68, 0.16);
+    --alt: oklch(0.714 0.203 305.504);
+    --alt-ink: oklch(0.827 0.119 306.383);
+    --alt-chip: rgba(168, 85, 247, 0.16);
+    --a-chip: rgba(10, 132, 255, 0.18);
+    --mute-chip: rgba(255, 255, 255, 0.07);
+
+    --s-1: rgba(255, 255, 255, 0.015);
+    --s-2: rgba(255, 255, 255, 0.03);
+    --s-3: rgba(255, 255, 255, 0.05);
+    --s-4: rgba(255, 255, 255, 0.075);
+    --s-5: rgba(255, 255, 255, 0.11);
+    --s-6: rgba(255, 255, 255, 0.17);
+    --s-7: rgba(255, 255, 255, 0.26);
+    --s-8: rgba(255, 255, 255, 0.42);
+
+    --a-1: rgba(10, 132, 255, 0.08);
+    --a-3: rgba(10, 132, 255, 0.22);
+    --ok-1: rgba(16, 185, 129, 0.09);
+    --ok-3: rgba(16, 185, 129, 0.32);
+    --warn-1: rgba(245, 158, 11, 0.09);
+    --warn-3: rgba(245, 158, 11, 0.32);
+    --bad-1: rgba(239, 68, 68, 0.08);
+    --bad-3: rgba(239, 68, 68, 0.28);
+
+    --scrim: rgba(0, 0, 0, 0.6);
+  }
+}
+
+/* Dark, pinned by the person (theme cookie = dark). Same values as above. */
+:root.dark {
+  color-scheme: dark;
+
+  /* A near-black ground with panels lifted a step, as in macOS dark. */
+  --bg: #111113;
+  --bg-deep: #111113;
+  --mat-sidebar: #18181b;
+  --mat-panel: #1c1c1e;
+  --mat-popover: #232326;
+
+  --ctl: rgba(255, 255, 255, 0.05);
+  --ctl-hover: rgba(255, 255, 255, 0.09);
+  --ctl-active: rgba(255, 255, 255, 0.13);
+  --ctl-face: rgba(255, 255, 255, 0.04);
+  --hover: rgba(255, 255, 255, 0.05);
+  --field: rgba(255, 255, 255, 0.03);
+  --well: rgba(0, 0, 0, 0.22);
+  --sidebar-accent: rgba(255, 255, 255, 0.07);
+
+  --line: rgba(255, 255, 255, 0.08);
+  --line-strong: rgba(255, 255, 255, 0.12);
+
+  --elev-card: 0 0 0 0.5px rgba(255, 255, 255, 0.02), 0 1px 3px rgba(0, 0, 0, 0.35);
+  --elev-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --elev-md: 0 4px 14px -4px rgba(0, 0, 0, 0.5);
+  --elev-lg: 0 14px 36px -12px rgba(0, 0, 0, 0.6);
+  --elev-sheet: 0 28px 68px -20px rgba(0, 0, 0, 0.7);
+
+  --text: oklch(0.97 0 0);
+  --text-2: #c7c7cc;
+  --text-3: #98989d;
+  --text-hi: #ffffff;
+
+  --solid: oklch(0.97 0 0);
+  --solid-hover: oklch(0.88 0 0);
+  --on-solid: oklch(0.269 0 0);
+
+  --accent: #0a84ff;
+  --accent-hi: #409cff;
+  --accent-deep: #0071e3;
+  --accent-soft: rgba(10, 132, 255, 0.18);
+  --accent-ring: rgba(10, 132, 255, 0.45);
+  --accent-ink: #64b0ff;
+  --tint-pick: rgba(10, 132, 255, 0.1);
+  --tint-pick-hi: rgba(10, 132, 255, 0.15);
+
+  --ok: oklch(0.696 0.17 162.48);
+  --ok-soft: rgba(16, 185, 129, 0.16);
+  --ok-ink: oklch(0.845 0.143 164.978);
+  --ok-chip: rgba(16, 185, 129, 0.16);
+  --warn: oklch(0.769 0.188 70.08);
+  --warn-soft: rgba(245, 158, 11, 0.16);
+  --warn-ink: oklch(0.879 0.169 91.605);
+  --warn-chip: rgba(245, 158, 11, 0.16);
+  --bad: oklch(0.637 0.237 25.331);
+  --bad-soft: rgba(239, 68, 68, 0.16);
+  --bad-ink: oklch(0.808 0.114 19.571);
+  --bad-chip: rgba(239, 68, 68, 0.16);
+  --alt: oklch(0.714 0.203 305.504);
+  --alt-ink: oklch(0.827 0.119 306.383);
+  --alt-chip: rgba(168, 85, 247, 0.16);
+  --a-chip: rgba(10, 132, 255, 0.18);
+  --mute-chip: rgba(255, 255, 255, 0.07);
+
+  --s-1: rgba(255, 255, 255, 0.015);
+  --s-2: rgba(255, 255, 255, 0.03);
+  --s-3: rgba(255, 255, 255, 0.05);
+  --s-4: rgba(255, 255, 255, 0.075);
+  --s-5: rgba(255, 255, 255, 0.11);
+  --s-6: rgba(255, 255, 255, 0.17);
+  --s-7: rgba(255, 255, 255, 0.26);
+  --s-8: rgba(255, 255, 255, 0.42);
+
+  --a-1: rgba(10, 132, 255, 0.08);
+  --a-3: rgba(10, 132, 255, 0.22);
+  --ok-1: rgba(16, 185, 129, 0.09);
+  --ok-3: rgba(16, 185, 129, 0.32);
+  --warn-1: rgba(245, 158, 11, 0.09);
+  --warn-3: rgba(245, 158, 11, 0.32);
+  --bad-1: rgba(239, 68, 68, 0.08);
+  --bad-3: rgba(239, 68, 68, 0.28);
+
+  --scrim: rgba(0, 0, 0, 0.6);
+}
+
+/*
+ * `dark:` matches both ways of being dark. Prefer tokens (they already flip);
+ * reach for `dark:` only for the rare thing a token cannot express.
+ */
+@custom-variant dark {
+  &:where(.dark, .dark *) {
+    @slot;
+  }
+  @media (prefers-color-scheme: dark) {
+    &:where(:root:not(.light), :root:not(.light) *) {
+      @slot;
+    }
+  }
+}
+
+@theme inline {
+  /* No default palette: every colour below is a token. */
+  --color-*: initial;
+  --color-white: #ffffff;
+  --color-black: #000000;
+
+  --color-bg: var(--bg);
+  --color-bg-deep: var(--bg-deep);
+  --color-panel: var(--mat-panel);
+  --color-popover: var(--mat-popover);
+  --color-sidebar: var(--mat-sidebar);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-field: var(--field);
+  --color-well: var(--well);
+  --color-ctl: var(--ctl);
+  --color-ctl-hover: var(--ctl-hover);
+  --color-ctl-active: var(--ctl-active);
+  --color-ctl-face: var(--ctl-face);
+  --color-hover: var(--hover);
+
+  --color-line: var(--line);
+  --color-line-strong: var(--line-strong);
+
+  --color-text: var(--text);
+  --color-text-2: var(--text-2);
+  --color-text-3: var(--text-3);
+  --color-text-hi: var(--text-hi);
+
+  --color-solid: var(--solid);
+  /* `border-solid` is Tailwind's border-style utility, so the solid colour's edge has its own name. */
+  --color-solid-line: var(--solid);
+  --color-solid-hover: var(--solid-hover);
+  --color-on-solid: var(--on-solid);
+
+  --color-accent: var(--accent);
+  --color-accent-hi: var(--accent-hi);
+  --color-accent-deep: var(--accent-deep);
+  --color-accent-soft: var(--accent-soft);
+  --color-accent-ring: var(--accent-ring);
+  --color-accent-ink: var(--accent-ink);
+  --color-on-accent: var(--on-accent);
+  --color-tint-pick: var(--tint-pick);
+  --color-tint-pick-hi: var(--tint-pick-hi);
+
+  --color-ok: var(--ok);
+  --color-ok-soft: var(--ok-soft);
+  --color-ok-ink: var(--ok-ink);
+  --color-ok-chip: var(--ok-chip);
+  --color-ok-wash: var(--ok-1);
+  --color-ok-edge: var(--ok-3);
+  --color-warn: var(--warn);
+  --color-warn-soft: var(--warn-soft);
+  --color-warn-ink: var(--warn-ink);
+  --color-warn-chip: var(--warn-chip);
+  --color-warn-wash: var(--warn-1);
+  --color-warn-edge: var(--warn-3);
+  --color-bad: var(--bad);
+  --color-bad-soft: var(--bad-soft);
+  --color-bad-ink: var(--bad-ink);
+  --color-bad-chip: var(--bad-chip);
+  --color-bad-wash: var(--bad-1);
+  --color-bad-edge: var(--bad-3);
+  --color-alt: var(--alt);
+  --color-alt-ink: var(--alt-ink);
+  --color-alt-chip: var(--alt-chip);
+  --color-live-chip: var(--a-chip);
+  --color-info-wash: var(--a-1);
+  --color-info-edge: var(--a-3);
+  --color-mute-chip: var(--mute-chip);
+
+  --color-s-1: var(--s-1);
+  --color-s-2: var(--s-2);
+  --color-s-3: var(--s-3);
+  --color-s-4: var(--s-4);
+  --color-s-5: var(--s-5);
+  --color-s-6: var(--s-6);
+  --color-s-7: var(--s-7);
+  --color-s-8: var(--s-8);
+
+  --color-scrim: var(--scrim);
+
+  --color-tint-blue: var(--tint-blue);
+  --color-tint-cyan: var(--tint-cyan);
+  --color-tint-teal: var(--tint-teal);
+  --color-tint-mint: var(--tint-mint);
+  --color-tint-green: var(--tint-green);
+  --color-tint-yellow: var(--tint-yellow);
+  --color-tint-orange: var(--tint-orange);
+  --color-tint-red: var(--tint-red);
+  --color-tint-pink: var(--tint-pink);
+  --color-tint-purple: var(--tint-purple);
+  --color-tint-indigo: var(--tint-indigo);
+  --color-tint-brown: var(--tint-brown);
+  --color-tint-gray: var(--tint-gray);
+
+  /* One corner, and the scale derived from it. */
+  --radius-xs: var(--r-xs);
+  --radius-sm: var(--r-sm);
+  --radius-md: var(--r-md);
+  --radius-lg: var(--r-lg);
+  --radius-xl: var(--r-xl);
+
+  --shadow-card: var(--elev-card);
+  --shadow-sm: var(--elev-sm);
+  --shadow-md: var(--elev-md);
+  --shadow-lg: var(--elev-lg);
+  --shadow-sheet: var(--elev-sheet);
+  --shadow-solid: var(--solid-sheen), var(--elev-sm);
+
+  --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro", var(--font-geist-sans), "Inter", ui-sans-serif, system-ui, "Segoe UI", sans-serif;
+  --font-mono: ui-monospace, "SF Mono", "SFMono-Regular", var(--font-geist-mono), Menlo, monospace;
+}
+
+@theme {
+  /* Dense but readable: 13px is the size of controls and body text. */
+  --text-2xs: 11px;
+  --text-2xs--line-height: 16px;
+  --text-xs: 12px;
+  --text-xs--line-height: 17px;
+  --text-sm: 13px;
+  --text-sm--line-height: 20px;
+  --text-base: 14px;
+  --text-base--line-height: 21px;
+  --text-lg: 16px;
+  --text-lg--line-height: 24px;
+  --text-xl: 18px;
+  --text-xl--line-height: 26px;
+  --text-2xl: 22px;
+  --text-2xl--line-height: 30px;
+  --text-3xl: 28px;
+  --text-3xl--line-height: 36px;
+
+  /* Below 780px the sidebar becomes a drawer. */
+  --breakpoint-nav: 48.75rem;
+
+  --animate-fade-in: fade-in 140ms ease both;
+  --animate-pop-in: pop-in 160ms cubic-bezier(0.2, 0.8, 0.3, 1) both;
+  --animate-slide-in-right: slide-in-right 200ms cubic-bezier(0.2, 0.8, 0.3, 1) both;
+  --animate-slide-in-left: slide-in-left 200ms cubic-bezier(0.2, 0.8, 0.3, 1) both;
+  --animate-toast-in: toast-in 180ms cubic-bezier(0.2, 0.8, 0.3, 1) both;
+
+  @keyframes fade-in {
+    from {
+      opacity: 0;
+    }
+    to {
+      opacity: 1;
+    }
+  }
+  @keyframes pop-in {
+    from {
+      opacity: 0;
+      transform: translateY(4px) scale(0.98);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
+  }
+  @keyframes slide-in-right {
+    from {
+      transform: translateX(24px);
+      opacity: 0;
+    }
+    to {
+      transform: none;
+      opacity: 1;
+    }
+  }
+  @keyframes slide-in-left {
+    from {
+      transform: translateX(-24px);
+      opacity: 0;
+    }
+    to {
+      transform: none;
+      opacity: 1;
+    }
+  }
+  @keyframes toast-in {
+    from {
+      opacity: 0;
+      transform: translateY(8px);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
+  }
+}
+
+@layer base {
+  *,
+  ::before,
+  ::after {
+    border-color: var(--line);
+  }
+
+  html,
+  body {
+    height: 100%;
+    background: var(--bg-deep);
+  }
+
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro", var(--font-geist-sans), "Inter", ui-sans-serif, system-ui, "Segoe UI", sans-serif;
+    font-size: 13px;
+    line-height: 20px;
+    color: var(--text);
+    letter-spacing: -0.006em;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    font-synthesis-weight: none;
+  }
+
+  ::selection {
+    background: var(--accent-soft);
+  }
+
+  input::placeholder,
+  textarea::placeholder {
+    color: var(--text-3);
+  }
+
+  /* Buttons get a pointer; disabled ones do not. */
+  button:not(:disabled),
+  [role="button"]:not([aria-disabled="true"]) {
+    cursor: pointer;
+  }
+
+  /*
+   * The focus ring: an outline, not a box-shadow, so it survives on elements
+   * that carry a shadow utility. Follows the border radius.
+   */
+  :focus-visible {
+    outline: 3px solid var(--accent-ring);
+    outline-offset: 1px;
+  }
+
+  ::-webkit-scrollbar {
+    width: 11px;
+    height: 11px;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: var(--line-strong);
+    border-radius: 8px;
+    border: 3px solid transparent;
+    background-clip: content-box;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: var(--text-3);
+    background-clip: content-box;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  ::before,
+  ::after {
+    animation-duration: 1ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 1ms !important;
+  }
+}

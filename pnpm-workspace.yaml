@@ -1,0 +1,31 @@
+packages:
+  - "apps/*"
+  - "packages/*"
+
+# pnpm refuses install scripts by default. Prisma needs its own to fetch the
+# schema engine used by `prisma migrate`; the rest are optional native speedups
+# the libraries fall back from, and are answered "no" so the decision is recorded.
+allowBuilds:
+  "@prisma/engines": true
+  prisma: true
+  esbuild: true
+  "@scarf/scarf": false
+  msgpackr-extract: false
+  sharp: true
+  unrs-resolver: false
+  "@swc/core": true
+
+# mailparser 3.9.23 pins nodemailer 10.0.1, whose address parser has two
+# quadratic-backtracking DoS advisories (GHSA-v53p-9fqp-m79j, GHSA-prgh-xp8r-p3m5).
+# Inbound IMAP mail is attacker-controlled, so it gets the same patched 10.x we send with.
+overrides:
+  "mailparser>nodemailer": "10.0.16"
+
+auditConfig:
+  # Both live only inside the Prisma CLI (`prisma migrate`), never on a request path:
+  #   mysql2 — a MySQL driver; Growthdesk only connects to Postgres.
+  #   deepmerge-ts — merges Prisma's own config file, which we write, not users.
+  # Re-check when upgrading prisma; drop the entry once prisma ships patched versions.
+  ignoreGhsas:
+    - GHSA-3f6p-5ww8-9rcr
+    - GHSA-ggr8-5vv4-36mx

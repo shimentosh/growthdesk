@@ -1,0 +1,37 @@
+# Growthdesk API and worker (same image; the command picks the process).
+#   docker build -f infra/Dockerfile.api -t growthdesk-api .
+# Pinned by digest for reproducible builds; bump deliberately (Dependabot's docker ecosystem can propose it).
+ARG NODE_IMAGE=node:24.19.0-alpine@sha256:d32cdf619f63fe0471182d08996dd516c6275bb5fd31ae06e55a570bd9e1ad43
+
+FROM ${NODE_IMAGE} AS base
+RUN corepack enable && corepack prepare pnpm@12.9.1 --activate
+WORKDIR /repo
+
+FROM base AS build
+COPY pnpm-workspace.yaml package.json pnpm-lock.yaml ./
+COPY packages/shared/package.json packages/shared/
+COPY apps/api/package.json apps/api/
+COPY apps/api/prisma apps/api/prisma
+COPY apps/api/prisma.config.ts apps/api/
+RUN pnpm install --frozen-lockfile --filter @growthdesk/api... --filter @growthdesk/shared
+COPY tsconfig.base.json ./
+COPY packages/shared packages/shared
+COPY apps/api apps/api
+RUN pnpm --filter @growthdesk/shared run build \
+ && pnpm --filter @growthdesk/api exec prisma generate \
+ && pnpm --filter @growthdesk/api run build \
+ && pnpm --filter @growthdesk/api deploy --prod --legacy /out \
+ && cp -r apps/api/dist /out/dist \
+ && cp -r apps/api/prisma /out/prisma && cp apps/api/prisma.config.ts /out/ \
+ && cp -r apps/api/src/generated /out/src-generated
+
+FROM ${NODE_IMAGE} AS runtime
+ENV NODE_ENV=production
+WORKDIR /app
+RUN addgroup -S app && adduser -S app -G app
+COPY --from=build /out /app
+USER app
+EXPOSE 3601
+# API: node dist/main.js   Worker: node dist/worker.js   Migrations: node_modules/.bin/prisma migrate deploy
+# (prisma is a production dependency so the pinned CLI ships in the image; npx would fetch an unpinned one)
+CMD ["node", "--enable-source-maps", "dist/main.js"]

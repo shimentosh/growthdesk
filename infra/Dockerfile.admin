@@ -1,0 +1,30 @@
+# Growthdesk operator console (apps/admin, Next.js standalone output).
+#   docker build -f infra/Dockerfile.admin -t growthdesk-admin .
+# Pinned by digest for reproducible builds; bump deliberately (Dependabot's docker ecosystem can propose it).
+ARG NODE_IMAGE=node:24.19.0-alpine@sha256:d32cdf619f63fe0471182d08996dd516c6275bb5fd31ae06e55a570bd9e1ad43
+
+FROM ${NODE_IMAGE} AS base
+RUN corepack enable && corepack prepare pnpm@12.9.1 --activate
+WORKDIR /repo
+
+FROM base AS build
+COPY pnpm-workspace.yaml package.json pnpm-lock.yaml ./
+COPY packages/shared/package.json packages/shared/
+COPY apps/admin/package.json apps/admin/
+RUN pnpm install --frozen-lockfile --filter @growthdesk/admin... --filter @growthdesk/shared
+COPY tsconfig.base.json ./
+COPY packages/shared packages/shared
+COPY apps/admin apps/admin
+ENV NEXT_TELEMETRY_DISABLED=1
+RUN pnpm --filter @growthdesk/shared run build && pnpm --filter @growthdesk/admin run build
+
+FROM ${NODE_IMAGE} AS runtime
+ENV NODE_ENV=production NEXT_TELEMETRY_DISABLED=1 PORT=3602 HOSTNAME=0.0.0.0
+WORKDIR /app
+RUN addgroup -S app && adduser -S app -G app
+COPY --from=build /repo/apps/admin/.next/standalone ./
+COPY --from=build /repo/apps/admin/.next/static ./apps/admin/.next/static
+# No public/ directory: the console serves no static files of its own.
+USER app
+EXPOSE 3602
+CMD ["node", "apps/admin/server.js"]

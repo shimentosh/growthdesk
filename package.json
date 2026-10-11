@@ -1,0 +1,29 @@
+{
+  "name": "growthdesk",
+  "private": true,
+  "packageManager": "pnpm@12.9.1",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "bootstrap": "node scripts/setup.mjs",
+    "dev": "node scripts/dev.mjs",
+    "build": "pnpm -r --filter ./packages/** run build && pnpm --filter @growthdesk/api run build && pnpm --filter @growthdesk/web run build && pnpm --filter @growthdesk/admin run build",
+    "typecheck": "pnpm -r run typecheck",
+    "test": "pnpm --filter @growthdesk/shared run test && pnpm --filter @growthdesk/api run test && pnpm --filter @growthdesk/api run test:e2e",
+    "test:unit": "pnpm --filter @growthdesk/shared run test && pnpm --filter @growthdesk/api run test",
+    "test:e2e": "pnpm --filter @growthdesk/api run test:e2e",
+    "test:ui": "pnpm --filter @growthdesk/web run test:ui",
+    "services:up": "docker compose up -d --wait",
+    "services:down": "docker compose down",
+    "db:migrate": "pnpm --filter @growthdesk/api run db:migrate",
+    "db:migrate:dev": "pnpm --filter @growthdesk/api run db:migrate:dev",
+    "db:seed": "pnpm --filter @growthdesk/api run db:seed",
+    "db:seed:demo": "pnpm --filter @growthdesk/api run db:seed:demo --",
+    "db:studio": "pnpm --filter @growthdesk/api exec prisma studio",
+    "admin:create": "pnpm --filter @growthdesk/api run admin:create"
+  },
+  "devDependencies": {
+    "typescript": "6.0.3"
+  }
+}

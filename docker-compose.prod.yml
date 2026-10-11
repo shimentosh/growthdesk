@@ -1,0 +1,131 @@
+# Production-style stack on one host. Put a TLS-terminating reverse proxy
+# (Caddy, nginx, a cloud load balancer) in front of `web` on port 3600 and
+# `admin` (the operator console) on port 3602 — PUBLIC_APP_URL and
+# ADMIN_APP_URL must be the https origins they serve.
+#   cp .env.production.example .env.production && edit it
+#   docker compose -f docker-compose.prod.yml --env-file .env.production up -d --build
+name: growthdesk-prod
+
+x-api-env: &api-env
+  NODE_ENV: production
+  API_HOST: 0.0.0.0
+  API_PORT: 3601
+  PUBLIC_APP_URL: ${PUBLIC_APP_URL}
+  ADMIN_APP_URL: ${ADMIN_APP_URL:?set ADMIN_APP_URL in .env.production}
+  ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-}
+  TRUSTED_PROXY_HOPS: ${TRUSTED_PROXY_HOPS:-1}
+  DATABASE_URL: postgresql://growthdesk:${POSTGRES_PASSWORD}@postgres:5432/growthdesk
+  REDIS_URL: redis://redis:6379
+  ENCRYPTION_KEY: ${ENCRYPTION_KEY}
+  MAIL_FROM: ${MAIL_FROM}
+  SMTP_HOST: ${SMTP_HOST}
+  SMTP_PORT: ${SMTP_PORT:-587}
+  SMTP_SECURE: ${SMTP_SECURE:-false}
+  SMTP_USER: ${SMTP_USER:-}
+  SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+  GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+  GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
+  MICROSOFT_CLIENT_ID: ${MICROSOFT_CLIENT_ID:-}
+  MICROSOFT_CLIENT_SECRET: ${MICROSOFT_CLIENT_SECRET:-}
+  STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
+  STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:-}
+  AI_PROVIDER: ${AI_PROVIDER:-none}
+  ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+  OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+  AI_MODEL: ${AI_MODEL:-}
+  AI_BASE_URL: ${AI_BASE_URL:-}
+
+services:
+  postgres:
+    image: postgres:18.6-alpine
+    environment:
+      POSTGRES_USER: growthdesk
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: growthdesk
+    volumes: [postgres-data:/var/lib/postgresql]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U growthdesk -d growthdesk"]
+      interval: 5s
+      retries: 20
+    restart: unless-stopped
+
+  # Nightly pg_dump into BACKUP_DIR (default ./backups on the host). This only
+  # protects against mistakes and corruption: copy that directory off this
+  # host as well (see docs/DEPLOYMENT.md → Backups).
+  backup:
+    image: postgres:18.6-alpine
+    environment:
+      PGHOST: postgres
+      PGUSER: growthdesk
+      PGPASSWORD: ${POSTGRES_PASSWORD}
+      PGDATABASE: growthdesk
+      BACKUP_HOUR_UTC: ${BACKUP_HOUR_UTC:-3}
+      BACKUP_RETAIN_DAYS: ${BACKUP_RETAIN_DAYS:-14}
+    volumes:
+      - ./scripts/backup:/scripts:ro
+      - ${BACKUP_DIR:-./backups}:/backups
+    entrypoint: ["sh", "/scripts/pg-backup.sh"]
+    depends_on:
+      postgres: { condition: service_healthy }
+    restart: unless-stopped
+
+  redis:
+    image: redis:8.8.3-alpine
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory-policy", "noeviction"]
+    volumes: [redis-data:/data]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      retries: 20
+    restart: unless-stopped
+
+  migrate:
+    build: { context: ., dockerfile: infra/Dockerfile.api }
+    environment: *api-env
+    command: ["sh", "-c", "node_modules/.bin/prisma migrate deploy && node dist/scripts/seed.js"]
+    depends_on:
+      postgres: { condition: service_healthy }
+    restart: "no"
+
+  api:
+    build: { context: ., dockerfile: infra/Dockerfile.api }
+    environment: *api-env
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+      redis: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3601/v1/health"]
+      interval: 15s
+      retries: 5
+    restart: unless-stopped
+
+  worker:
+    build: { context: ., dockerfile: infra/Dockerfile.api }
+    environment: *api-env
+    command: ["node", "--enable-source-maps", "dist/worker.js"]
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+      redis: { condition: service_healthy }
+    restart: unless-stopped
+
+  web:
+    build: { context: ., dockerfile: infra/Dockerfile.web }
+    environment:
+      API_URL: http://api:3601
+    ports: ["127.0.0.1:3600:3600"]
+    depends_on: [api]
+    restart: unless-stopped
+
+  admin:
+    build: { context: ., dockerfile: infra/Dockerfile.admin }
+    environment:
+      API_URL: http://api:3601
+      PUBLIC_APP_URL: ${PUBLIC_APP_URL}
+      ADMIN_ENV_LABEL: ${ADMIN_ENV_LABEL:-}
+    ports: ["127.0.0.1:3602:3602"]
+    depends_on: [api]
+    restart: unless-stopped
+
+volumes:
+  postgres-data:
+  redis-data:
