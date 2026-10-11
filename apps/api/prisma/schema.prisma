@@ -32,33 +32,42 @@ enum PlatformRole {
 }
 
 model User {
-  id              String       @id @default(uuid(7)) @db.Uuid
-  email           String       @unique
-  name            String       @default("")
-  passwordHash    String?
-  emailVerifiedAt DateTime?
-  googleSub       String?      @unique
-  avatarUrl       String       @default("")
-  timezone        String       @default("UTC")
-  platformRole    PlatformRole @default(none)
-  suspendedAt     DateTime?
-  suspendedReason String       @default("")
-  lastLoginAt     DateTime?
-  createdAt       DateTime     @default(now())
-  updatedAt       DateTime     @updatedAt
+  id                String       @id @default(uuid(7)) @db.Uuid
+  email             String       @unique
+  name              String       @default("")
+  passwordHash      String?
+  emailVerifiedAt   DateTime?
+  googleSub         String?      @unique
+  avatarUrl         String       @default("")
+  timezone          String       @default("UTC")
+  platformRole      PlatformRole @default(none)
+  suspendedAt       DateTime?
+  suspendedReason   String       @default("")
+  lastLoginAt       DateTime?
+  /// TOTP two-factor (auth/two-factor.service.ts). The base32 secret, sealed; set once a code confirms it.
+  totpSecret        String?
+  totpEnabledAt     DateTime?
+  /// The last 30-second step a code was accepted for, so one code cannot be used twice.
+  totpLastStep      Int?
+  /// The secret offered during enrolment, sealed, until the first code confirms it.
+  totpPendingSecret String?
+  createdAt         DateTime     @default(now())
+  updatedAt         DateTime     @updatedAt
 
-  sessions        Session[]
-  authTokens      AuthToken[]
-  memberships     Membership[]
-  billingAccounts BillingAccount[]
-  ownedContacts   Contact[]        @relation("ContactOwner")
-  ownedCompanies  Company[]        @relation("CompanyOwner")
-  ownedDeals      Deal[]           @relation("DealOwner")
-  assignedTasks   Task[]           @relation("TaskAssignee")
-  assignedConvos  Conversation[]   @relation("ConversationAssignee")
-  calls           Call[]
-  notifications   Notification[]
-  signInFailures  SignInFailure[]
+  sessions            Session[]
+  recoveryCodes       RecoveryCode[]
+  twoFactorChallenges TwoFactorChallenge[]
+  authTokens          AuthToken[]
+  memberships         Membership[]
+  billingAccounts     BillingAccount[]
+  ownedContacts       Contact[]            @relation("ContactOwner")
+  ownedCompanies      Company[]            @relation("CompanyOwner")
+  ownedDeals          Deal[]               @relation("DealOwner")
+  assignedTasks       Task[]               @relation("TaskAssignee")
+  assignedConvos      Conversation[]       @relation("ConversationAssignee")
+  calls               Call[]
+  notifications       Notification[]
+  signInFailures      SignInFailure[]
 }
 
 model Session {
@@ -112,6 +121,39 @@ model SignInFailure {
   user    User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([email, ip])
+}
+
+/// Single-use two-factor recovery codes; only their SHA-256 is stored.
+model RecoveryCode {
+  id        String    @id @default(uuid(7)) @db.Uuid
+  userId    String    @db.Uuid
+  codeHash  String
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+/// The step between a correct password (or Google) and a session for an
+/// account with two-factor on. The browser holds the token in an HttpOnly
+/// cookie; the row holds its SHA-256, the attempt count and a short expiry.
+model TwoFactorChallenge {
+  id        String    @id @default(uuid(7)) @db.Uuid
+  userId    String    @db.Uuid
+  tokenHash String    @unique
+  /// How the first factor was proved: "password" or "google".
+  method    String
+  attempts  Int       @default(0)
+  ip        String    @default("")
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
 }
 
 // ─── Billing account, plans, subscriptions ──────────────────────────────────
@@ -303,6 +345,8 @@ model Workspace {
   /// Marketing defaults: the From name and Reply-To used when a campaign sets none.
   marketingFromName String          @default("")
   marketingReplyTo  String          @default("")
+  /// Owners can require two-factor: members without it are refused every workspace route until they enrol.
+  requireTwoFactor  Boolean         @default(false)
   createdById       String?         @db.Uuid
   createdAt         DateTime        @default(now())
   updatedAt         DateTime        @updatedAt

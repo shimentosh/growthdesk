@@ -64,6 +64,7 @@ export class SessionService {
         name: session.user.name,
         platformRole: session.user.platformRole,
         emailVerified: Boolean(session.user.emailVerifiedAt),
+        twoFactor: Boolean(session.user.totpEnabledAt),
         sessionId: session.id,
       },
     };

@@ -168,6 +168,8 @@ export class MaintenanceProcessor extends WorkerHost {
       sessions: (await db.session.deleteMany({ where: { OR: [{ expiresAt: { lt: c.sessions } }, { revokedAt: { lt: c.sessions } }] } })).count,
       authTokens: (await db.authToken.deleteMany({ where: { expiresAt: { lt: c.authTokens } } })).count,
       signInFailures: (await db.signInFailure.deleteMany({ where: { lastAt: { lt: c.signInFailures } } })).count,
+      // Pending two-factor sign-ins live 10 minutes; the attempt lockout looks back 15. Same retention as auth tokens.
+      twoFactorChallenges: (await db.twoFactorChallenge.deleteMany({ where: { expiresAt: { lt: c.authTokens } } })).count,
       idempotencyKeys: (await all.idempotencyKey.deleteMany({ where: { createdAt: { lt: c.idempotencyKeys } } })).count,
       webhookDeliveries: (await all.webhookDelivery.deleteMany({ where: { status: { in: ["succeeded", "failed"] }, createdAt: { lt: c.webhookDeliveries } } })).count,
       notifications: (await all.notification.deleteMany({ where: { readAt: { not: null }, createdAt: { lt: c.readNotifications } } })).count,

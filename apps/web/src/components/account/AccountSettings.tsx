@@ -21,6 +21,7 @@ import { ME_KEY, useFormat, useMe } from "@/lib/session";
 import type { Me, SessionRow } from "@/lib/types";
 import { ProductEmailsCard } from "./ProductEmailsCard";
 import { ThemePicker } from "./ThemePicker";
+import { TwoFactorCard } from "./TwoFactorCard";
 import { describeUserAgent, isMobileAgent } from "./userAgent";
 
 const SESSIONS_KEY = ["account", "sessions"];
@@ -267,7 +268,7 @@ function WorkspacesCard({ me }: { me: Me }) {
   );
 }
 
-/** /account — the signed-in person's own profile, password, sessions and appearance. */
+/** /account — the signed-in person's own profile, password, two-factor, sessions and appearance. */
 export function AccountSettings() {
   const me = useMe();
   if (me.isPending) return <LoadingBlock className="min-h-[50vh]" label="Loading your account…" />;
@@ -286,6 +287,7 @@ export function AccountSettings() {
         {/* Keyed so a refetched profile resets the form to what was saved. */}
         <ProfileCard key={`${user.name}|${user.timezone}`} user={user} />
         <PasswordCard user={user} />
+        <TwoFactorCard user={user} />
         <SessionsCard />
         <ProductEmailsCard />
         <Card>

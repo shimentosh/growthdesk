@@ -29,8 +29,10 @@ admin endpoint is authorised server-side by platform role (`@Platform()`), indep
    - `@Platform(min)` routes check the user's platform role.
    - Maintenance mode refuses writes for non-admins.
    - Routes with `:workspaceId` load the caller's membership **from the path id + session user** (never from
-     a client-supplied claim); non-members get **404**. Then workspace suspension (`@AllowSuspended()` opts out)
-     and `@Permission(...)` (any-of).
+     a client-supplied claim); non-members get **404**. Then the workspace's two-factor requirement
+     (403 `two_factor_required`), workspace suspension (`@AllowSuspended()` opts out) and `@Permission(...)` (any-of).
+   - Sign-in with two-factor on is two steps: password or Google creates a short-lived `TwoFactorChallenge`
+     (HttpOnly `gd_2fa` cookie); `POST /auth/2fa/verify` with a TOTP or recovery code starts the session.
 3. `EnvelopeInterceptor` — success bodies are `{ data }` (`@Raw()` opts out).
 4. `ApiExceptionFilter` — errors are `{ error: { code, message, fields?, details? } }`. Plan limits are
    HTTP 402 `plan_limit` with `details: { limit|feature, used, allowed, plan }`.

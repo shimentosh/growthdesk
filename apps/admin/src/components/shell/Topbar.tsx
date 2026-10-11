@@ -1,8 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
-import { ChevronRight, ExternalLink, LogOut, Menu } from "lucide-react";
+import { usePathname, useRouter } from "next/navigation";
+import { ChevronRight, ExternalLink, LogOut, Menu, ShieldCheck } from "lucide-react";
 import type { PlatformRole } from "@growthdesk/shared";
 import { Avatar } from "@/components/ui/Avatar";
 import { IconButton } from "@/components/ui/Button";
@@ -63,6 +63,7 @@ function EnvBadge({ env }: { env: EnvInfo }) {
 
 function UserMenu({ role, appUrl }: { role: PlatformRole; appUrl: string | null }) {
   const me = useMe();
+  const router = useRouter();
   const user = me.data?.user;
   return (
     <DropdownMenu>
@@ -85,6 +86,9 @@ function UserMenu({ role, appUrl }: { role: PlatformRole; appUrl: string | null 
           </div>
         </div>
         <DropdownMenuSeparator />
+        <DropdownMenuItem icon={<ShieldCheck />} onSelect={() => router.push("/account")}>
+          Two-factor authentication
+        </DropdownMenuItem>
         {appUrl && (
           <DropdownMenuItem icon={<ExternalLink />} onSelect={() => window.open(appUrl, "_blank", "noopener,noreferrer")}>
             Open customer app
