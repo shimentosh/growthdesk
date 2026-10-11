@@ -171,7 +171,11 @@ function CurrentPlan({ data }: { data: BillingOverview }) {
 function Usage({ data }: { data: BillingOverview }) {
   return (
     <Card>
-      <CardHeader icon={<Gauge />} title="Usage" description="Counted across every workspace on this billing account. Monthly allowances restart on the 1st (UTC)." />
+      <CardHeader
+        icon={<Gauge />}
+        title="Usage"
+        description={`${data.scope === "account" ? "Counted across every workspace on this billing account." : "Counted in this workspace; the plan's limits are shared by every workspace on the account."} Monthly allowances restart on ${new Date(data.meterResetsAt).toLocaleDateString(undefined, { month: "long", day: "numeric", timeZone: "UTC" })}.`}
+      />
       <CardBody className="grid gap-x-8 gap-y-4 sm:grid-cols-2">
         {LIMIT_KEYS.map((key) => {
           const u = data.usage[key];
@@ -517,7 +521,8 @@ export function BillingSettings() {
             <Usage data={data} />
             <Plans data={data} />
             <Invoices data={data} />
-            <BillingDetails data={data} />
+            {/* Billing details and invoices cover the whole account: only its owner is sent them. */}
+            {data.scope === "account" && <BillingDetails data={data} />}
           </div>
         )}
       </QueryState>

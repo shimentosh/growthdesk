@@ -3,7 +3,7 @@ import Stripe from "stripe";
 import type { SubscriptionStatus } from "@growthdesk/shared";
 import { APP_CONFIG, type AppConfig } from "../../config/config.js";
 import { badRequest, unavailable } from "../../common/errors.js";
-import type { NormalizedEvent, NormalizedInvoice, NormalizedSubscription, PaymentProvider } from "./payment-provider.js";
+import type { NormalizedCharge, NormalizedEvent, NormalizedInvoice, NormalizedSubscription, PaymentProvider, ProviderPrice } from "./payment-provider.js";
 
 const toDate = (s: number | null | undefined) => (s ? new Date(s * 1000) : null);
 
@@ -125,6 +125,35 @@ export function normalizeStripeInvoice(inv: StripeInvoiceLike): NormalizedInvoic
   };
 }
 
+const idOf = (ref: unknown): string | null => (typeof ref === "string" ? ref : ref && typeof ref === "object" && "id" in ref ? String((ref as { id: unknown }).id) : null);
+
+/** charge.refunded (a Charge) or charge.dispute.created (a Dispute, which names only its charge). */
+export function normalizeStripeCharge(type: string, obj: Record<string, unknown>): NormalizedCharge {
+  const metadata = (obj.metadata ?? null) as Record<string, string> | null;
+  if (type === "charge.refunded") {
+    return {
+      kind: "refund",
+      providerChargeId: String(obj.id),
+      providerCustomerId: idOf(obj.customer),
+      amountCents: Number(obj.amount_refunded ?? 0),
+      currency: String(obj.currency ?? "").toUpperCase(),
+      fullRefund: Boolean(obj.refunded),
+      reason: "",
+      billingAccountId: metadata?.billingAccountId ?? null,
+    };
+  }
+  return {
+    kind: "dispute",
+    providerChargeId: idOf(obj.charge) ?? "",
+    providerCustomerId: null,
+    amountCents: Number(obj.amount ?? 0),
+    currency: String(obj.currency ?? "").toUpperCase(),
+    fullRefund: false,
+    reason: String(obj.reason ?? ""),
+    billingAccountId: metadata?.billingAccountId ?? null,
+  };
+}
+
 @Injectable()
 export class StripeProvider implements PaymentProvider {
   readonly id = "stripe";
@@ -243,6 +272,18 @@ export class StripeProvider implements PaymentProvider {
         out.invoice = normalizeStripeInvoice(obj as unknown as StripeInvoiceLike);
         out.paymentFailed = true;
         break;
+      case "invoice.payment_action_required":
+        out.invoice = normalizeStripeInvoice(obj as unknown as StripeInvoiceLike);
+        out.actionRequired = true;
+        break;
+      case "invoice.marked_uncollectible":
+        out.invoice = normalizeStripeInvoice(obj as unknown as StripeInvoiceLike);
+        out.uncollectible = true;
+        break;
+      case "charge.refunded":
+      case "charge.dispute.created":
+        out.charge = normalizeStripeCharge(event.type, obj);
+        break;
       default:
         break;
     }
@@ -277,5 +318,22 @@ export class StripeProvider implements PaymentProvider {
   async fetchSubscription(providerSubscriptionId: string) {
     const sub = await this.stripe().subscriptions.retrieve(providerSubscriptionId);
     return normalizeStripeSubscription(sub as unknown as StripeSubLike);
+  }
+
+  async customerForCharge(providerChargeId: string) {
+    const charge = await this.stripe().charges.retrieve(providerChargeId);
+    return idOf(charge.customer);
+  }
+
+  async fetchPrice(priceId: string): Promise<ProviderPrice> {
+    const price = await this.stripe().prices.retrieve(priceId);
+    return {
+      id: price.id,
+      active: price.active,
+      amountCents: typeof price.unit_amount === "number" ? price.unit_amount : null,
+      currency: price.currency.toUpperCase(),
+      interval: price.recurring?.interval ?? null,
+      intervalCount: price.recurring?.interval_count ?? 1,
+    };
   }
 }

@@ -167,6 +167,8 @@ export class WorkspacesController {
     if (await this.prisma.db.user.findUnique({ where: { email: inv.email } })) {
       throw conflict("An account with this email already exists — sign in to accept.");
     }
+    // Checked before the account is created, so a refusal does not leave a user with no workspace.
+    await this.workspaces.assertInviteSeat(inv.workspaceId, inv.email);
     const user = await this.prisma.db.user.create({
       data: { email: inv.email, name: body.name, passwordHash: await hashPassword(body.password), emailVerifiedAt: new Date() },
     });

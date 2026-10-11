@@ -126,6 +126,13 @@ model BillingAccount {
   country      String   @default("")
   taxId        String   @default("")
   address      String   @default("")
+  /// The owner's email as a trial-abuse key (lower-case, +tag stripped, Gmail dots removed;
+  /// billing/trial-guard.ts). Compared only; login still uses the address as typed.
+  trialEmailKey  String?
+  /// IP address the account was created from (signup rate limit for trials).
+  signupIp       String?
+  /// When a free trial was granted to this account; null = it started without one.
+  trialGrantedAt DateTime?
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
@@ -135,6 +142,8 @@ model BillingAccount {
   invoices     Invoice[]
 
   @@index([ownerId])
+  @@index([trialEmailKey])
+  @@index([signupIp, createdAt])
 }
 
 model Plan {

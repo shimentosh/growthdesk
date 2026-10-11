@@ -2,6 +2,7 @@ import request from "supertest";
 import type { App } from "supertest/types.js";
 import { bootApp, createWorkspace, signUp, type Agent, type TestApp } from "./helpers.js";
 import { PlatformSettingsService } from "../src/core/platform-settings.service.js";
+import { StripeProvider } from "../src/billing/providers/stripe.provider.js";
 
 /*
  * Platform super-admin: rank gates on every route, the per-target rank rules,
@@ -204,8 +205,10 @@ describe("Platform admin", () => {
       const body = { ...starter, providerPrices: { stripe: { month: "price_123", year: "" } } };
       for (const k of ["id", "key", "subscriptions", "isDefault", "isExpiredFallback", "updatedAt"]) delete body[k];
       await support.put("/v1/admin/plans/starter").send(body).expect(403);
-      const saved = await admin.put("/v1/admin/plans/starter").send({ ...body, monthlyPriceCents: 4900 }).expect(200);
-      expect(saved.body.data).toMatchObject({ monthlyPriceCents: 4900, providerPrices: { stripe: { month: "price_123" } } });
+      // The amount is copied from the Stripe price the id points at, not from the form (docs/GAP_PLAN.md §3.1.7).
+      t.app.get(StripeProvider).fetchPrice = async (id: string) => ({ id, active: true, amountCents: 4900, currency: "USD", interval: "month", intervalCount: 1 });
+      const saved = await admin.put("/v1/admin/plans/starter").send({ ...body, monthlyPriceCents: 1 }).expect(200);
+      expect(saved.body.data).toMatchObject({ monthlyPriceCents: 4900, providerPrices: { stripe: { month: "price_123" } }, priceNotices: [] });
       await admin.put("/v1/admin/plans/free").send({ ...body, name: "Free", isActive: false }).expect(409);
       await admin.put("/v1/admin/plans/starter").send({ ...body, limits: { ...body.limits, bogus: 1 } }).expect(400);
       const [row] = await auditRows("platform.plan_updated");

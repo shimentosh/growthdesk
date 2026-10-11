@@ -1,4 +1,4 @@
-import { Injectable } from "@nestjs/common";
+import { Inject, Injectable } from "@nestjs/common";
 import {
   DEFAULT_ROLE_PERMISSIONS,
   ROLE_RANK,
@@ -12,6 +12,8 @@ import type { z } from "zod";
 import { PrismaService, type Tx } from "../prisma/prisma.service.js";
 import { EntitlementsService } from "../billing/entitlements.service.js";
 import { recordSubscriptionChange } from "../billing/subscription-history.js";
+import { trialEmailKey } from "../billing/trial-guard.js";
+import { APP_CONFIG, type AppConfig } from "../config/config.js";
 import { PlatformSettingsService } from "../core/platform-settings.service.js";
 import { AuditService } from "../core/audit.service.js";
 import { MailService } from "../core/mail.service.js";
@@ -60,6 +62,7 @@ export class WorkspacesService {
     private readonly platform: PlatformSettingsService,
     private readonly audit: AuditService,
     private readonly mail: MailService,
+    @Inject(APP_CONFIG) private readonly config: AppConfig,
   ) {}
 
   /**
@@ -83,18 +86,23 @@ export class WorkspacesService {
       (await this.prisma.db.plan.findFirst({ where: { isActive: true }, orderBy: { sortOrder: "asc" } }));
     if (!plan) throw new Error("No plans exist — run the seed (pnpm db:seed).");
 
+    // The platform's defaultTrialDays, when set, overrides the plan's own trial length.
+    const trialDays = settings.defaultTrialDays ?? plan.trialDays;
+    const emailKey = trialEmailKey(user.email);
+    const withheld = !account && trialDays > 0 ? await this.trialWithheld(emailKey, ctx.ip) : null;
+    // A withheld trial starts the account on the expired-plan fallback (Free), not on a paid plan for free.
+    const startPlan = withheld ? ((await this.prisma.db.plan.findUnique({ where: { key: settings.expiredPlanKey } })) ?? plan) : plan;
+
     const workspace = await this.prisma.db.$transaction(async (tx) => {
       if (!account) {
+        const trial = trialDays > 0 && !withheld;
         account = await tx.billingAccount.create({
-          data: { name: input.name, ownerId: user.userId, billingEmail: user.email },
+          data: { name: input.name, ownerId: user.userId, billingEmail: user.email, trialEmailKey: emailKey, signupIp: ctx.ip || null, trialGrantedAt: trial ? new Date() : null },
         });
-        // The platform's defaultTrialDays, when set, overrides the plan's own trial length.
-        const trialDays = settings.defaultTrialDays ?? plan.trialDays;
-        const trial = trialDays > 0;
         const subscription = await tx.subscription.create({
           data: {
             billingAccountId: account.id,
-            planId: plan.id,
+            planId: startPlan.id,
             status: trial ? "trialing" : "active",
             provider: "none",
             trialEndsAt: trial ? new Date(Date.now() + trialDays * 86_400_000) : null,
@@ -126,7 +134,29 @@ export class WorkspacesService {
       return w;
     });
     await this.audit.record({ ...ctx, workspace: undefined }, { workspaceId: workspace.id, action: "workspace.created", targetType: "workspace", targetId: workspace.id });
+    if (withheld) {
+      await this.audit.record(
+        { ...ctx, workspace: undefined },
+        { workspaceId: workspace.id, action: "billing.trial_withheld", targetType: "billing_account", targetId: workspace.billingAccountId, metadata: { reason: withheld, plan: startPlan.key } },
+      );
+    }
     return { id: workspace.id, name: workspace.name, slug: workspace.slug };
+  }
+
+  /**
+   * Why a new billing account gets no free trial, or null when it does
+   * (docs/GAP_PLAN.md §3.1.9): the same person already had one (compared by
+   * normalised email, so plus-addresses and Gmail dots do not count as new
+   * people), or the signup IP has had TRIALS_PER_IP_PER_DAY trials in the last day.
+   */
+  private async trialWithheld(emailKey: string, ip: string): Promise<"email" | "ip" | null> {
+    if (await this.prisma.db.billingAccount.findFirst({ where: { trialEmailKey: emailKey, trialGrantedAt: { not: null } }, select: { id: true } })) return "email";
+    const perIp = this.config.TRIALS_PER_IP_PER_DAY;
+    if (perIp > 0 && ip) {
+      const recent = await this.prisma.db.billingAccount.count({ where: { signupIp: ip, trialGrantedAt: { gte: new Date(Date.now() - 86_400_000) } } });
+      if (recent >= perIp) return "ip";
+    }
+    return null;
   }
 
   async createDefaultPipeline(tx: Tx, workspaceId: string) {
@@ -242,7 +272,7 @@ export class WorkspacesService {
     });
     if (pending) throw conflict("An invitation to that address is already pending — resend it instead.", { email: "Already invited" });
     await this.entitlements.assertFullAccess(w.billingAccountId, "Inviting teammates");
-    await this.entitlements.assertCapacity(w.billingAccountId, "seats");
+    await this.entitlements.assertSeat(w.billingAccountId, email);
 
     const token = newToken();
     const invitation = await this.prisma.db.invitation.create({
@@ -257,6 +287,9 @@ export class WorkspacesService {
     const w = ws(ctx);
     const inv = await this.prisma.db.invitation.findFirst({ where: { id, workspaceId: w.id, acceptedAt: null, revokedAt: null } });
     if (!inv) throw notFound("That invitation");
+    // An expired invitation stopped holding a seat, so renewing it takes one again (docs/GAP_PLAN.md §3.1.4).
+    await this.entitlements.assertFullAccess(w.billingAccountId, "Inviting teammates");
+    await this.entitlements.assertSeat(w.billingAccountId, inv.email);
     const token = newToken();
     await this.prisma.db.invitation.update({
       where: { id: inv.id },
@@ -349,7 +382,19 @@ export class WorkspacesService {
     return this.join(inv.id, inv.workspaceId, user.userId, inv.role);
   }
 
+  /**
+   * Refuses to accept an invitation the account's plan no longer has a seat
+   * for (it was downgraded, or the trial ended, after the invitation was
+   * sent). Called before an invitee's account is created, and again by join().
+   */
+  async assertInviteSeat(workspaceId: string, email: string) {
+    const workspace = await this.prisma.db.workspace.findUniqueOrThrow({ where: { id: workspaceId }, select: { billingAccountId: true } });
+    await this.entitlements.assertSeat(workspace.billingAccountId, email);
+  }
+
   async join(invitationId: string, workspaceId: string, userId: string, role: WorkspaceRole) {
+    const invited = await this.prisma.db.invitation.findUniqueOrThrow({ where: { id: invitationId }, select: { email: true } });
+    await this.assertInviteSeat(workspaceId, invited.email);
     await this.prisma.db.$transaction(async (tx) => {
       const claimed = await tx.invitation.updateMany({ where: { id: invitationId, acceptedAt: null }, data: { acceptedAt: new Date() } });
       if (!claimed.count) throw conflict("That invitation has already been used.");

@@ -19,4 +19,6 @@ export const TEST_ENV: Record<string, string> = {
   ALLOW_PRIVATE_MAIL_HOSTS: "true",
   // apps/api/.env may turn this on for local development; tests check real (faked) DNS.
   MARKETING_SKIP_DNS_CHECKS: "false",
+  // Every test signup comes from 127.0.0.1; the billing spec turns the per-IP trial limit on itself.
+  TRIALS_PER_IP_PER_DAY: "0",
 };

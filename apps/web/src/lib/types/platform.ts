@@ -185,6 +185,8 @@ export type AdminPlan = {
   limits: PlanLimits;
   features: PlanFeatures;
   providerPrices: Record<string, Record<string, string>>;
+  /** Returned by a save: why the provider price ids could not be checked (amounts then come from the form). */
+  priceNotices?: string[];
   subscriptions: number;
   isDefault: boolean;
   isExpiredFallback: boolean;

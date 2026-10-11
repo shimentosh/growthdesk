@@ -71,6 +71,8 @@ const Env = z.object({
    * so the send flow can be tried locally. Ignored when NODE_ENV=production.
    */
   MARKETING_SKIP_DNS_CHECKS: bool(false),
+  /** Free trials granted per signup IP address in a rolling day; later accounts start on the free plan. 0 = no limit. */
+  TRIALS_PER_IP_PER_DAY: z.coerce.number().int().min(0).default(3),
 });
 
 export type AppConfig = z.infer<typeof Env> & { allowedOrigins: string[] };

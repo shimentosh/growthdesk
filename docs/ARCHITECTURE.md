@@ -59,7 +59,10 @@ Bodies/queries are validated with shared Zod schemas: `@Body(Schema)` / `@Query(
 `EntitlementsService` (src/billing/entitlements.service.ts) is the only place limits are decided:
 `assertCapacity(billingAccountId, limitKey, n)`, `assertFeature(billingAccountId, featureKey)`,
 `assertFullAccess(billingAccountId, what)`, `consume(...)` for metered allowances (`monthlyEmails`,
-`monthlyAiCredits`, advisory-locked). Limits are summed over the billing account's workspaces.
+`monthlyAiCredits`, advisory-locked; returns the metering period, which a refund must use).
+`assertCapacityIn(tx, …)` checks a counted limit inside the creating transaction under the same kind of
+per-account advisory lock (contacts use it, so parallel imports cannot overshoot), and `assertSeat(…, email)`
+checks a seat for one person (invite, resend, accept). Limits are summed over the billing account's workspaces.
 Policy for lapsed subscriptions: see docs/BILLING.md. Payment providers implement
 `PaymentProvider` (src/billing/providers); subscriptions change state only from verified webhooks.
 

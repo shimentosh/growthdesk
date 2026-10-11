@@ -618,9 +618,17 @@ export class AdminService {
     if (await this.prisma.db.plan.findUnique({ where: { key: input.key } })) {
       throw conflict(`A plan with the key "${input.key}" already exists.`, { key: "Already used" });
     }
-    const plan = await this.prisma.db.plan.create({ data: { key: input.key, ...this.planData(input) } });
+    const { data, notices } = await this.checkedPlanData(input);
+    const plan = await this.prisma.db.plan.create({ data: { key: input.key, ...data } });
     await this.record(ctx, { action: "platform.plan_created", targetType: "plan", targetId: plan.id, metadata: { key: plan.key, name: plan.name } });
-    return (await this.listPlans()).find((p) => p.key === plan.key);
+    return { ...(await this.listPlans()).find((p) => p.key === plan.key)!, priceNotices: notices };
+  }
+
+  /** planData, with the amounts and currency taken from the provider's prices (BillingService.verifyPlanPrices). */
+  private async checkedPlanData(input: Parameters<AdminService["planData"]>[0]) {
+    const data = this.planData(input);
+    const { notices, ...prices } = await this.billing.verifyPlanPrices(data.providerPrices as Record<string, Record<string, string>>, data);
+    return { data: { ...data, ...prices }, notices };
   }
 
   async updatePlan(ctx: RequestContext, key: string, input: Parameters<AdminService["planData"]>[0]) {
@@ -634,11 +642,11 @@ export class AdminService {
           : "Lapsed subscriptions fall back to this plan. Choose another fallback plan in Settings before deactivating it.",
       );
     }
-    const data = this.planData(input);
+    const { data, notices } = await this.checkedPlanData(input);
     const changed = (Object.keys(data) as (keyof typeof data)[]).filter((k) => JSON.stringify(data[k]) !== JSON.stringify((plan as Record<string, unknown>)[k]));
     await this.prisma.db.plan.update({ where: { key }, data });
     await this.record(ctx, { action: "platform.plan_updated", targetType: "plan", targetId: plan.id, metadata: { key, changed } });
-    return (await this.listPlans()).find((p) => p.key === key);
+    return { ...(await this.listPlans()).find((p) => p.key === key)!, priceNotices: notices };
   }
 
   // ─── Platform settings ─────────────────────────────────────────────────────

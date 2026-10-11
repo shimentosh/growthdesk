@@ -8,7 +8,7 @@ import { MailService } from "../core/mail.service.js";
 import { EntitlementsService } from "./entitlements.service.js";
 import { recordSubscriptionChange } from "./subscription-history.js";
 import { StripeProvider } from "./providers/stripe.provider.js";
-import type { NormalizedEvent, NormalizedInvoice, NormalizedSubscription, PaymentProvider } from "./providers/payment-provider.js";
+import type { NormalizedCharge, NormalizedEvent, NormalizedInvoice, NormalizedSubscription, PaymentProvider } from "./providers/payment-provider.js";
 import { badRequest, conflict, notFound, unavailable } from "../common/errors.js";
 import { ws, type RequestContext } from "../common/context.js";
 import type { Plan } from "../generated/prisma/client.js";
@@ -16,6 +16,13 @@ import type { Plan } from "../generated/prisma/client.js";
 /** Statuses in which a provider subscription is still billing (or about to). */
 const LIVE_STATUSES: readonly string[] = ["active", "trialing", "past_due", "incomplete", "paused"];
 
+const money = (cents: number, currency: string) => {
+  try {
+    return new Intl.NumberFormat("en-US", { style: "currency", currency: currency || "USD" }).format(cents / 100);
+  } catch {
+    return `${(cents / 100).toFixed(2)} ${currency}`;
+  }
+};
 const daysLeft = (until: Date, now = new Date()) => Math.max(0, Math.ceil((until.getTime() - now.getTime()) / 86_400_000));
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
 
@@ -67,19 +74,33 @@ export class BillingService {
     }));
   }
 
+  /**
+   * The billing page. A billing account can pay for several workspaces (an
+   * agency's clients), so only the account's owner sees account-wide data:
+   * invoices, billing details and usage summed over every workspace. Anyone
+   * else with billing.read (a workspace admin) sees the plan and this
+   * workspace's own usage (docs/GAP_PLAN.md §3.1.8).
+   */
   async overview(ctx: RequestContext) {
     const w = ws(ctx);
-    const summary = await this.entitlements.summary(w.billingAccountId);
     const account = await this.prisma.db.billingAccount.findUniqueOrThrow({ where: { id: w.billingAccountId } });
-    const invoices = await this.prisma.db.invoice.findMany({
-      where: { billingAccountId: w.billingAccountId },
-      orderBy: { issuedAt: "desc" },
-      take: 50,
-    });
+    const isOwner = Boolean(ctx.identity?.userId) && account.ownerId === ctx.identity?.userId;
+    const summary = await this.entitlements.summary(w.billingAccountId, isOwner ? undefined : w.id);
+    const invoices = isOwner
+      ? await this.prisma.db.invoice.findMany({
+          where: { billingAccountId: w.billingAccountId },
+          orderBy: { issuedAt: "desc" },
+          take: 50,
+        })
+      : [];
     const checkout = this.checkoutProvider();
     const sub = summary.subscription;
     return {
-      account: { id: account.id, name: account.name, billingEmail: account.billingEmail, country: account.country, taxId: account.taxId, address: account.address },
+      scope: isOwner ? ("account" as const) : ("workspace" as const),
+      account: isOwner
+        ? { id: account.id, name: account.name, billingEmail: account.billingEmail, country: account.country, taxId: account.taxId, address: account.address }
+        : { id: account.id, name: account.name, billingEmail: "", country: "", taxId: "", address: "" },
+      meterResetsAt: summary.meterResetsAt,
       plan: { key: summary.plan.key, name: summary.plan.name },
       effectivePlan: { key: summary.effectivePlan.key, name: summary.effectivePlan.name },
       subscription: sub
@@ -145,16 +166,17 @@ export class BillingService {
     const provider = this.checkoutProvider();
     if (!provider) throw unavailable("Online payments are not set up on this installation yet. Contact support to change plans.");
     const plan = await this.prisma.db.plan.findUnique({ where: { key: planKey } });
-    if (!plan || !plan.isActive) throw notFound("That plan");
-    const priceId = priceFor(plan, provider.id, interval);
-    if (!priceId) throw badRequest(`${plan.name} has no ${interval === "year" ? "annual" : "monthly"} price configured for ${provider.label}.`);
-    await this.assertFits(w.billingAccountId, plan);
-
     const account = await this.prisma.db.billingAccount.findUniqueOrThrow({
       where: { id: w.billingAccountId },
       include: { subscription: true, owner: true },
     });
     const sub = account.subscription;
+    // A hidden plan (custom or retired) is not for sale by key; only an account already on it may renew or switch interval.
+    if (!plan || !plan.isActive || (!plan.isPublic && sub?.planId !== plan.id)) throw notFound("That plan");
+    const priceId = priceFor(plan, provider.id, interval);
+    if (!priceId) throw badRequest(`${plan.name} has no ${interval === "year" ? "annual" : "monthly"} price configured for ${provider.label}.`);
+    await this.assertFits(w.billingAccountId, plan);
+
     // A second checkout while one subscription is already live would bill twice (two tabs, a double click,
     // a checkout whose webhook has not arrived yet): change the live one's price instead.
     let liveId = sub?.providerSubscriptionId && sub.provider === provider.id && !["canceled", "expired"].includes(sub.status) ? sub.providerSubscriptionId : null;
@@ -194,6 +216,10 @@ export class BillingService {
     const w = ws(ctx);
     const sub = await this.prisma.db.subscription.findUnique({ where: { billingAccountId: w.billingAccountId } });
     if (!sub) throw notFound("A subscription");
+    // An ended subscription cannot be resumed (the provider refuses, which used to surface as a 500) or canceled again.
+    if (sub.status === "canceled" || sub.status === "expired") {
+      throw badRequest(resume ? "This subscription has ended and cannot be resumed — choose a plan to start a new one." : "This subscription has already ended.");
+    }
     if (sub.providerSubscriptionId && sub.provider !== "manual" && sub.provider !== "none") {
       await this.provider(sub.provider).setCancelAtPeriodEnd(sub.providerSubscriptionId, !resume);
       await this.audit.record(ctx, { action: resume ? "billing.resume_requested" : "billing.cancel_requested" });
@@ -328,9 +354,96 @@ export class BillingService {
         update: data,
       });
       if (event.paymentFailed) await this.paymentFailed(providerId, accountId, inv);
+      if (event.actionRequired) await this.paymentActionRequired(accountId, inv);
+      if (event.uncollectible) await this.markedUncollectible(providerId, accountId, inv);
       return accountId;
     }
+
+    if (event.charge) return this.chargeEvent(providerId, event.charge);
     return null;
+  }
+
+  /**
+   * invoice.payment_action_required: the bank wants the customer to confirm
+   * the payment (SCA / 3-D Secure), which only they can do, on the hosted
+   * invoice page. Nothing changes here; if the payment is not confirmed, the
+   * subscription's own events move it to incomplete or past due.
+   */
+  private async paymentActionRequired(billingAccountId: string, inv: NormalizedInvoice) {
+    if (inv.status === "paid") return;
+    await this.audit.record(null, { action: "billing.payment_action_required", targetType: "billing_account", targetId: billingAccountId, metadata: { invoice: inv.providerInvoiceId } }, "system");
+    await this.notifyOwner(
+      billingAccountId,
+      "Confirm your Growthdesk payment",
+      `Your bank needs you to confirm the payment of ${money(inv.amountDueCents, inv.currency)}${inv.number ? ` for invoice ${inv.number}` : ""}. Open the invoice to confirm it; until then the payment is not taken.`,
+      inv.hostedUrl || null,
+    );
+  }
+
+  /**
+   * invoice.marked_uncollectible: the provider has stopped retrying, so there
+   * is no point waiting out the grace period. The subscription's current state
+   * is applied, and a past-due account is restricted now (docs/BILLING.md).
+   */
+  private async markedUncollectible(providerId: string, billingAccountId: string, inv: NormalizedInvoice) {
+    await this.audit.record(null, { action: "billing.invoice_uncollectible", targetType: "billing_account", targetId: billingAccountId, metadata: { invoice: inv.providerInvoiceId, amountDueCents: inv.amountDueCents } }, "system");
+    const sub = await this.prisma.db.subscription.findUnique({ where: { billingAccountId } });
+    if (!sub?.providerSubscriptionId || sub.provider !== providerId) return;
+    if (inv.providerSubscriptionId && inv.providerSubscriptionId !== sub.providerSubscriptionId) return;
+    const fresh = await this.provider(providerId).fetchSubscription(sub.providerSubscriptionId);
+    await this.applySubscription(providerId, { ...fresh, billingAccountId }, new Date(), false);
+    const after = await this.prisma.db.subscription.findUniqueOrThrow({ where: { billingAccountId } });
+    if (after.status !== "past_due") return;
+    const now = new Date();
+    const graceUntil = after.graceUntil && after.graceUntil < now ? after.graceUntil : now;
+    const notices = (after.noticesSent ?? {}) as Record<string, string>;
+    // Recorded as the "restricted" notice, so the hourly notices do not send it a second time.
+    await this.prisma.db.subscription.update({ where: { id: after.id }, data: { graceUntil, noticesSent: { ...notices, restricted: graceUntil.toISOString() } } });
+    await this.notifyOwner(
+      billingAccountId,
+      "Sending is paused: your Growthdesk invoice is unpaid",
+      "We could not collect the latest invoice after several attempts. Your workspace is read-only for sending and imports until it is paid. Your data is safe. Update your payment method in Billing to resume.",
+    );
+  }
+
+  /**
+   * charge.refunded / charge.dispute.created. Audited, and people are told: a
+   * refund goes to the billing contact as a receipt; a dispute goes to the
+   * platform's admins, who must answer it in Stripe before its deadline.
+   * Neither changes access by itself (docs/BILLING.md): ending the
+   * subscription is a separate decision, and its event applies when made.
+   */
+  private async chargeEvent(providerId: string, charge: NormalizedCharge): Promise<string | null> {
+    const customer = charge.providerCustomerId ?? (charge.providerChargeId ? await this.provider(providerId).customerForCharge(charge.providerChargeId) : null);
+    const accountId = await this.accountFor(providerId, { billingAccountId: charge.billingAccountId, providerCustomerId: customer });
+    const amount = money(charge.amountCents, charge.currency);
+    await this.audit.record(
+      null,
+      {
+        action: charge.kind === "refund" ? "billing.refunded" : "billing.dispute_opened",
+        targetType: "billing_account",
+        targetId: accountId ?? undefined,
+        metadata: { charge: charge.providerChargeId, amountCents: charge.amountCents, currency: charge.currency, ...(charge.kind === "refund" ? { full: charge.fullRefund } : { reason: charge.reason }) },
+      },
+      "system",
+    );
+    if (charge.kind === "refund") {
+      if (accountId) await this.notifyOwner(accountId, "Refund issued", `We have refunded ${amount} to your payment method. It can take 5 to 10 business days to appear on your statement.`);
+      return accountId;
+    }
+    const account = accountId ? await this.prisma.db.billingAccount.findUnique({ where: { id: accountId }, select: { name: true } }) : null;
+    await this.notifyOperators(
+      `Payment disputed: ${amount}${account ? ` (${account.name})` : ""}`,
+      `A customer disputed a payment of ${amount}${charge.reason ? ` (reason: ${charge.reason.replace(/_/g, " ")})` : ""}. Respond in the Stripe dashboard before the evidence deadline, and decide there whether to cancel the subscription. Charge ${charge.providerChargeId}.`,
+    );
+    return accountId;
+  }
+
+  /** Emails the platform's owners and admins (operator matters such as disputes). */
+  private async notifyOperators(title: string, body: string) {
+    const staff = await this.prisma.db.user.findMany({ where: { platformRole: { in: ["owner", "admin"] }, suspendedAt: null }, select: { email: true } });
+    if (!staff.length) this.log.warn(`no platform admin to tell: ${title}`);
+    for (const s of staff) await this.mail.sendTemplate("notification", s.email, { title, body, action_url: this.config.ADMIN_APP_URL });
   }
 
   async applySubscription(providerId: string, s: NormalizedSubscription, eventAt: Date, deleted: boolean): Promise<string | null> {
@@ -357,6 +470,11 @@ export class BillingService {
       // stale event for an old subscription. It must not overwrite the live one (docs/GAP_PLAN.md §0.8).
       if (current?.provider === providerId && current.providerSubscriptionId && current.providerSubscriptionId !== s.providerSubscriptionId && LIVE_STATUSES.includes(current.status)) {
         return { kind: "foreign" as const, current };
+      }
+      // An admin-assigned plan is not overwritten by news of a provider subscription that has ended (a late
+      // event for the one it replaced). A live one — the customer subscribed through checkout — takes over.
+      if (current?.provider === "manual" && !LIVE_STATUSES.includes(status)) {
+        return { kind: "manual" as const, current };
       }
 
       const graceUntil =
@@ -391,6 +509,11 @@ export class BillingService {
       if (after) await recordSubscriptionChange(tx, current, after);
       return { kind: "applied" as const, before: current?.status ?? null, after };
     });
+
+    if (outcome.kind === "manual") {
+      this.log.warn(`account ${accountId} has an assigned plan; ${providerId} subscription ${s.providerSubscriptionId} (${status}) not applied`);
+      return accountId;
+    }
 
     if (outcome.kind === "foreign") {
       const live = outcome.current;
@@ -440,12 +563,17 @@ export class BillingService {
     );
   }
 
-  /** Emails the billing contact (billing email, or the account owner). */
-  private async notifyOwner(billingAccountId: string, title: string, body: string) {
+  /** Emails the billing contact (billing email, or the account owner). The button opens Billing, or `actionUrl`. */
+  private async notifyOwner(billingAccountId: string, title: string, body: string, actionUrl: string | null = null) {
     const account = await this.prisma.db.billingAccount.findUnique({ where: { id: billingAccountId }, include: { owner: true, workspaces: { select: { id: true }, take: 1, orderBy: { createdAt: "asc" } } } });
     if (!account) return;
+    const to = account.billingEmail || account.owner.email;
+    if (actionUrl) {
+      await this.mail.sendTemplate("notification", to, { title, body, action_url: actionUrl }, { userId: account.ownerId });
+      return;
+    }
     const ws = account.workspaces[0];
-    await this.mail.notification(account.billingEmail || account.owner.email, title, body, ws ? `/w/${ws.id}/settings/billing` : "/");
+    await this.mail.notification(to, title, body, ws ? `/w/${ws.id}/settings/billing` : "/");
   }
 
   /**
@@ -502,7 +630,61 @@ export class BillingService {
 
   // ─── Platform admin ────────────────────────────────────────────────────────
 
-  /** Assigns a plan without a payment provider (invoiced customers, the operator's own workspace). Audited. */
+  /**
+   * Checks a plan's provider price ids when the plan is saved, so the price
+   * customers are shown is the price checkout charges (docs/GAP_PLAN.md
+   * §3.1.7). Each id must be an active, flat, recurring price of its interval
+   * (every 1 month / 1 year), both in one currency; the amounts and currency
+   * are then copied from the provider over what was typed. When a provider is
+   * not configured nothing can be checked: the typed amounts are kept and
+   * `notices` says so.
+   */
+  async verifyPlanPrices(
+    providerPrices: Record<string, Record<string, string>>,
+    typed: { currency: string; monthlyPriceCents: number; annualPriceCents: number },
+  ): Promise<{ currency: string; monthlyPriceCents: number; annualPriceCents: number; notices: string[] }> {
+    const out = { ...typed, notices: [] as string[] };
+    for (const [providerId, ids] of Object.entries(providerPrices)) {
+      const provider = this.providers[providerId];
+      if (!provider) {
+        out.notices.push(`Price ids for "${providerId}" were saved unchecked: no such payment provider is installed.`);
+        continue;
+      }
+      if (!provider.isConfigured()) {
+        out.notices.push(`${provider.label} price ids were saved without being checked, because ${provider.label} is not configured on this installation. Customers are shown the amounts entered here.`);
+        continue;
+      }
+      let currency: string | null = null;
+      for (const interval of ["month", "year"] as const) {
+        const id = ids[interval];
+        if (!id) continue;
+        const label = `${provider.label} ${interval === "month" ? "monthly" : "annual"} price`;
+        const fail = (why: string) => badRequest(`The ${label} ${id} ${why}`, { providerPrices: `${label}: ${why}` });
+        const price = await provider.fetchPrice(id).catch((e: { statusCode?: number; code?: string }) => {
+          // Any other failure (bad key, outage) is the provider's, answered as 502 by the exception filter.
+          if (e.statusCode === 404 || e.code === "resource_missing") throw fail("does not exist in this account.");
+          throw e;
+        });
+        if (!price.active) throw fail("is archived.");
+        if (price.interval !== interval || price.intervalCount !== 1) throw fail(`must bill every 1 ${interval}${price.interval ? `, not every ${price.intervalCount} ${price.interval}` : " (it is not recurring)"}.`);
+        if (price.amountCents === null) throw fail("must be a flat amount (tiered and metered prices are not supported).");
+        if (currency && currency !== price.currency) throw fail(`is in ${price.currency}, but the monthly price is in ${currency}.`);
+        currency = price.currency;
+        if (interval === "month") out.monthlyPriceCents = price.amountCents;
+        else out.annualPriceCents = price.amountCents;
+      }
+      if (currency) out.currency = currency;
+    }
+    return out;
+  }
+
+  /**
+   * Assigns a plan without a payment provider (invoiced customers, the
+   * operator's own workspace). Audited. With an end date the plan lapses then
+   * (to the expired-plan fallback); without one it runs until changed. The
+   * previous provider's ids are cleared, so a late event about the old
+   * subscription cannot find this account through them (docs/GAP_PLAN.md §3.1.6).
+   */
   async adminAssign(ctx: RequestContext, billingAccountId: string, input: { planKey: string; interval: BillingInterval; status: "active" | "trialing"; periodEnd?: Date | null; reason: string }) {
     const plan = await this.prisma.db.plan.findUnique({ where: { key: input.planKey } });
     if (!plan) throw notFound("That plan");
@@ -515,6 +697,10 @@ export class BillingService {
       status: input.status,
       interval: input.interval,
       provider: "manual",
+      providerSubscriptionId: null,
+      providerCustomerId: null,
+      providerEventAt: null,
+      noticesSent: {},
       currentPeriodStart: new Date(),
       currentPeriodEnd: input.periodEnd ?? null,
       trialEndsAt: input.status === "trialing" ? (input.periodEnd ?? new Date(Date.now() + 14 * 86_400_000)) : null,
@@ -536,7 +722,11 @@ export class BillingService {
     return { ok: true };
   }
 
-  /** Daily: an unpaid trial with no provider ends; the owner is told. Entitlements already treat it as ended. */
+  /**
+   * Hourly: an unpaid trial with no provider ends, and so does an assigned
+   * (manual) plan whose end date has passed; the owner is told. Entitlements
+   * already treat both as ended from that moment.
+   */
   async expireTrials(now = new Date()) {
     const due = await this.prisma.db.subscription.findMany({
       where: { status: "trialing", trialEndsAt: { lte: now }, providerSubscriptionId: null },
@@ -549,7 +739,23 @@ export class BillingService {
       });
       await this.mail.sendTemplate("trial_ended", sub.billingAccount.billingEmail || sub.billingAccount.owner.email, { action_url: this.mail.link("/") }, { userId: sub.billingAccount.owner.id });
     }
-    return due.length;
+    const lapsed = await this.prisma.db.subscription.findMany({
+      where: { provider: "manual", status: { in: ["active", "past_due"] }, currentPeriodEnd: { lte: now } },
+      include: { plan: true },
+    });
+    for (const sub of lapsed) {
+      await this.prisma.db.$transaction(async (tx) => {
+        const after = await tx.subscription.update({ where: { id: sub.id }, data: { status: "expired", canceledAt: now } });
+        await recordSubscriptionChange(tx, sub, after);
+      });
+      await this.audit.record(null, { action: "billing.assigned_plan_ended", targetType: "billing_account", targetId: sub.billingAccountId, metadata: { plan: sub.plan.key } }, "system");
+      await this.notifyOwner(
+        sub.billingAccountId,
+        `Your ${sub.plan.name} plan has ended`,
+        "The plan assigned to your account has reached its end date, so the free allowance now applies. Nothing has been deleted. Choose a plan in Billing, or contact us to extend it.",
+      );
+    }
+    return due.length + lapsed.length;
   }
 
   /**

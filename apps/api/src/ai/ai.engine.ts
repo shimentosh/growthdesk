@@ -3,7 +3,7 @@ import { Inject, Injectable, Logger } from "@nestjs/common";
 import { APP_CONFIG, type AppConfig } from "../config/config.js";
 import { PrismaService } from "../prisma/prisma.service.js";
 import { PlatformSettingsService } from "../core/platform-settings.service.js";
-import { EntitlementsService, periodOf } from "../billing/entitlements.service.js";
+import { EntitlementsService } from "../billing/entitlements.service.js";
 import { ApiError, unavailable } from "../common/errors.js";
 import { AiProviderError, DEFAULT_MODELS, DEFAULT_TIMEOUT_MS, complete, type AiProviderConfig, type AiProviderName, type AiRequest } from "./ai.provider.js";
 
@@ -112,8 +112,7 @@ export class AiEngine {
       }
     }
 
-    const period = periodOf();
-    await this.entitlements.assertConsume(input.workspaceId, input.billingAccountId, "monthlyAiCredits", AI_CREDITS_PER_CALL);
+    const period = await this.entitlements.assertConsume(input.workspaceId, input.billingAccountId, "monthlyAiCredits", AI_CREDITS_PER_CALL);
     let output: T;
     let model = cfg.model;
     try {

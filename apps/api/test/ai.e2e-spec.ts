@@ -3,7 +3,7 @@ import type { AddressInfo } from "node:net";
 import { addMember, bootApp, createWorkspace, setPlan, signUp, type Agent, type TestApp } from "./helpers.js";
 import { PlatformSettingsService } from "../src/core/platform-settings.service.js";
 import { AiService } from "../src/ai/ai.service.js";
-import { periodOf } from "../src/billing/entitlements.service.js";
+import { EntitlementsService } from "../src/billing/entitlements.service.js";
 
 /*
  * The AI assistant against a local fake provider (AI_BASE_URL points both
@@ -42,7 +42,7 @@ describe("AI assistant", () => {
   let inboundId: string;
   const base = () => `/v1/workspaces/${w}/ai`;
   const credits = async () =>
-    (await t.prisma.db.usageCounter.findFirst({ where: { workspaceId: w, metric: "ai_credits", period: periodOf() } }))?.value ?? 0;
+    (await t.prisma.db.usageCounter.findFirst({ where: { workspaceId: w, metric: "ai_credits", period: (await t.app.get(EntitlementsService).meterPeriodFor((await t.prisma.db.workspace.findUniqueOrThrow({ where: { id: w } })).billingAccountId)).key } }))?.value ?? 0;
 
   beforeAll(async () => {
     fake = createServer((req, res) => {
