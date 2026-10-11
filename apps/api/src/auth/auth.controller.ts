@@ -23,6 +23,7 @@ import { PrismaService } from "../prisma/prisma.service.js";
 import { AuthService } from "./auth.service.js";
 import { SessionService } from "./session.service.js";
 import { parseAttributionCookie } from "./signup-profile.js";
+import { currentTermsVersion } from "../lifecycle/terms.js";
 
 /** Carries a Google sign-up's invitation token and consent tick across the OAuth round-trip (validated again on return). */
 const OAUTH_SIGNUP_COOKIE = "gd_oauth_signup";
@@ -58,7 +59,7 @@ export class AuthController {
   @Throttle(STRICT)
   @Post("register")
   async register(@Body(RegisterInput) body: z.infer<typeof RegisterInput>, @Ctx() ctx: RequestContext, @Res({ passthrough: true }) res: Response) {
-    const session = await this.auth.register(body, ctx, attributionFrom(res));
+    const session = await this.auth.register({ ...body, termsVersion: await currentTermsVersion(this.prisma) }, ctx, attributionFrom(res));
     this.sessions.setCookie(res, session.token);
     return { registered: true };
   }

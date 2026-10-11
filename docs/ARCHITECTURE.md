@@ -10,7 +10,7 @@ subscription billing. It shares no runtime, database or deployment with LinkDesk
 apps/api        NestJS 12 REST API (src/main.ts) and background worker (src/worker.ts), Prisma 7 + PostgreSQL 18, BullMQ + Redis
 apps/web        Next.js 16 App Router + React 19 + Tailwind 4: customer workspace (/w/:workspaceId/...) and platform admin (/admin)
 packages/shared Zod input schemas, enums, permission catalogue, plan keys, personalisation, sequence flow + time-zone windows (pure, tested)
-docs/           This file, LinkDesk reuse report, billing policy, deployment, Business OS API
+docs/           This file, LinkDesk reuse report, billing policy, deployment, privacy operations, Business OS API
 ```
 
 Why one API package with two entrypoints instead of `apps/worker`: the worker needs every domain
@@ -88,7 +88,9 @@ Policy for lapsed subscriptions: see docs/BILLING.md. Payment providers implemen
 
 ## Background jobs
 
-BullMQ queues (src/queues/queues.ts): `engine, mail, chat, events, automation, webhooks, imports, ai, maintenance`.
+BullMQ queues (src/queues/queues.ts): `engine, mail, chat, events, automation, webhooks, imports, ai, maintenance,
+marketing, platform-mail, platform-marketing, lifecycle` (`lifecycle`: workspace exports and the deleted-workspace purge,
+docs/PRIVACY_OPS.md).
 Each area registers processors in its `*.processors.ts` module (imported only by `WorkerModule`), using
 `@Processor(QUEUES.x)` classes extending `WorkerHost`, and registers recurring schedules with
 `queue.upsertJobScheduler(...)` in `onModuleInit` — guarded by `config.RUN_WORKERS` so the API process

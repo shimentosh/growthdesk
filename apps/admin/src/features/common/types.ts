@@ -64,6 +64,9 @@ export type AdminWorkspaceRow = {
   slug: string;
   status: "active" | "suspended";
   suspendedReason: string;
+  /** Soft-deleted: unreachable for customers, purged after purgeAfter unless restored (docs/PRIVACY_OPS.md). */
+  deletedAt: string | null;
+  purgeAfter: string | null;
   createdAt: string;
   members: number;
   billingAccount: { id: string; name: string; owner: Person };
@@ -111,6 +114,8 @@ export type AdminWorkspaceDetail = {
   status: "active" | "suspended";
   suspendedReason: string;
   suspendedAt: string | null;
+  deletedAt: string | null;
+  purgeAfter: string | null;
   createdAt: string;
   billingAccount: { id: string; name: string; owner: Person; workspaces: number };
   plan: AdminPlanSummary;

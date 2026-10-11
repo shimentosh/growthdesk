@@ -1,3 +1,6 @@
+import os from "node:os";
+import path from "node:path";
+
 /** Each parallel test runner can use its own database and Redis db: TEST_DB_NAME / TEST_REDIS_DB. */
 export const TEST_DATABASE_NAME = process.env.TEST_DB_NAME ?? "growthdesk_test";
 export const ADMIN_DATABASE_URL = "postgresql://growthdesk:growthdesk@127.0.0.1:5466/growthdesk";
@@ -19,4 +22,6 @@ export const TEST_ENV: Record<string, string> = {
   ALLOW_PRIVATE_MAIL_HOSTS: "true",
   // apps/api/.env may turn this on for local development; tests check real (faked) DNS.
   MARKETING_SKIP_DNS_CHECKS: "false",
+  // Workspace data exports land in the OS temp dir, one folder per test database.
+  DATA_EXPORT_DIR: path.join(os.tmpdir(), "growthdesk-test-exports", TEST_DATABASE_NAME),
 };

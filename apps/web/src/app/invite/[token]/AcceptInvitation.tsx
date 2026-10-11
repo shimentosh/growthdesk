@@ -5,6 +5,7 @@ import { useState, type FormEvent, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { labelOf } from "@growthdesk/shared";
 import { AuthCard, AuthFooter } from "@/components/account/AuthFrame";
+import { TermsConsent } from "@/components/account/TermsConsent";
 import { Button } from "@/components/ui/Button";
 import { Callout } from "@/components/ui/Callout";
 import { Field, FormError } from "@/components/ui/Field";
@@ -35,6 +36,7 @@ function Frame({ title, subtitle, children }: { title: string; subtitle?: string
 function RegisterAndJoin({ token, invitation }: { token: string; invitation: InvitationInfo }) {
   const [name, setName] = useState("");
   const [password, setPassword] = useState("");
+  const [terms, setTerms] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [fields, setFields] = useState<Record<string, string>>({});
@@ -45,7 +47,7 @@ function RegisterAndJoin({ token, invitation }: { token: string; invitation: Inv
     setError(null);
     setFields({});
     try {
-      const joined = await post<JoinResult>(`/invitations/${encodeURIComponent(token)}/register`, { name: name.trim(), password }, { noAuthRedirect: true });
+      const joined = await post<JoinResult>(`/invitations/${encodeURIComponent(token)}/register`, { name: name.trim(), password, acceptTerms: terms }, { noAuthRedirect: true });
       window.location.assign(`/w/${joined.workspaceId}`);
     } catch (err) {
       setFields(fieldsOf(err));
@@ -66,7 +68,8 @@ function RegisterAndJoin({ token, invitation }: { token: string; invitation: Inv
       <Field label="Choose a password" error={fields.password} hint="10+ characters, mixing three of: lower-case, upper-case, numbers, symbols.">
         <Input type="password" autoComplete="new-password" required value={password} onChange={(e) => setPassword(e.target.value)} />
       </Field>
-      <Button type="submit" variant="primary" loading={busy} disabled={!name.trim() || !password} className="mt-1 w-full">
+      <TermsConsent checked={terms} onCheckedChange={setTerms} error={fields.acceptTerms} />
+      <Button type="submit" variant="primary" loading={busy} disabled={!name.trim() || !password || !terms} className="mt-1 w-full">
         Create account and join
       </Button>
     </form>

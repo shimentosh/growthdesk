@@ -48,7 +48,7 @@ Status: ☐ open · ◐ in progress · ☑ done.
 | ☑ 0.9 | Billing | Events arriving in the same second can leave a paying customer restricted for up to 24 hours. The ordering check uses one-second timestamps and no lock. | `billing/billing.service.ts:329` | On every event, re-fetch the subscription from Stripe and apply that, under a row lock. |
 | ☑ 0.10 | Billing | Upgrades are granted with no payment. The proration lands on the next invoice, up to 12 months away on annual plans. | `billing/providers/stripe.provider.ts:204` | Use `proration_behavior: "always_invoice"` with `payment_behavior: "pending_if_incomplete"`. |
 | ☑ 0.11 | Billing | WhatsApp and Telegram keep sending after a trial ends, a downgrade, a restriction for non-payment, or the platform kill switch. | `campaigns/engine.service.ts:635-665`, `channels/channels.service.ts:474-502` | Check the plan feature, full access and `outreachEnabled` before every chat send. |
-| ☐ 0.12 | Legal | There are no terms, privacy policy or signup consent, and no way to delete an account or workspace (GDPR erasure). | `apps/web/src/app/page.tsx`, `workspaces.controller.ts`, `admin.service.ts` | Legal pages and a consent line on signup now. Deletion flows in §3.4. |
+| ☑ 0.12 | Legal | There are no terms, privacy policy or signup consent, and no way to delete an account or workspace (GDPR erasure). | `apps/web/src/app/page.tsx`, `workspaces.controller.ts`, `admin.service.ts` | Legal pages and a consent line on signup now. Deletion flows in §3.4. **Done:** a required consent box on register and invitation sign-up (time and published version stored on the user; Google sign-ups and older accounts are asked once in the app), plus the §3.4 flows. The legal text itself is the operator's, published from admin → Website. |
 | ◐ 0.13 | Ops | No CI and no commits: nothing gates a broken build, and there is no rollback point. | repo root | Commit. Add a GitHub Actions workflow: typecheck, unit tests, e2e against Postgres and Redis service containers, `docker build`, and dependency audit. |
 
 ---
@@ -98,8 +98,15 @@ Status: ☐ open · ◐ in progress · ☑ done.
 ### 3.3 Admin finance (missing)
 ☐ MRR and revenue view · ☐ refunds, credits and coupons on our side · ☐ re-sync a subscription or replay a webhook · ☐ plan versioning (editing a plan currently changes it for every subscriber at once).
 
-### 3.4 Lifecycle and GDPR (missing)
-☐ Delete a workspace (soft delete, then a purge job) · ☐ close an account · ☐ transfer ownership (today the owner can neither leave nor be removed) · ☐ full workspace data export · ☐ per-contact erasure and export (the GDPR data-subject request) · ☐ admin delete for users and workspaces · ☐ privacy policy, DPA, records of processing, incident runbook.
+### 3.4 Lifecycle and GDPR
+☑ Delete a workspace (soft delete, then a purge job) · ☑ close an account · ☑ transfer ownership (today the owner can neither leave nor be removed) · ☑ full workspace data export · ☑ per-contact erasure and export (the GDPR data-subject request) · ☑ admin delete for users and workspaces · ◐ privacy policy, DPA, records of processing, incident runbook.
+
+Done (2026-10-12), in `apps/api/src/lifecycle/`, tested by `test/lifecycle.e2e-spec.ts` (delete → unreachable → purge, restore, transfer, close account, contact export and erasure, workspace export). Operations, retention and the runbook outline are in `docs/PRIVACY_OPS.md`.
+- Deleting a workspace: owner only, typed name. Unreachable at once (404, API keys refused), campaigns paused, sending blocked (it is marked suspended), and the subscription cancelled when it was the account's last workspace. Restorable from apps/admin until `WORKSPACE_PURGE_DAYS` (30); then the hourly purge hard-deletes every tenant table in batches.
+- Exports are a gzipped JSON file in `DATA_EXPORT_DIR` (a volume shared by api and worker, no S3), served by an authenticated download until `DATA_EXPORT_DAYS` (7).
+- Contact erasure leaves only an HMAC of each address and number on the suppression list, which blocks re-creation (imports, API, forms, inbound mail) and outreach sends. New permission `contacts.erase` (owner and admin by default).
+- Admin: workspaces can be deleted (with a reason) and restored; users already had Delete & anonymise (now sharing the erasure code with Close account) and Disable / Enable.
+- ◐ Left for the operator: the privacy policy and terms text (published from admin → Website), the DPA and records of processing. The incident runbook is an outline to fill in.
 
 ---
 
@@ -150,7 +157,7 @@ Status: ☐ open · ◐ in progress · ☑ done.
 | ☐ 5.10 | P2 | Maintenance mode is invisible. "Contact support" leads nowhere. A second workspace hitting the limit shows bare text. | `common/access.guard.ts:108`, `apps/web/src/app/onboarding/CreateWorkspace.tsx:47-52` | Banner, support form or address, and an upgrade prompt. |
 | ☐ 5.11 | P3 | Smaller issues: /login while signed in shows the form, the post-checkout poll never ends, template previews can arrive out of order, archive can't be undone, SMTP host can't be edited, meeting buttons can be double-clicked, reports show zeros with no empty state, and the inbox only polls (no live updates). | see audit | Small fixes. |
 
-**Missing account features:** ☐ 2FA · ☐ change email · ☐ personal notification preferences · ☐ personal data export · ☐ delete account · ☐ link or unlink Google.
+**Missing account features:** ☐ 2FA · ☐ change email · ☐ personal notification preferences · ☑ personal data export (Account → Your data) · ☑ delete account (Account → Close account) · ☐ link or unlink Google.
 
 **Already solid:** the API client and error envelope, 402 upgrade dialogs, loading, empty and error states, double-submit guards, optimistic rollbacks, every auth flow, invitations, the workspace switcher, the billing UI, the import wizard, and the admin operations tools.
 

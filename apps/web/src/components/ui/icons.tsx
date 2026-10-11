@@ -8,6 +8,7 @@ import {
   Copy,
   CreditCard,
   FileText,
+  FolderLock,
   FormInput,
   Funnel,
   GitBranch,
@@ -91,6 +92,7 @@ export const ENTITY = {
   webhooks: { icon: Webhook, tint: "purple" },
   audit: { icon: ScrollText, tint: "brown" },
   supportAccess: { icon: LifeBuoy, tint: "pink" },
+  privacy: { icon: FolderLock, tint: "gray" },
   sendingDomains: { icon: Globe, tint: "blue" },
   // Marketing.
   marketing: { icon: Megaphone, tint: "pink" },

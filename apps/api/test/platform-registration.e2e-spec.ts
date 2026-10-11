@@ -39,7 +39,7 @@ describe("Platform registration and user management", () => {
   const register = (body: Record<string, unknown>, cookie?: string) => {
     const req = agent().post("/v1/auth/register");
     if (cookie) req.set("Cookie", cookie);
-    return req.send({ name: "New Person", password: PASSWORD, ...body });
+    return req.send({ name: "New Person", password: PASSWORD, acceptTerms: true, ...body });
   };
   const mails = (to: string, template: string) => t.mail.outbox.filter((m) => m.to === to && m.template === template);
   const userBy = (email: string) => t.prisma.db.user.findUniqueOrThrow({ where: { email } });
@@ -106,7 +106,7 @@ describe("Platform registration and user management", () => {
       await boss.post(`/v1/workspaces/${w}/invitations`).send({ email: "mate@team.example", role: "member" }).expect(201);
       const token = mails("mate@team.example", "invitation").at(-1)?.text.match(/invite\/([A-Za-z0-9_%-]+)/)?.[1];
       expect(token).toBeTruthy();
-      await agent().post(`/v1/invitations/${token}/register`).send({ name: "Mate", password: PASSWORD }).expect(201);
+      await agent().post(`/v1/invitations/${token}/register`).send({ name: "Mate", password: PASSWORD, acceptTerms: true }).expect(201);
       const mate = await userBy("mate@team.example");
       expect((await profileOf(mate.id))?.signupSource).toBe("workspace_invite");
     });
@@ -216,7 +216,7 @@ describe("Platform registration and user management", () => {
       expect(rejected.body.data.status).toBe("rejected");
 
       const person = agent();
-      await person.post("/v1/auth/register").send({ name: "Early", email: "early@example.com", password: PASSWORD, inviteToken: tokenFromUrl(invited.body.data.url) }).expect(201);
+      await person.post("/v1/auth/register").send({ name: "Early", email: "early@example.com", password: PASSWORD, inviteToken: tokenFromUrl(invited.body.data.url), acceptTerms: true }).expect(201);
       const me = await person.get("/v1/auth/me").expect(200);
       expect(me.body.data.user).toMatchObject({ email: "early@example.com", emailVerified: true });
       expect((await profileOf(me.body.data.user.id))?.signupSource).toBe("invite");
@@ -302,7 +302,7 @@ describe("Platform registration and user management", () => {
   describe("verification and trial settings", () => {
     it("requireEmailVerification off lets an unconfirmed account work; on blocks it again", async () => {
       const person = agent();
-      await person.post("/v1/auth/register").send({ name: "Unver", email: "unverified@example.com", password: PASSWORD }).expect(201);
+      await person.post("/v1/auth/register").send({ name: "Unver", email: "unverified@example.com", password: PASSWORD, acceptTerms: true }).expect(201);
       expect((await person.get("/v1/auth/me").expect(200)).body.data.emailVerificationRequired).toBe(true);
       await person.post("/v1/workspaces").send({ name: "Nope", businessType: "agency", timezone: "UTC" }).expect(403);
 
@@ -344,7 +344,7 @@ describe("Platform registration and user management", () => {
     beforeAll(async () => {
       customer = await signUp(t, "customer@acme.example", "Cus Tomer");
       const u = agent();
-      await u.post("/v1/auth/register").send({ name: "Pending", email: "pending@acme.example", password: PASSWORD, marketingConsent: true }).expect(201);
+      await u.post("/v1/auth/register").send({ name: "Pending", email: "pending@acme.example", password: PASSWORD, marketingConsent: true, acceptTerms: true }).expect(201);
       unverifiedId = (await userBy("pending@acme.example")).id;
     });
 
@@ -480,7 +480,7 @@ describe("Platform registration and user management", () => {
       const sw = await createWorkspace(lead, "Shared Co");
       await lead.post(`/v1/workspaces/${sw}/invitations`).send({ email: "peer@shared.example", role: "member" }).expect(201);
       const token = mails("peer@shared.example", "invitation").at(-1)?.text.match(/invite\/([A-Za-z0-9_%-]+)/)?.[1];
-      await agent().post(`/v1/invitations/${token}/register`).send({ name: "Peer", password: PASSWORD }).expect(201);
+      await agent().post(`/v1/invitations/${token}/register`).send({ name: "Peer", password: PASSWORD, acceptTerms: true }).expect(201);
       const shared = await owner.delete(`/v1/admin/users/${lead.userId}`).expect(409);
       expect(shared.body.error.message).toContain("Shared Co");
       expect(shared.body.error.details).toEqual({ workspaceId: sw });

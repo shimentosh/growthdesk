@@ -29,6 +29,7 @@ export const PERMISSION_GROUPS: PermissionGroup[] = [
       { id: "contacts.delete", label: "Delete and merge contacts" },
       { id: "contacts.import", label: "Import contacts" },
       { id: "contacts.export", label: "Export contacts" },
+      { id: "contacts.erase", label: "Erase a person's data on request (GDPR)" },
       { id: "records.view_all", label: "See records owned by other people" },
     ],
   },

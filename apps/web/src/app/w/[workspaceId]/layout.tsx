@@ -2,6 +2,7 @@
 
 import { useEffect, useState, type ReactNode } from "react";
 import { useParams, usePathname } from "next/navigation";
+import { TermsGate } from "@/components/account/TermsGate";
 import { Sidebar } from "@/components/shell/Sidebar";
 import { Topbar } from "@/components/shell/Topbar";
 import { Button } from "@/components/ui/Button";
@@ -94,6 +95,7 @@ export default function WorkspaceLayout({ children }: { children: ReactNode }) {
         </div>
       </div>
       <UpgradeDialogHost />
+      <TermsGate />
     </WorkspaceProvider>
   );
 }

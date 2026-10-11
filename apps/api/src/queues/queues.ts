@@ -29,6 +29,8 @@ export const QUEUES = {
   platformMail: "platform-mail",
   /** Platform broadcasts and onboarding drips to our own users. */
   platformMarketing: "platform-marketing",
+  /** Workspace data exports and the deleted-workspace purge (src/lifecycle). */
+  lifecycle: "lifecycle",
 } as const;
 export type QueueName = (typeof QUEUES)[keyof typeof QUEUES];
 
@@ -71,6 +73,7 @@ export class Queues implements OnModuleDestroy {
     @Inject(getQueueToken(QUEUES.marketing)) marketing: Queue,
     @Inject(getQueueToken(QUEUES.platformMail)) platformMail: Queue,
     @Inject(getQueueToken(QUEUES.platformMarketing)) platformMarketing: Queue,
+    @Inject(getQueueToken(QUEUES.lifecycle)) lifecycle: Queue,
   ) {
     this.byName = {
       engine,
@@ -85,6 +88,7 @@ export class Queues implements OnModuleDestroy {
       marketing,
       [QUEUES.platformMail]: platformMail,
       [QUEUES.platformMarketing]: platformMarketing,
+      lifecycle,
     };
   }
 

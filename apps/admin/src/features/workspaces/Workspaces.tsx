@@ -54,6 +54,7 @@ export function WorkspacesList() {
           options={[
             { value: "active", label: "Active" },
             { value: "suspended", label: "Suspended" },
+            { value: "deleted", label: "Deleted" },
           ]}
           className="w-40"
         />
@@ -92,7 +93,7 @@ export function WorkspacesList() {
                         </Link>
                       </td>
                       <td className={table.td}>
-                        <StatusBadge value={w.status} />
+                        <StatusBadge value={w.deletedAt ? "deleted" : w.status} />
                       </td>
                       <td className={table.td}>
                         {w.subscription ? (

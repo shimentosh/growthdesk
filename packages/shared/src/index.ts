@@ -21,3 +21,4 @@ export * from "./platform-users.js";
 export * from "./platform-revenue.js";
 export * from "./platform-email-admin.js";
 export * from "./platform-growth.js";
+export * from "./lifecycle.js";

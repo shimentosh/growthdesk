@@ -26,6 +26,7 @@ const SECTION_TILE: Record<string, Entity> = {
   "/settings/webhooks": "webhooks",
   "/settings/audit": "audit",
   "/settings/support-access": "supportAccess",
+  "/settings/data": "privacy",
   "/settings/sending-domains": "sendingDomains",
   "/settings/subscriptions": "lists",
 };

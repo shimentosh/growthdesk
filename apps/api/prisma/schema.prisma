@@ -44,6 +44,11 @@ model User {
   suspendedAt     DateTime?
   suspendedReason String       @default("")
   lastLoginAt     DateTime?
+  /// When the person accepted the Terms and Privacy Policy, and which version (LEGAL_TERMS_VERSION).
+  termsAcceptedAt DateTime?
+  termsVersion    String       @default("")
+  /// Set when the person closed their own account (it is anonymised, never hard-deleted).
+  closedAt        DateTime?
   createdAt       DateTime     @default(now())
   updatedAt       DateTime     @updatedAt
 
@@ -304,6 +309,11 @@ model Workspace {
   marketingFromName String          @default("")
   marketingReplyTo  String          @default("")
   createdById       String?         @db.Uuid
+  /// Soft delete (docs/PRIVACY_OPS.md). A deleted workspace is unreachable at once and is
+  /// hard-deleted by the purge job after `purgeAfter`; platform admin can restore it until then.
+  deletedAt         DateTime?
+  deletedById       String?         @db.Uuid
+  purgeAfter        DateTime?
   createdAt         DateTime        @default(now())
   updatedAt         DateTime        @updatedAt
 
@@ -367,8 +377,33 @@ model Workspace {
   aiUsage            AiUsage[]
   aiCache            AiCache[]
   supportGrants      SupportAccessGrant[]
+  dataExports        WorkspaceExport[]
 
   @@index([billingAccountId])
+  @@index([purgeAfter])
+}
+
+/// A full workspace data export, built by the worker into DATA_EXPORT_DIR and
+/// downloaded through an authenticated endpoint until `expiresAt`.
+model WorkspaceExport {
+  id            String    @id @default(uuid(7)) @db.Uuid
+  workspaceId   String    @db.Uuid
+  requestedById String?   @db.Uuid
+  /// pending | processing | ready | failed | expired
+  status        String    @default("pending")
+  fileName      String    @default("")
+  sizeBytes     Int       @default(0)
+  /// Row counts per section, for the UI.
+  counts        Json      @default("{}")
+  error         String    @default("")
+  expiresAt     DateTime?
+  finishedAt    DateTime?
+  createdAt     DateTime  @default(now())
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId, createdAt])
+  @@index([status, expiresAt])
 }
 
 model Membership {

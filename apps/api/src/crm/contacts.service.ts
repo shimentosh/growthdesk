@@ -377,6 +377,10 @@ export class ContactsService {
 
         // 2. Create
         if (opts.createBlocked) throw new ApiError(402, "plan_limit", opts.createBlocked);
+        // A person whose data was erased (GDPR) is never added back by an import, the API, a form or mail.
+        if (await this.suppression.isErased(workspaceId, emails, phones, tx)) {
+          throw new ApiError(409, "erased_contact", "This person asked for their data to be erased, so they can't be added again.");
+        }
         let companyId = input.companyId ?? null;
         if (companyId) {
           const company = await tx.company.findFirst({ where: { workspaceId, id: companyId, deletedAt: null } });

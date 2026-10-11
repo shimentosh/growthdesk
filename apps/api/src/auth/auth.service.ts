@@ -138,7 +138,11 @@ export class AuthService {
     return { joined: true };
   }
 
-  async register(input: { name: string; email: string; password: string; inviteToken?: string; marketingConsent?: boolean }, ctx: RequestContext, attribution: SignupAttributionT | null = null) {
+  async register(
+    input: { name: string; email: string; password: string; inviteToken?: string; marketingConsent?: boolean; termsVersion: string },
+    ctx: RequestContext,
+    attribution: SignupAttributionT | null = null,
+  ) {
     const invite = await this.assertSignupAllowed(input.email, input.inviteToken);
     const existing = await this.prisma.db.user.findUnique({ where: { email: input.email } });
     if (existing) throw conflict("An account with that email already exists. Sign in instead.", { email: "Already registered" });
@@ -147,7 +151,15 @@ export class AuthService {
       if (invite) await this.claimInvite(tx, invite.id);
       // The invitation was emailed to this address, so following it proves the address (as workspace invitations do).
       const created = await tx.user.create({
-        data: { email: input.email, name: input.name, passwordHash, ...(invite ? { emailVerifiedAt: new Date() } : {}) },
+        data: {
+          email: input.email,
+          name: input.name,
+          passwordHash,
+          // RegisterInput requires acceptTerms: the published version they agreed to is kept with the time.
+          termsAcceptedAt: new Date(),
+          termsVersion: input.termsVersion,
+          ...(invite ? { emailVerifiedAt: new Date() } : {}),
+        },
       });
       await createSignupProfile(tx, created.id, { source: invite ? "invite" : "password", attribution, marketingConsent: input.marketingConsent });
       return created;
@@ -276,6 +288,8 @@ export class AuthService {
       where: { id: userId },
       include: {
         memberships: {
+          // A deleted workspace (awaiting its purge) is gone for its members.
+          where: { workspace: { deletedAt: null } },
           include: { workspace: { select: { id: true, name: true, slug: true, status: true, timezone: true, billingAccountId: true } } },
           orderBy: { createdAt: "asc" },
         },
@@ -289,6 +303,7 @@ export class AuthService {
         name: user.name,
         timezone: user.timezone,
         emailVerified: Boolean(user.emailVerifiedAt),
+        termsAcceptedAt: user.termsAcceptedAt,
         platformRole: user.platformRole,
         hasPassword: Boolean(user.passwordHash),
         googleLinked: Boolean(user.googleSub),

@@ -30,7 +30,7 @@ describe("Google sign-in linking", () => {
 
   it("an unverified password account squatting the email is taken over by Google, ending the squatter's access", async () => {
     const squatter = request.agent(t.app.getHttpServer() as App);
-    await squatter.post("/v1/auth/register").send({ name: "Squatter", email: "victim@corp.test", password: "Squatter-pass-9" }).expect(201);
+    await squatter.post("/v1/auth/register").send({ name: "Squatter", email: "victim@corp.test", password: "Squatter-pass-9", acceptTerms: true }).expect(201);
     await squatter.get("/v1/auth/me").expect(200);
 
     googleSays("victim@corp.test", "google-sub-1");

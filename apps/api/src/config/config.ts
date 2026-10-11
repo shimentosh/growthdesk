@@ -71,6 +71,16 @@ const Env = z.object({
    * so the send flow can be tried locally. Ignored when NODE_ENV=production.
    */
   MARKETING_SKIP_DNS_CHECKS: bool(false),
+
+  /** Days a deleted workspace can be restored (platform admin) before the purge job hard-deletes its data. */
+  WORKSPACE_PURGE_DAYS: z.coerce.number().int().min(1).max(365).default(30),
+  /**
+   * Where workspace data exports are written. The API (download) and the worker (build) must see the same
+   * directory: mount one volume at this path in both containers. Relative paths resolve from the process's cwd.
+   */
+  DATA_EXPORT_DIR: z.string().default(".data/exports"),
+  /** Days an export file can be downloaded before it is deleted. */
+  DATA_EXPORT_DAYS: z.coerce.number().int().min(1).max(30).default(7),
 });
 
 export type AppConfig = z.infer<typeof Env> & { allowedOrigins: string[] };

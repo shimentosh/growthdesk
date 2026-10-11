@@ -11,7 +11,7 @@ describe("Authentication", () => {
 
   it("registers, requires verification before creating a workspace, verifies, and signs in", async () => {
     const agent = request.agent(t.app.getHttpServer() as App);
-    await agent.post("/v1/auth/register").send({ name: "Ada", email: "ada@example.com", password: "Correct-horse-9" }).expect(201);
+    await agent.post("/v1/auth/register").send({ name: "Ada", email: "ada@example.com", password: "Correct-horse-9", acceptTerms: true }).expect(201);
     const me = await agent.get("/v1/auth/me").expect(200);
     expect(me.body.data.user.emailVerified).toBe(false);
 
@@ -30,8 +30,8 @@ describe("Authentication", () => {
   });
 
   it("rejects duplicate registration, weak passwords and wrong passwords", async () => {
-    await t.http().post("/v1/auth/register").send({ name: "A", email: "ada@example.com", password: "Correct-horse-9" }).expect(409);
-    const weak = await t.http().post("/v1/auth/register").send({ name: "B", email: "b@example.com", password: "short" }).expect(400);
+    await t.http().post("/v1/auth/register").send({ name: "A", email: "ada@example.com", password: "Correct-horse-9", acceptTerms: true }).expect(409);
+    const weak = await t.http().post("/v1/auth/register").send({ name: "B", email: "b@example.com", password: "short", acceptTerms: true }).expect(400);
     expect(weak.body.error.fields.password).toBeDefined();
     const wrong = await t.http().post("/v1/auth/login").send({ email: "ada@example.com", password: "nope-nope-nope" }).expect(401);
     expect(wrong.body.error.message).toMatch(/do not match/);

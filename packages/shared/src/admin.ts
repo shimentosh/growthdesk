@@ -36,7 +36,8 @@ export const AdminWorkspacesQuery = z.object({
   page,
   pageSize,
   q: search,
-  status: z.enum(["active", "suspended"]).optional(),
+  /** "deleted": soft-deleted workspaces awaiting their purge (docs/PRIVACY_OPS.md). The other two exclude them. */
+  status: z.enum(["active", "suspended", "deleted"]).optional(),
 });
 
 export const AdminBillingAccountsQuery = z.object({

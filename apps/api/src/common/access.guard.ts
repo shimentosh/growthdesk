@@ -134,7 +134,8 @@ export class AccessGuard implements CanActivate {
       where: { workspaceId_userId: { workspaceId, userId: ctx.identity.userId } },
       include: { workspace: true },
     });
-    if (!membership) throw notFound("That workspace");
+    // A deleted workspace (awaiting its purge) is gone for everyone, whatever their role.
+    if (!membership || membership.workspace.deletedAt) throw notFound("That workspace");
     const w = membership.workspace;
     ctx.workspace = {
       id: w.id,
@@ -178,6 +179,7 @@ export class AccessGuard implements CanActivate {
     }
     if (!key.scopes.includes(scope)) throw forbidden(`This API key lacks the "${scope}" scope`);
     const w = key.workspace;
+    if (w.deletedAt) throw unauthorized("That API key is not valid");
     if (w.status === "suspended") throw locked("This workspace is suspended");
     // The effective plan, so a lapsed trial falls back exactly as it does everywhere else (docs/BILLING.md).
     await this.entitlements.assertFeature(w.billingAccountId, "apiAccess");
