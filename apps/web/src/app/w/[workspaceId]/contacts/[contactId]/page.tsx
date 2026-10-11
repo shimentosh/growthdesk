@@ -8,6 +8,7 @@ import type { ContactInputT } from "@growthdesk/shared";
 import { AiSummaryCard } from "@/components/ai/AiSummaryCard";
 import { ContactCallActions } from "@/components/calls/ContactCallActions";
 import { ContactDetailsCard } from "@/components/crm/ContactDetailsCard";
+import { ContactPrivacyMenu } from "@/components/crm/ContactPrivacyMenu";
 import { CustomFieldsCard } from "@/components/crm/CustomFieldsCard";
 import { NotesPanel } from "@/components/crm/NotesPanel";
 import { ConsentCard, ContactActivityCards, DealsCard, IdentityCard, MarketingListsCard } from "@/components/crm/RelatedCards";
@@ -137,9 +138,10 @@ function Loaded({ contact: c, onDeleted }: { contact: ContactDetail; onDeleted: 
           ) : undefined
         }
         actions={
-          ws.can("calls.make") || ws.can("contacts.delete") ? (
+          ws.can(["calls.make", "contacts.delete", "contacts.export", "contacts.erase"]) ? (
             <>
               <ContactCallActions contact={c} />
+              <ContactPrivacyMenu contactId={c.id} name={name} />
               {ws.can("contacts.delete") && (
                 <Button variant="danger" icon={<Trash2 />} onClick={() => setConfirmDelete(true)}>
                   Delete

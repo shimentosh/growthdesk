@@ -54,7 +54,7 @@ export type Agent = ReturnType<typeof request.agent> & { userId: string; email: 
 
 export async function signUp(t: TestApp, email: string, name = "Test Person", password = "Correct-horse-9"): Promise<Agent> {
   const agent = request.agent(t.app.getHttpServer() as App) as Agent;
-  await agent.post("/v1/auth/register").send({ name, email, password }).expect(201);
+  await agent.post("/v1/auth/register").send({ name, email, password, acceptTerms: true }).expect(201);
   const mail = t.mail.outbox.filter((m) => m.to === email && m.template === "verify_email").at(-1);
   const token = mail?.text.match(/token=([A-Za-z0-9_%-]+)/)?.[1];
   if (!token) throw new Error("no verification email");
@@ -77,7 +77,7 @@ export async function addMember(t: TestApp, owner: Agent, workspaceId: string, e
   const token = invite?.text.match(/invite\/([A-Za-z0-9_%-]+)/)?.[1];
   if (!token) throw new Error("no invitation email");
   const agent = request.agent(t.app.getHttpServer() as App) as Agent;
-  await agent.post(`/v1/invitations/${token}/register`).send({ name: email.split("@")[0], password: "Correct-horse-9" }).expect(201);
+  await agent.post(`/v1/invitations/${token}/register`).send({ name: email.split("@")[0], password: "Correct-horse-9", acceptTerms: true }).expect(201);
   const me = await agent.get("/v1/auth/me").expect(200);
   agent.userId = me.body.data.user.id;
   agent.email = email;

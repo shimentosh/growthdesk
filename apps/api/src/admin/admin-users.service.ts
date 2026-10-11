@@ -13,6 +13,7 @@ import { PLATFORM_RANK, me, type RequestContext } from "../common/context.js";
 import { badRequest, conflict, forbidden, notFound, tooMany } from "../common/errors.js";
 import { AdminService } from "./admin.service.js";
 import { userFromWhere, type UserFilter } from "./user-profile.js";
+import { eraseUserIdentity } from "../lifecycle/user-erasure.js";
 
 /*
  * Platform user management beyond the basics in AdminService (super-admin
@@ -418,6 +419,7 @@ export class AdminUsersService {
     }
     const shared = await this.prisma.db.workspace.findFirst({
       where: {
+        deletedAt: null,
         OR: [{ billingAccount: { ownerId: id } }, { memberships: { some: { userId: id, role: "owner" } } }],
         memberships: { some: { userId: { not: id } } },
       },
@@ -435,23 +437,9 @@ export class AdminUsersService {
     // Told before the address is erased; a failed send never blocks the erasure (sendTemplate does not throw).
     await this.mail.sendTemplate("account_deleted", original, { name: user.name }, { userId: id });
 
-    const anon = `deleted+${id}@invalid`;
     const now = new Date();
     const { suspended } = await this.prisma.db.$transaction(async (tx) => {
-      await tx.user.update({
-        where: { id },
-        data: { email: anon, name: "", passwordHash: null, googleSub: null, avatarUrl: "", emailVerifiedAt: null, suspendedAt: user.suspendedAt ?? now, suspendedReason: "Account deleted" },
-      });
-      await tx.session.updateMany({ where: { userId: id, revokedAt: null }, data: { revokedAt: now } });
-      await tx.authToken.deleteMany({ where: { userId: id } });
-      await tx.signInFailure.deleteMany({ where: { OR: [{ userId: id }, { email: original }] } });
-      await tx.emailLog.updateMany({ where: { OR: [{ userId: id }, { to: original }] }, data: { to: anon } });
-      await tx.billingAccount.updateMany({ where: { ownerId: id, billingEmail: original }, data: { billingEmail: "" } });
-      await tx.platformUserNote.deleteMany({ where: { userId: id } });
-      await tx.platformWaitlistEntry.deleteMany({ where: { email: original } });
-      await tx.platformSignupInvite.deleteMany({ where: { email: original } });
-      const erased = { utm: {}, referrer: "", landingPath: "", marketingConsent: false, consentAt: null, consentSource: "", tags: [], anonymisedAt: now };
-      await tx.platformUserProfile.upsert({ where: { userId: id }, create: { userId: id, ...erased }, update: erased });
+      await eraseUserIdentity(tx, user, now, { reason: "Account deleted" });
       const ws = await tx.workspace.updateMany({
         where: { billingAccount: { ownerId: id }, status: "active" },
         data: { status: "suspended", suspendedAt: now, suspendedReason: "The owner's account was deleted." },

@@ -21,8 +21,13 @@ import { hashPassword, hashToken } from "../common/crypto.js";
 import { PrismaService } from "../prisma/prisma.service.js";
 import { SessionService } from "../auth/session.service.js";
 import { WorkspacesService } from "./workspaces.service.js";
+import { currentTermsVersion } from "../lifecycle/terms.js";
 
-const RegisterInvitee = z.object({ name: requiredText(120), password });
+const RegisterInvitee = z.object({
+  name: requiredText(120),
+  password,
+  acceptTerms: z.literal(true, { error: "Accept the Terms of Service and Privacy Policy to create an account." }),
+});
 const SupportGrantInput = z.object({ hours: z.number().int().min(1).max(168), reason: requiredText(500) });
 
 @ApiTags("workspaces")
@@ -171,7 +176,14 @@ export class WorkspacesController {
     // Checked before the account is created, so a refusal does not leave a user with no workspace.
     await this.workspaces.assertInviteSeat(inv.workspaceId, inv.email);
     const user = await this.prisma.db.user.create({
-      data: { email: inv.email, name: body.name, passwordHash: await hashPassword(body.password), emailVerifiedAt: new Date() },
+      data: {
+        email: inv.email,
+        name: body.name,
+        passwordHash: await hashPassword(body.password),
+        emailVerifiedAt: new Date(),
+        termsAcceptedAt: new Date(),
+        termsVersion: await currentTermsVersion(this.prisma),
+      },
     });
     await createSignupProfile(this.prisma.db, user.id, { source: "workspace_invite", attribution: parseAttributionCookie(res.req.cookies?.gd_attr) });
     const joined = await this.workspaces.join(inv.id, inv.workspaceId, user.id, inv.role);

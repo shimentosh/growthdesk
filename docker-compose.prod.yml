@@ -57,6 +57,10 @@ x-api-env: &api-env
   RETENTION_AI_USAGE_DAYS: ${RETENTION_AI_USAGE_DAYS:-}
   RETENTION_BILLING_EVENT_DAYS: ${RETENTION_BILLING_EVENT_DAYS:-}
   RETENTION_MARKETING_SEND_DAYS: ${RETENTION_MARKETING_SEND_DAYS:-}
+  # Account lifecycle (docs/PRIVACY_OPS.md). Exports live on the exports-data volume, shared by api and worker.
+  WORKSPACE_PURGE_DAYS: ${WORKSPACE_PURGE_DAYS:-30}
+  DATA_EXPORT_DAYS: ${DATA_EXPORT_DAYS:-7}
+  DATA_EXPORT_DIR: /app/.data/exports
 
 services:
   postgres:
@@ -133,6 +137,7 @@ services:
   api:
     build: { context: ., dockerfile: infra/Dockerfile.api }
     environment: *api-env
+    volumes: [exports-data:/app/.data/exports]
     depends_on:
       migrate: { condition: service_completed_successfully }
       redis: { condition: service_healthy }
@@ -153,6 +158,7 @@ services:
     build: { context: ., dockerfile: infra/Dockerfile.api }
     environment: *api-env
     command: ["node", "--enable-source-maps", "dist/worker.js"]
+    volumes: [exports-data:/app/.data/exports]
     depends_on:
       migrate: { condition: service_completed_successfully }
       redis: { condition: service_healthy }
@@ -219,3 +225,4 @@ services:
 volumes:
   postgres-data:
   redis-data:
+  exports-data:

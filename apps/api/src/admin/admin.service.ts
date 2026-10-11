@@ -258,7 +258,7 @@ export class AdminService {
 
   // ─── Workspaces ────────────────────────────────────────────────────────────
 
-  async listWorkspaces(q: { page: number; pageSize: number; q?: string; status?: "active" | "suspended" }) {
+  async listWorkspaces(q: { page: number; pageSize: number; q?: string; status?: "active" | "suspended" | "deleted" }) {
     const where: Prisma.WorkspaceWhereInput = {};
     if (q.q) {
       where.OR = [
@@ -268,7 +268,11 @@ export class AdminService {
         ...(UUID.test(q.q) ? [{ id: q.q }, { billingAccountId: q.q }] : []),
       ];
     }
-    if (q.status) where.status = q.status;
+    if (q.status === "deleted") where.deletedAt = { not: null };
+    else if (q.status) {
+      where.status = q.status;
+      where.deletedAt = null;
+    }
     const [rows, total] = await Promise.all([
       this.prisma.db.workspace.findMany({
         where,
@@ -291,6 +295,8 @@ export class AdminService {
         slug: w.slug,
         status: w.status,
         suspendedReason: w.suspendedReason,
+        deletedAt: w.deletedAt,
+        purgeAfter: w.purgeAfter,
         createdAt: w.createdAt,
         members: w._count.memberships,
         billingAccount: { id: w.billingAccount.id, name: w.billingAccount.name, owner: w.billingAccount.owner },
@@ -339,6 +345,8 @@ export class AdminService {
       status: w.status,
       suspendedReason: w.suspendedReason,
       suspendedAt: w.suspendedAt,
+      deletedAt: w.deletedAt,
+      purgeAfter: w.purgeAfter,
       createdAt: w.createdAt,
       billingAccount: { id: account.id, name: account.name, owner: account.owner, workspaces: account._count.workspaces },
       plan: this.planSummary(summary),
@@ -409,6 +417,7 @@ export class AdminService {
   async unsuspendWorkspace(ctx: RequestContext, id: string) {
     const w = await this.findWorkspace(id);
     if (w.status !== "suspended") throw conflict("This workspace is not suspended.");
+    if (w.deletedAt) throw conflict("This workspace is deleted. Restore it instead; that lifts the suspension the deletion added.");
     await this.prisma.db.workspace.update({ where: { id }, data: { status: "active", suspendedReason: "", suspendedAt: null } });
     await this.record(ctx, { workspaceId: id, action: "platform.workspace_unsuspended", targetType: "workspace", targetId: id, metadata: { previousReason: w.suspendedReason } });
     return this.workspaceDetail(id);

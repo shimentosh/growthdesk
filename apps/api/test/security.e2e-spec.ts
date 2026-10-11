@@ -103,7 +103,7 @@ describe("Security", () => {
         .send({ email: "csrf-login@example.com", password: "Correct-horse-9" })
         .expect(403);
       expect(login.headers["set-cookie"]).toBeUndefined();
-      await t.http().post("/v1/auth/register").set("Origin", "https://evil.example").send({ name: "X", email: "x@csrf.test", password: "Correct-horse-9" }).expect(403);
+      await t.http().post("/v1/auth/register").set("Origin", "https://evil.example").send({ name: "X", email: "x@csrf.test", password: "Correct-horse-9", acceptTerms: true }).expect(403);
       await t.http().post("/v1/auth/forgot-password").set("Origin", "null").send({ email: "csrf-login@example.com" }).expect(403);
       expect(await t.prisma.db.user.findUnique({ where: { email: "x@csrf.test" } })).toBeNull();
     });
@@ -149,8 +149,8 @@ describe("Security", () => {
   describe("2.6 registration does not reveal accounts", () => {
     it("answers a taken address exactly like a new one, without a session, and emails the owner", async () => {
       await signUp(t, "taken@example.com", "Taken Person");
-      const fresh = await t.http().post("/v1/auth/register").send({ name: "New", email: "fresh@example.com", password: "Correct-horse-9" }).expect(201);
-      const taken = await t.http().post("/v1/auth/register").send({ name: "Attacker", email: "taken@example.com", password: "Other-horse-99" }).expect(201);
+      const fresh = await t.http().post("/v1/auth/register").send({ name: "New", email: "fresh@example.com", password: "Correct-horse-9", acceptTerms: true }).expect(201);
+      const taken = await t.http().post("/v1/auth/register").send({ name: "Attacker", email: "taken@example.com", password: "Other-horse-99", acceptTerms: true }).expect(201);
       expect(taken.body).toEqual(fresh.body);
       expect(String(fresh.headers["set-cookie"])).toMatch(/gd_session=/);
       expect(taken.headers["set-cookie"]).toBeUndefined();
@@ -166,7 +166,7 @@ describe("Security", () => {
     it("sends at most three notices an hour", async () => {
       await signUp(t, "flood@example.com");
       for (let i = 0; i < 5; i++) {
-        await t.http().post("/v1/auth/register").send({ name: "X", email: "flood@example.com", password: "Correct-horse-9" }).expect(201);
+        await t.http().post("/v1/auth/register").send({ name: "X", email: "flood@example.com", password: "Correct-horse-9", acceptTerms: true }).expect(201);
       }
       expect(t.mail.outbox.filter((m) => m.to === "flood@example.com" && m.template === "account_exists")).toHaveLength(3);
     });

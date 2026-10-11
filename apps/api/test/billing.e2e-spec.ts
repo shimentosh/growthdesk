@@ -438,13 +438,13 @@ describe("Billing correctness (docs/GAP_PLAN.md §3.1.4–3.1.11)", () => {
     await owner.post(`/v1/workspaces/${w}/invitations/${old.id}/resend`).expect(402);
 
     // Accepting at exactly the limit is fine: the pending invitation already held its seat.
-    await t.http().post(`/v1/invitations/${inviteToken("seat-second@acme.test")}/register`).send({ name: "Second", password: "Correct-horse-9" }).expect(201);
+    await t.http().post(`/v1/invitations/${inviteToken("seat-second@acme.test")}/register`).send({ name: "Second", password: "Correct-horse-9", acceptTerms: true }).expect(201);
     expect(await t.prisma.db.membership.count({ where: { workspaceId: w } })).toBe(2);
 
     // Registering through an invitation the plan has no seat for is refused before the account is created.
     const token = "seat-third-token";
     await t.prisma.db.invitation.create({ data: { workspaceId: w, email: "seat-third@acme.test", role: "member", tokenHash: hashToken(token), expiresAt: new Date(Date.now() + 86_400_000) } });
-    await t.http().post(`/v1/invitations/${token}/register`).send({ name: "Third", password: "Correct-horse-9" }).expect(402);
+    await t.http().post(`/v1/invitations/${token}/register`).send({ name: "Third", password: "Correct-horse-9", acceptTerms: true }).expect(402);
     expect(await t.prisma.db.user.count({ where: { email: "seat-third@acme.test" } })).toBe(0);
   });
 

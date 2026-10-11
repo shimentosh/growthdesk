@@ -154,6 +154,7 @@ export const SETTINGS_NAV: SettingsGroup[] = [
     items: [
       { href: "/settings/audit", label: "Audit log", permission: "audit.read" },
       { href: "/settings/support-access", label: "Support access", permission: "settings.manage" },
+      { href: "/settings/data", label: "Data & privacy", permission: "data.export" },
     ],
   },
 ];

@@ -3,6 +3,7 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { useParams, usePathname, useRouter } from "next/navigation";
 import { MaintenanceBanner, SupportLink } from "@/components/shell/PlatformNotices";
+import { TermsGate } from "@/components/account/TermsGate";
 import { Sidebar } from "@/components/shell/Sidebar";
 import { Topbar } from "@/components/shell/Topbar";
 import { Button } from "@/components/ui/Button";
@@ -105,6 +106,7 @@ export default function WorkspaceLayout({ children }: { children: ReactNode }) {
         </div>
       </div>
       <UpgradeDialogHost />
+      <TermsGate />
     </WorkspaceProvider>
   );
 }

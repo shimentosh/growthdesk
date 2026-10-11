@@ -53,6 +53,8 @@ export const RegisterInput = z.object({
   inviteToken: z.string().trim().min(10).max(200).optional(),
   /** Product/marketing email consent; unticked unless the person ticks it. */
   marketingConsent: z.boolean().optional(),
+  /** The Terms of Service and Privacy Policy. Required: the time and the published version are kept on the user. */
+  acceptTerms: z.literal(true, { error: "Accept the Terms of Service and Privacy Policy to create an account." }),
 });
 export const LoginInput = z.object({ email, password: z.string().min(1).max(200) });
 export const ForgotPasswordInput = z.object({ email });

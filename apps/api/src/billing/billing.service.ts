@@ -213,8 +213,16 @@ export class BillingService {
 
   /** Cancel at period end (provider-managed) or end now (trial / no provider). Data is never deleted. */
   async cancel(ctx: RequestContext, resume = false) {
-    const w = ws(ctx);
-    const sub = await this.prisma.db.subscription.findUnique({ where: { billingAccountId: w.billingAccountId } });
+    return this.cancelAccount(ws(ctx).billingAccountId, ctx, resume);
+  }
+
+  /**
+   * cancel() for a billing account named directly. Also used when the
+   * account's last workspace is deleted (docs/PRIVACY_OPS.md), so a deleted
+   * customer is not charged again; a paid period runs out as usual.
+   */
+  async cancelAccount(billingAccountId: string, ctx: RequestContext | null, resume = false) {
+    const sub = await this.prisma.db.subscription.findUnique({ where: { billingAccountId } });
     if (!sub) throw notFound("A subscription");
     // An ended subscription cannot be resumed (the provider refuses, which used to surface as a 500) or canceled again.
     if (sub.status === "canceled" || sub.status === "expired") {

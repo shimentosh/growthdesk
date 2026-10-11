@@ -380,6 +380,10 @@ export class ContactsService {
 
         // 2. Create
         if (opts.createBlocked) throw new ApiError(402, "plan_limit", opts.createBlocked);
+        // A person whose data was erased (GDPR) is never added back by an import, the API, a form or mail.
+        if (await this.suppression.isErased(workspaceId, emails, phones, tx)) {
+          throw new ApiError(409, "erased_contact", "This person asked for their data to be erased, so they can't be added again.");
+        }
         // The contact limit, counted under the account's advisory lock: parallel imports and API
         // requests queue here, so together they cannot overshoot it (docs/GAP_PLAN.md §3.1.5).
         await this.entitlements.assertCapacityIn(tx, billingAccountId, "contacts");

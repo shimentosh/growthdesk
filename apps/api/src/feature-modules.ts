@@ -22,6 +22,7 @@ import { MarketingModule } from "./marketing/marketing.module.js";
 import { SiteModule } from "./site/site.controller.js";
 import { PlatformMailModule } from "./platform-mail/platform-mail.module.js";
 import { PlatformGrowthModule } from "./platform-growth/platform-growth.module.js";
+import { LifecycleModule } from "./lifecycle/lifecycle.module.js";
 
 /** Every feature module, shared by the HTTP app and the worker. Do not reorder casually: globals first. */
 export const FEATURE_MODULES = [
@@ -49,4 +50,5 @@ export const FEATURE_MODULES = [
   MarketingModule,
   SiteModule,
   PlatformGrowthModule,
+  LifecycleModule,
 ];

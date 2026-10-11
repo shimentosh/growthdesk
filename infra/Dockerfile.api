@@ -30,6 +30,8 @@ ENV NODE_ENV=production
 WORKDIR /app
 RUN addgroup -S app && adduser -S app -G app
 COPY --from=build /out /app
+# Workspace data exports (DATA_EXPORT_DIR); owned by app so the mounted volume starts writable.
+RUN mkdir -p /app/.data/exports && chown -R app:app /app/.data
 USER app
 EXPOSE 3601
 # API: node dist/main.js   Worker: node dist/worker.js   Migrations: node_modules/.bin/prisma migrate deploy

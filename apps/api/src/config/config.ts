@@ -108,6 +108,16 @@ const Env = z.object({
   RETENTION_MARKETING_SEND_DAYS: days(730),
   /** Rows deleted per statement, so a large backlog never holds long locks. */
   RETENTION_BATCH_SIZE: z.preprocess(blankAsUndefined, z.coerce.number().int().min(100).max(50_000).default(5000)),
+
+  /** Days a deleted workspace can be restored (platform admin) before the purge job hard-deletes its data. */
+  WORKSPACE_PURGE_DAYS: z.coerce.number().int().min(1).max(365).default(30),
+  /**
+   * Where workspace data exports are written. The API (download) and the worker (build) must see the same
+   * directory: mount one volume at this path in both containers. Relative paths resolve from the process's cwd.
+   */
+  DATA_EXPORT_DIR: z.string().default(".data/exports"),
+  /** Days an export file can be downloaded before it is deleted. */
+  DATA_EXPORT_DAYS: z.coerce.number().int().min(1).max(30).default(7),
 });
 
 export type AppConfig = z.infer<typeof Env> & { allowedOrigins: string[] };

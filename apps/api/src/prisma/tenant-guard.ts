@@ -78,6 +78,7 @@ export const TENANT_MODELS = new Set<string>([
   "IdempotencyKey",
   "AiUsage",
   "AiCache",
+  "WorkspaceExport",
 ]);
 
 const WHERE_OPERATIONS = new Set([

@@ -147,7 +147,8 @@ export class EntitlementsService {
   }
 
   private async accountWorkspaceIds(billingAccountId: string, db: Tx = this.prisma.db): Promise<string[]> {
-    const rows = await db.workspace.findMany({ where: { billingAccountId }, select: { id: true } });
+    // A deleted workspace awaiting its purge no longer counts against the plan.
+    const rows = await db.workspace.findMany({ where: { billingAccountId, deletedAt: null }, select: { id: true } });
     return rows.map((r) => r.id);
   }
 

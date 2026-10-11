@@ -1,3 +1,6 @@
+import os from "node:os";
+import path from "node:path";
+
 /** Each parallel test runner can use its own database and Redis db: TEST_DB_NAME / TEST_REDIS_DB. */
 export const TEST_DATABASE_NAME = process.env.TEST_DB_NAME ?? "growthdesk_test";
 export const ADMIN_DATABASE_URL = "postgresql://growthdesk:growthdesk@127.0.0.1:5466/growthdesk";
@@ -21,4 +24,6 @@ export const TEST_ENV: Record<string, string> = {
   MARKETING_SKIP_DNS_CHECKS: "false",
   // Every test signup comes from 127.0.0.1; the billing spec turns the per-IP trial limit on itself.
   TRIALS_PER_IP_PER_DAY: "0",
+  // Workspace data exports land in the OS temp dir, one folder per test database.
+  DATA_EXPORT_DIR: path.join(os.tmpdir(), "growthdesk-test-exports", TEST_DATABASE_NAME),
 };

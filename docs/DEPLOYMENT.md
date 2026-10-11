@@ -12,8 +12,8 @@ CI lives in `.github/workflows/ci.yml`. There is no orchestration beyond Compose
 | `postgres` | `postgres:18.6-alpine`, volume `postgres-data` | Primary database (user, password user and database all `growthdesk`). Healthcheck: `pg_isready`. |
 | `redis` | `redis:8.8.3-alpine`, `--appendonly yes --maxmemory-policy noeviction`, volume `redis-data` | BullMQ queues and rate-limit counters. `noeviction` is required: an evicted job key is a lost job. |
 | `migrate` | `Dockerfile.api`, `npx prisma migrate deploy && node dist/scripts/seed.js` | One-shot: applies migrations, then seeds the plan catalogue. Runs after `postgres` is healthy. |
-| `api` | `Dockerfile.api`, default CMD `node --enable-source-maps dist/main.js` | NestJS REST API on `0.0.0.0:3601`, everything under `/v1`. Starts after `migrate` succeeds and `redis` is healthy. |
-| `worker` | `Dockerfile.api`, `node --enable-source-maps dist/worker.js` | BullMQ processors and recurring schedules (sequence engine, mailbox sync, event dispatch, reminders, billing upkeep, cleanup and retention). Sets `RUN_WORKERS=true` itself. Same start conditions as `api`. Healthcheck: its heartbeat file. |
+| `api` | `Dockerfile.api`, default CMD `node --enable-source-maps dist/main.js`, volume `exports-data` | NestJS REST API on `0.0.0.0:3601`, everything under `/v1`. Starts after `migrate` succeeds and `redis` is healthy. |
+| `worker` | `Dockerfile.api`, `node --enable-source-maps dist/worker.js`, volume `exports-data` | BullMQ processors and recurring schedules (sequence engine, mailbox sync, event dispatch, reminders, billing upkeep, cleanup and retention, workspace exports and the deleted-workspace purge). Sets `RUN_WORKERS=true` itself. Same start conditions as `api`. Healthcheck: its heartbeat file. |
 | `web` | `Dockerfile.web`, `node apps/web/server.js` (Next.js standalone) | The only published port: `127.0.0.1:3600`. Serves the UI and proxies `/api/*` to the API's `/v1/*` (`API_URL=http://api:3601`). |
 
 How they connect:
@@ -82,6 +82,8 @@ openssl rand -base64 32
 | `SENTRY_ENVIRONMENT`, `SENTRY_RELEASE` | no | Sentry tags. Environment defaults to `NODE_ENV`. |
 | `RETENTION_*_DAYS` | no | Data retention per history table. Blank = the default. See [Data retention](#data-retention). |
 | `POSTGRES_MEMORY`, `REDIS_MEMORY`, `REDIS_MAXMEMORY`, `API_MEMORY`, `WORKER_MEMORY`, `WEB_MEMORY`, `ADMIN_MEMORY`, `BACKUP_MEMORY`, `POSTGRES_SHM_SIZE`, `WORKER_STOP_GRACE` | no | Container limits. See [Resources](#resources). |
+| `WORKSPACE_PURGE_DAYS` | no | Compose default `30`. Days a deleted workspace can be restored before the purge job erases it. See [docs/PRIVACY_OPS.md](PRIVACY_OPS.md). |
+| `DATA_EXPORT_DAYS` | no | Compose default `7`. Days a workspace data export can be downloaded before it is deleted. |
 
 Blank values are treated as unset, so `STRIPE_SECRET_KEY=` disables Stripe rather than configuring an empty secret.
 
@@ -89,7 +91,8 @@ Blank values are treated as unset, so `STRIPE_SECRET_KEY=` disables Stripe rathe
 
 `NODE_ENV=production`, `API_HOST=0.0.0.0`, `API_PORT=3601`,
 `DATABASE_URL=postgresql://growthdesk:${POSTGRES_PASSWORD}@postgres:5432/growthdesk`,
-`REDIS_URL=redis://redis:6379`, and for `web`: `API_URL=http://api:3601`.
+`REDIS_URL=redis://redis:6379`, `DATA_EXPORT_DIR=/app/.data/exports` (the `exports-data` volume, mounted in both
+`api` and `worker`), and for `web`: `API_URL=http://api:3601`.
 
 ### Full API/worker schema (`apps/api/src/config/config.ts`)
 
@@ -137,6 +140,9 @@ Every variable the API and worker validate at boot, with the code's defaults. Va
 | `RETENTION_BILLING_EVENT_DAYS` | `400` | |
 | `RETENTION_MARKETING_SEND_DAYS` | `730` | |
 | `RETENTION_BATCH_SIZE` | `5000` | Rows per delete statement (100–50,000). |
+| `WORKSPACE_PURGE_DAYS` | `30` | 1–365. Restore window for a deleted workspace; the hourly purge erases it after that. |
+| `DATA_EXPORT_DIR` | `.data/exports` | Where workspace exports are written (relative to the process's working directory). The API (download) and the worker (build) must see the same directory. |
+| `DATA_EXPORT_DAYS` | `7` | 1–30. How long an export can be downloaded; the daily cleanup deletes it afterwards. |
 
 Read directly from `process.env` outside the schema:
 
@@ -358,6 +364,9 @@ authenticate with `Authorization: Bearer gd_…` workspace API keys. See docs/BU
 - **Back up `ENCRYPTION_KEY`** alongside the database. Without it, sealed mailbox passwords, OAuth tokens and
   provider secrets cannot be read, and existing tracking/unsubscribe links stop verifying.
 - `.env.production` holds every secret; keep it out of version control.
+- Workspace data exports sit in the `exports-data` volume until they expire (`DATA_EXPORT_DAYS`). They are
+  short-lived copies of customer data: there is no need to back the volume up, and it should not be copied
+  anywhere else. Retention, the purge job and the incident runbook are in [docs/PRIVACY_OPS.md](PRIVACY_OPS.md).
 
 ## Backups
 

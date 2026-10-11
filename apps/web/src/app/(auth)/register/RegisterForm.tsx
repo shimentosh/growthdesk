@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useState, type FormEvent } from "react";
 import type { SignupMode } from "@growthdesk/shared";
 import { AuthCard, AuthFooter } from "@/components/account/AuthFrame";
+import { TermsConsent } from "@/components/account/TermsConsent";
 import { Button, buttonClass } from "@/components/ui/Button";
 import { Callout } from "@/components/ui/Callout";
 import { Checkbox } from "@/components/ui/Checkbox";
@@ -56,6 +57,7 @@ export function RegisterForm({ next, invite, error: initialError, policy }: { ne
   const [email, setEmail] = useState(inviteEmail);
   const [password, setPassword] = useState("");
   const [consent, setConsent] = useState(false);
+  const [terms, setTerms] = useState(false);
   const [busy, setBusy] = useState(false);
   const [joined, setJoined] = useState(false);
   const [checkInbox, setCheckInbox] = useState(false);
@@ -72,7 +74,7 @@ export function RegisterForm({ next, invite, error: initialError, policy }: { ne
     try {
       await post(
         "/auth/register",
-        { name, email, password, marketingConsent: consent, ...(invite && policy.invite?.valid ? { inviteToken: invite } : {}) },
+        { name, email, password, acceptTerms: terms, marketingConsent: consent, ...(invite && policy.invite?.valid ? { inviteToken: invite } : {}) },
         { noAuthRedirect: true },
       );
       // An address that already has an account gets the same answer but no session; its owner is emailed instead.
@@ -201,7 +203,8 @@ export function RegisterForm({ next, invite, error: initialError, policy }: { ne
           label="Email me product news and tips"
           description="Optional. Account and billing emails are sent either way."
         />
-        <Button type="submit" variant="primary" loading={busy} className="mt-1 w-full">
+        <TermsConsent checked={terms} onCheckedChange={setTerms} error={fields.acceptTerms} />
+        <Button type="submit" variant="primary" loading={busy} disabled={!terms} className="mt-1 w-full">
           Create account
         </Button>
       </form>

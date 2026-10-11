@@ -19,6 +19,7 @@ import { browserTimeZone, timeZones, zoneAbbreviation } from "@/lib/format";
 import { useApiMutation, useApiQuery, useInvalidate } from "@/lib/query";
 import { ME_KEY, useFormat, useMe } from "@/lib/session";
 import type { Me, SessionRow } from "@/lib/types";
+import { CloseAccountCard, MyDataCard } from "./CloseAccountCard";
 import { ProductEmailsCard } from "./ProductEmailsCard";
 import { ThemePicker } from "./ThemePicker";
 import { TwoFactorCard } from "./TwoFactorCard";
@@ -268,7 +269,7 @@ function WorkspacesCard({ me }: { me: Me }) {
   );
 }
 
-/** /account — the signed-in person's own profile, password, two-factor, sessions and appearance. */
+/** /account — the signed-in person's own profile, password, two-factor, sessions and appearance, and closing the account. */
 export function AccountSettings() {
   const me = useMe();
   if (me.isPending) return <LoadingBlock className="min-h-[50vh]" label="Loading your account…" />;
@@ -297,6 +298,8 @@ export function AccountSettings() {
           </CardBody>
         </Card>
         <WorkspacesCard me={me.data} />
+        <MyDataCard />
+        <CloseAccountCard user={user} />
       </div>
     </Page>
   );

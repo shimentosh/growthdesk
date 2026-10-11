@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useState, type FormEvent } from "react";
-import { Ban, Building2, CircleCheck, CreditCard, Eye, LifeBuoy, ScrollText, Users } from "lucide-react";
+import { Ban, Building2, CircleCheck, CreditCard, Eye, LifeBuoy, RotateCcw, ScrollText, Trash2, Users } from "lucide-react";
 import { labelOf } from "@growthdesk/shared";
 import { Badge, StatusBadge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
@@ -65,17 +65,63 @@ function SuspendDialog({ workspace, open, onOpenChange }: { workspace: AdminWork
   );
 }
 
+function DeleteDialog({ workspace, open, onOpenChange }: { workspace: AdminWorkspaceDetail; open: boolean; onOpenChange: (v: boolean) => void }) {
+  const [reason, setReason] = useState("");
+  const remove = useApiMutation<{ deleted: boolean; purgeAfter: string }, { reason: string }>({
+    path: `/admin/workspaces/${workspace.id}/delete`,
+    invalidate: [platformKey("workspaces"), platformKey("overview")],
+    success: "Workspace deleted",
+    errorToast: false,
+    onSuccess: () => {
+      setReason("");
+      onOpenChange(false);
+    },
+  });
+  const submit = (e: FormEvent) => {
+    e.preventDefault();
+    remove.mutate({ reason: reason.trim() });
+  };
+  return (
+    <Modal
+      open={open}
+      onOpenChange={onOpenChange}
+      title={`Delete ${workspace.name}?`}
+      description="For a customer's deletion request. Members lose access at once, campaigns pause and nothing more is sent. If it is the billing account's last workspace, its subscription is cancelled. The data is erased by the purge job when the restore window ends; until then you can restore it here."
+      footer={
+        <>
+          <Button onClick={() => onOpenChange(false)}>Cancel</Button>
+          <Button variant="danger" type="submit" form="delete-ws" loading={remove.isPending} disabled={!reason.trim()}>
+            Delete workspace
+          </Button>
+        </>
+      }
+    >
+      <form id="delete-ws" onSubmit={submit} className="flex flex-col gap-3">
+        <FormError error={remove.error && !remove.error.fields.reason ? remove.error.message : null} />
+        <Field label="Reason" hint="Recorded in the workspace's audit log, e.g. who asked and how." error={remove.error?.fields.reason}>
+          <Textarea rows={3} value={reason} onChange={(e) => setReason(e.target.value)} maxLength={500} autoFocus />
+        </Field>
+      </form>
+    </Modal>
+  );
+}
+
 /** /workspaces/:id */
 export function WorkspaceDetail() {
   const { workspaceId } = useParams<{ workspaceId: string }>();
   const f = useFormat();
   const { canChange } = usePlatform();
   const q = useApiQuery<AdminWorkspaceDetail>(platformKey("workspaces", workspaceId), `/admin/workspaces/${workspaceId}`);
-  const [dialog, setDialog] = useState<"suspend" | "unsuspend" | null>(null);
+  const [dialog, setDialog] = useState<"suspend" | "unsuspend" | "delete" | "restore" | null>(null);
   const unsuspend = useApiMutation({
     path: `/admin/workspaces/${workspaceId}/unsuspend`,
     invalidate: [platformKey("workspaces"), platformKey("overview")],
     success: "Workspace restored",
+  });
+  const restore = useApiMutation<{ restored: boolean; stillSuspended: boolean }>({
+    path: `/admin/workspaces/${workspaceId}/restore`,
+    invalidate: [platformKey("workspaces"), platformKey("overview")],
+    success: (r) => (r.stillSuspended ? "Workspace restored. It is still suspended for its earlier reason." : "Workspace restored"),
   });
 
   return (
@@ -87,14 +133,20 @@ export function WorkspaceDetail() {
               back={{ href: "/workspaces", label: "Workspaces" }}
               icon={<PlatformTile of="workspaces" />}
               title={w.name}
-              meta={<StatusBadge value={w.status} />}
+              meta={<StatusBadge value={w.deletedAt ? "deleted" : w.status} />}
               description={w.slug}
               actions={
                 <>
                   <Button size="sm" icon={<Eye />} href={w.supportGrant ? `/workspaces/${w.id}/support` : undefined} disabled={!w.supportGrant}>
                     Support view
                   </Button>
+                  {canChange && w.deletedAt && (
+                    <Button size="sm" variant="primary" icon={<RotateCcw />} onClick={() => setDialog("restore")}>
+                      Restore
+                    </Button>
+                  )}
                   {canChange &&
+                    !w.deletedAt &&
                     (w.status === "suspended" ? (
                       <Button size="sm" variant="primary" icon={<CircleCheck />} onClick={() => setDialog("unsuspend")}>
                         Unsuspend
@@ -104,11 +156,22 @@ export function WorkspaceDetail() {
                         Suspend
                       </Button>
                     ))}
+                  {canChange && !w.deletedAt && (
+                    <Button size="sm" variant="danger" icon={<Trash2 />} onClick={() => setDialog("delete")}>
+                      Delete
+                    </Button>
+                  )}
                 </>
               }
             />
             <div className="flex flex-col gap-4">
-              {w.status === "suspended" && (
+              {w.deletedAt && (
+                <Callout tone="bad" title={`Deleted ${f.relative(w.deletedAt)}`}>
+                  Customers can&apos;t open it and nothing is sent from it.{" "}
+                  {w.purgeAfter ? `Its data is permanently erased after ${f.dateTime(w.purgeAfter)} unless it is restored before then.` : null}
+                </Callout>
+              )}
+              {w.status === "suspended" && !w.deletedAt && (
                 <Callout tone="bad" title={`Suspended${w.suspendedAt ? ` ${f.relative(w.suspendedAt)}` : ""}`}>
                   {w.suspendedReason || "No reason was recorded."}
                 </Callout>
@@ -233,6 +296,16 @@ export function WorkspaceDetail() {
             </div>
 
             <SuspendDialog workspace={w} open={dialog === "suspend"} onOpenChange={(v) => setDialog(v ? "suspend" : null)} />
+            <DeleteDialog workspace={w} open={dialog === "delete"} onOpenChange={(v) => setDialog(v ? "delete" : null)} />
+            <ConfirmDialog
+              open={dialog === "restore"}
+              onOpenChange={(v) => setDialog(v ? "restore" : null)}
+              tone="default"
+              title={`Restore ${w.name}?`}
+              description="Members can open it again straight away. Campaigns stay paused until someone resumes them. If its subscription was cancelled when it was deleted, the owner can resume or choose a plan in Plan & billing."
+              confirmLabel="Restore"
+              onConfirm={() => restore.mutateAsync()}
+            />
             <ConfirmDialog
               open={dialog === "unsuspend"}
               onOpenChange={(v) => setDialog(v ? "unsuspend" : null)}

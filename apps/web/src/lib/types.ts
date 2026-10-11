@@ -13,6 +13,8 @@ export type Me = {
     name: string;
     timezone: string | null;
     emailVerified: boolean;
+    /** When they accepted the Terms and Privacy Policy; null for Google sign-ups and older accounts until they do. */
+    termsAcceptedAt: string | null;
     platformRole: PlatformRole;
     hasPassword: boolean;
     googleLinked: boolean;
