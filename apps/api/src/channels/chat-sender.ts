@@ -29,6 +29,8 @@ export type ChatSendInput = {
 export type ChatSendResult =
   | { status: "sent"; messageRowId: string; conversationId: string }
   | { status: "failed"; reason: string; messageRowId?: string }
+  /** The provider may have delivered it (timeout, dropped connection, an earlier unconfirmed attempt): never resend automatically. */
+  | { status: "uncertain"; reason: string; messageRowId: string }
   /** The channel cannot reach this contact (no handle, window closed, bot never started, not connected). */
   | { status: "unavailable"; reason: string }
   | { status: "blocked"; reason: string };

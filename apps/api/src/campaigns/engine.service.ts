@@ -62,7 +62,14 @@ import { StepRulesService } from "./step-rules.service.js";
  *     stepRun) BEFORE it acts, holding the Message id it will send under, so
  *     a crashed or repeated run resolves what happened instead of resending;
  *   - a recipient's rejection never touches the mailbox's status — that
- *     judgement stays in OutboundEmailService (mailboxAtFault).
+ *     judgement stays in OutboundEmailService (mailboxAtFault);
+ *   - per-mailbox pacing is a slot reserved in one UPDATE (Mailbox.nextSendAt),
+ *     so concurrent step jobs cannot all see "last send long ago" and burst;
+ *   - a send whose outcome is unknown (email or chat) is recorded uncertain
+ *     and never retried;
+ *   - a step job that keeps throwing is counted (errorCount): it backs off,
+ *     and after MAX_ERRORS the enrollment fails and the campaign owner is told,
+ *     instead of the step being re-claimed forever with no trace.
  */
 
 const LEASE_MINUTES = 5;
@@ -71,6 +78,10 @@ const STALE_RUNNING_MS = 10 * 60_000;
 const HOUR_MS = 3_600_000;
 const MAX_ERRORS = 3;
 const CLAIM_BATCH = 500;
+/** Failed step jobs are kept this long for inspection (BullMQ removeOnFail). */
+const KEEP_FAILED_JOBS = { age: 7 * 24 * 3600, count: 5000 };
+/** At most one "steps are failing" notification per campaign in this window. */
+const ENGINE_ALERT_WINDOW_MS = HOUR_MS;
 
 const CONTACT_INCLUDE = {
   company: { select: { name: true, domain: true } },
@@ -100,7 +111,7 @@ export type StepOutcome = {
   nextRunAt?: Date | null;
 };
 
-export type Claimed = { id: string; workspaceId: string; stepRun: number };
+export type Claimed = { id: string; workspaceId: string; stepRun: number; errorCount: number };
 
 class LostRace extends Error {
   constructor() {
@@ -166,20 +177,74 @@ export class EngineService {
         LIMIT ${CLAIM_BATCH}
         FOR UPDATE OF e SKIP LOCKED
       )
-      RETURNING id, "workspaceId", "stepRun"`;
+      RETURNING id, "workspaceId", "stepRun", "errorCount"`;
   }
 
   private async enqueue(claimed: Claimed[]) {
     if (!claimed.length) return;
     // BullMQ ignores an add whose jobId exists, so a re-claim while the job is still queued never doubles it.
-    // Completed/failed step jobs are removed, so the same (enrollment, stepRun) can be queued again after a reschedule.
+    // Completed step jobs are removed, so the same (enrollment, stepRun) can be queued again after a reschedule.
+    // Failed ones are kept for inspection; the id carries errorCount, which recordJobFailure bumps, so the
+    // retry after a failure gets a fresh id instead of colliding with the kept job.
     await this.queues.queue(QUEUES.engine).addBulk(
       claimed.map((c) => ({
         name: "step",
         data: { workspaceId: c.workspaceId, enrollmentId: c.id, stepRun: c.stepRun },
-        opts: { jobId: `${c.id}-${c.stepRun}`, attempts: 3, backoff: { type: "exponential", delay: 15_000 }, removeOnComplete: true, removeOnFail: true },
+        opts: {
+          jobId: `${c.id}-${c.stepRun}-${c.errorCount}`,
+          attempts: 3,
+          backoff: { type: "exponential", delay: 15_000 },
+          removeOnComplete: true,
+          removeOnFail: KEEP_FAILED_JOBS,
+        },
       })),
     );
+  }
+
+  /**
+   * A step job that exhausted its attempts (an infrastructure error thrown out
+   * of runStep). Counted on the enrollment: it waits and tries again, and
+   * after MAX_ERRORS it fails, so a broken step is never re-claimed forever.
+   * Conditional on the stepRun and errorCount read, so a duplicate report
+   * counts once.
+   */
+  async recordJobFailure(workspaceId: string, enrollmentId: string, stepRun: number, error: string): Promise<"retry" | "failed" | "noop"> {
+    const db = this.prisma.db;
+    const e = await db.enrollment.findFirst({ where: { id: enrollmentId, workspaceId } });
+    if (!e || e.stepRun !== stepRun || e.status !== "active") return "noop";
+    const errorCount = e.errorCount + 1;
+    const lastError = `The step could not run: ${error}`.slice(0, 1000);
+    const final = errorCount >= MAX_ERRORS;
+    const res = await db.enrollment.updateMany({
+      where: { id: e.id, workspaceId, stepRun, status: "active", errorCount: e.errorCount },
+      data: final
+        ? { status: "failed", errorCount, lastError, stopReason: lastError.slice(0, 500), nextRunAt: null, lockedUntil: null, stepRun: { increment: 1 } }
+        : // Back off: 15 min, then 30 min, before the next claim.
+          { errorCount, lastError, nextRunAt: new Date(Date.now() + 15 * 60_000 * errorCount), lockedUntil: null },
+    });
+    if (!res.count) return "noop";
+    this.log.error(`enrollment ${e.id} step ${e.position} failed (${errorCount}/${MAX_ERRORS}): ${error}`);
+    const campaign = await db.campaign.findFirst({ where: { id: e.campaignId, workspaceId }, select: { id: true, name: true, ownerId: true, createdById: true } });
+    if (!final || !campaign) return final ? "failed" : "retry";
+    try {
+      await this.activity.log({ workspaceId, contactId: e.contactId, type: "campaign.failed", summary: `Campaign “${campaign.name}” could not continue: ${lastError}`, data: { campaignId: campaign.id, enrollmentId: e.id } });
+    } catch (err) {
+      this.log.warn(`could not write the timeline: ${err instanceof Error ? err.message : String(err)}`);
+    }
+    const owner = campaign.ownerId ?? campaign.createdById;
+    const link = `/w/${workspaceId}/campaigns/${campaign.id}`;
+    const recent = owner
+      ? await db.notification.findFirst({ where: { workspaceId, userId: owner, type: "campaign.step_failed", link, createdAt: { gt: new Date(Date.now() - ENGINE_ALERT_WINDOW_MS) } }, select: { id: true } })
+      : null;
+    if (owner && !recent) {
+      await this.notifications.notify(workspaceId, [owner], {
+        type: "campaign.step_failed",
+        title: `Campaign steps are failing: ${campaign.name}`,
+        body: `A step failed ${MAX_ERRORS} times in a row and the contact was taken out of the campaign. Last error: ${error.slice(0, 300)}`,
+        link,
+      });
+    }
+    return "failed";
   }
 
   private async completeFinished(): Promise<number> {
@@ -538,20 +603,6 @@ export class EngineService {
       }
     }
 
-    // Per-mailbox pacing: never two sends from one mailbox closer than its minimum delay.
-    if (mailbox.minDelaySeconds > 0) {
-      const last = await this.prisma.db.message.findFirst({
-        where: { workspaceId, mailboxId: mailbox.id, direction: "outbound", sentAt: { not: null } },
-        orderBy: { sentAt: "desc" },
-        select: { sentAt: true },
-      });
-      const readyAt = last?.sentAt ? last.sentAt.getTime() + mailbox.minDelaySeconds * 1000 : 0;
-      if (readyAt > run.now.getTime()) {
-        const jitter = Math.floor(Math.random() * mailbox.minDelaySeconds * 1000);
-        return this.reschedule(run, pos, nextOpening(schedule, new Date(readyAt + jitter)), null);
-      }
-    }
-
     const messageRowId = retry?.messageRowId ?? randomUUID();
     const vars = variablesFor(contact!, {
       senderName: mailbox.displayName,
@@ -564,6 +615,15 @@ export class EngineService {
     const opener = e.threadMessageId ? { subject: e.threadSubject ?? "", messageId: e.threadMessageId } : await this.opener(run);
     const thread = threadOf(renderTemplate(subjectSrc, vars), opener);
     const body = renderTemplate(bodySrc, vars);
+
+    // Per-mailbox pacing: never two sends from one mailbox closer than its minimum delay.
+    if (mailbox.minDelaySeconds > 0) {
+      const readyAt = await this.reservePacingSlot(mailbox);
+      if (readyAt) {
+        const jitter = Math.floor(Math.random() * mailbox.minDelaySeconds * 1000);
+        return this.reschedule(run, pos, nextOpening(schedule, new Date(readyAt.getTime() + jitter)), null);
+      }
+    }
 
     const exec = await this.writeAhead(run, pos, "email", retry, { messageRowId, mailboxId: mailbox.id, subject: thread.subject });
     if (!exec) return { outcome: "busy", reason: "Another worker is running this step" };
@@ -604,11 +664,29 @@ export class EngineService {
       case "uncertain":
         return this.finish(run, pos, exec.id, "uncertain", { messageId: result.messageRowId, error: result.reason });
       case "failed": {
+        // The address does not exist (5.1.x): the sender recorded the bounce; stop as an asynchronous bounce would.
+        if (result.failure?.badAddress) return this.bounced(run, exec.id, result.reason);
         // A 5xx for this recipient will not succeed later; a mailbox problem might.
         const permanent = result.failure ? result.failure.outcome === "rejected" && !result.failure.mailboxAtFault : false;
         return this.sendFailed(run, pos, exec.id, result.reason, permanent);
       }
     }
+  }
+
+  /**
+   * Takes the mailbox's next send slot in one statement: succeeds only when
+   * the slot is free (nextSendAt passed), and moves it minDelaySeconds on.
+   * Returns null when this run may send now, else when the slot frees.
+   */
+  private async reservePacingSlot(mailbox: Mailbox): Promise<Date | null> {
+    const taken = await this.prisma.db.$queryRaw<{ id: string }[]>`
+      UPDATE "Mailbox" SET "nextSendAt" = now() + make_interval(secs => "minDelaySeconds")
+      WHERE id = ${mailbox.id}::uuid AND "workspaceId" = ${mailbox.workspaceId}::uuid
+        AND ("nextSendAt" IS NULL OR "nextSendAt" <= now())
+      RETURNING id`;
+    if (taken.length) return null;
+    const row = await this.prisma.db.mailbox.findFirst({ where: { id: mailbox.id, workspaceId: mailbox.workspaceId }, select: { nextSendAt: true } });
+    return row?.nextSendAt ?? new Date(Date.now() + mailbox.minDelaySeconds * 1000);
   }
 
   /** The first email this enrollment actually sent: what follow-ups reply to. */
@@ -684,6 +762,9 @@ export class EngineService {
         return this.finish(run, pos, exec.id, "skipped", { error: result.reason, result: { reason: "unavailable" } });
       case "blocked":
         return this.blocked(run, exec.id, result.reason);
+      case "uncertain":
+        // It may have been delivered: never sent again (a retry under a fresh id would duplicate it).
+        return this.finish(run, pos, exec.id, "uncertain", { messageId: result.messageRowId, error: result.reason });
       case "failed":
         return this.sendFailed(run, pos, exec.id, result.reason, false);
     }
@@ -738,6 +819,17 @@ export class EngineService {
     if (!stopped) return { outcome: "noop", reason: "The enrollment changed while the step ran" };
     await this.timeline(run, "campaign.stopped", `Stopped in “${run.campaign.name}”: ${reason}`);
     return { outcome: "stopped", reason, nextRunAt: null };
+  }
+
+  /** The recipient's address bounced at send time: the step failed and the enrollment stops, as for a bounce report. */
+  private async bounced(run: Run, execId: string, reason: string): Promise<StepOutcome> {
+    const stopped = await this.prisma.db.$transaction(async (tx) => {
+      await tx.stepExecution.updateMany({ where: { id: execId, workspaceId: run.workspaceId }, data: { status: "failed", error: `Bounced: ${reason}`.slice(0, 1000), finishedAt: new Date() } });
+      return this.stopIn(tx, run, "Bounced", "stopped");
+    });
+    if (!stopped) return { outcome: "noop", reason: "The enrollment changed while the step ran" };
+    await this.timeline(run, "campaign.stopped", `Stopped in “${run.campaign.name}”: the email address bounced`);
+    return { outcome: "stopped", reason: `Bounced: ${reason}`, nextRunAt: null };
   }
 
   // ─── Internal steps ───────────────────────────────────────────────────────

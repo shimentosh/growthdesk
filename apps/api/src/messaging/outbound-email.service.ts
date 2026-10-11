@@ -6,8 +6,10 @@ import { EntitlementsService } from "../billing/entitlements.service.js";
 import { PlatformSettingsService } from "../core/platform-settings.service.js";
 import { ActivityService } from "../crm/activity.service.js";
 import { SuppressionService } from "../crm/suppression.service.js";
-import { MailboxAuthService } from "./mailbox-auth.service.js";
-import { dropTransport, sendSmtp, type SendFailure } from "./smtp.js";
+import { EventsService } from "../core/events.service.js";
+import { MailboxAuthError, MailboxAuthService, MailboxAuthUnavailable } from "./mailbox-auth.service.js";
+import { MailboxFaultService } from "./mailbox-faults.service.js";
+import { sendSmtp, type SendFailure } from "./smtp.js";
 import { escapeHtml, markdownToEmailHtml } from "./mail-html.js";
 import { trackingBase, unsubscribeUrl, withTracking } from "./tracking.js";
 import type { Mailbox } from "../generated/prisma/client.js";
@@ -48,6 +50,7 @@ export type SendEmailInput = {
 export type SendEmailResult =
   | { status: "sent"; messageRowId: string; providerMessageId: string; conversationId: string }
   | { status: "deferred"; reason: string; retryAt: Date | null; messageRowId?: string }
+  /** failure.badAddress: the server refused the address (5.1.x); recorded as a bounce and suppressed. */
   | { status: "failed"; reason: string; messageRowId?: string; failure?: SendFailure }
   | { status: "uncertain"; reason: string; messageRowId: string }
   | { status: "blocked"; reason: string };
@@ -69,6 +72,11 @@ const startOfNextUtcDay = () => {
  *      Message-ID — so a crash mid-send leaves evidence, and a retry of the
  *      same messageRowId is never sent twice
  *   5. an SMTP outcome of "unknown" is recorded as uncertain, not retried
+ *   6. a synchronous 5.1.x refusal of the address is recorded as a bounce
+ *      (suppressed, contact marked bounced, message.bounced emitted), as an
+ *      asynchronous bounce report would be
+ *   7. mailbox faults go through MailboxFaultService, which tolerates a
+ *      transient blip and tells admins when a mailbox stops working
  */
 @Injectable()
 export class OutboundEmailService {
@@ -81,6 +89,8 @@ export class OutboundEmailService {
     private readonly platform: PlatformSettingsService,
     private readonly activity: ActivityService,
     private readonly suppression: SuppressionService,
+    private readonly faults: MailboxFaultService,
+    private readonly events: EventsService,
     @Inject(APP_CONFIG) private readonly config: AppConfig,
   ) {}
 
@@ -217,6 +227,8 @@ export class OutboundEmailService {
     html = withTracking(html, messageRowId, { open: input.tracking?.opens ?? false, click: input.tracking?.clicks ?? false }, base);
 
     let result;
+    // Set when the credentials step has already recorded its own fault on the mailbox.
+    let faultRecorded = false;
     try {
       const settings = await this.auth.smtpSettings(mailbox);
       result = await sendSmtp(settings, {
@@ -232,7 +244,10 @@ export class OutboundEmailService {
       });
     } catch (e) {
       // Credentials could not be produced (e.g. OAuth refresh failed): nothing was sent.
-      result = { sent: false as const, failure: { error: e instanceof Error ? e.message : String(e), outcome: "rejected" as const, mailboxAtFault: true } };
+      // A refused or unreadable sign-in is final; the provider being unreachable is worth another try.
+      const error = e instanceof Error ? e.message : String(e);
+      faultRecorded = e instanceof MailboxAuthUnavailable;
+      result = { sent: false as const, failure: { error, outcome: e instanceof MailboxAuthError ? ("rejected" as const) : ("deferred" as const), mailboxAtFault: true } };
     }
 
     if (result.sent) {
@@ -245,8 +260,8 @@ export class OutboundEmailService {
           await tx.contact.updateMany({ where: { id: input.contactId, workspaceId }, data: { lastContactedAt: now } });
           await tx.contact.updateMany({ where: { id: input.contactId, workspaceId, status: "new" }, data: { status: "contacted" } });
         }
-        if (mailbox.status !== "connected" || mailbox.lastError) {
-          await tx.mailbox.update({ where: { id: mailbox.id, workspaceId }, data: { status: "connected", lastError: "" } });
+        if (mailbox.status !== "connected" || mailbox.lastError || mailbox.sendFailures) {
+          await tx.mailbox.update({ where: { id: mailbox.id, workspaceId }, data: { status: "connected", lastError: "", sendFailures: 0 } });
         }
       });
       if (input.contactId) {
@@ -256,10 +271,8 @@ export class OutboundEmailService {
     }
 
     const failure = result.failure;
-    if (failure.mailboxAtFault) {
-      dropTransport(mailbox.id);
-      await this.prisma.db.mailbox.update({ where: { id: mailbox.id, workspaceId }, data: { status: "error", lastError: failure.error.slice(0, 500) } });
-    }
+    // sendSmtp has already retired a transport the failure broke; here only the mailbox's status is judged.
+    if (failure.mailboxAtFault && !faultRecorded) await this.faults.failed(mailbox, failure.error, failure.outcome !== "rejected");
     if (failure.outcome === "unknown") {
       await this.prisma.db.message.update({ where: { id: messageRowId, workspaceId }, data: { status: "uncertain", error: `Unconfirmed: ${failure.error}`.slice(0, 1000) } });
       return { status: "uncertain", reason: failure.error, messageRowId };
@@ -276,9 +289,65 @@ export class OutboundEmailService {
       if (newConversation) await this.prisma.db.conversation.deleteMany({ where: { id: conversationId, workspaceId, messages: { none: {} } } });
       return { status: "deferred", reason: failure.error, retryAt: new Date(Date.now() + 10 * 60_000) };
     }
+    if (failure.badAddress) {
+      await this.recordBounce(input, mailbox, messageRowId, failure.error);
+      return { status: "failed", reason: failure.error, messageRowId, failure };
+    }
     await this.prisma.db.message.update({ where: { id: messageRowId, workspaceId }, data: { status: "failed", error: failure.error.slice(0, 1000) } });
     await this.prisma.db.messageEvent.create({ data: { workspaceId, messageId: messageRowId, type: "failed", data: { error: failure.error.slice(0, 500) } } });
     return { status: "failed", reason: failure.error, messageRowId, failure };
+  }
+
+  /**
+   * A synchronous hard bounce: the server refused the address during the SMTP
+   * conversation. Recorded as InboundEmailService records a bounce report:
+   * the message bounced, the contact marked, the address suppressed, the
+   * contact's other sequences stopped, message.bounced emitted, so the dead
+   * address is never enrolled again. The sending enrollment itself is left to
+   * the caller (the engine stops it), so the caller's own state stays consistent.
+   */
+  private async recordBounce(input: SendEmailInput, mailbox: Mailbox, messageRowId: string, diagnostic: string) {
+    const { workspaceId } = input;
+    const email = input.to.trim().toLowerCase();
+    const status = diagnostic.match(/\b5\.1\.\d{1,3}\b/)?.[0] ?? "";
+    const now = new Date();
+    await this.prisma.db.$transaction(async (tx) => {
+      const msg = await tx.message.update({
+        where: { id: messageRowId, workspaceId },
+        data: { status: "bounced", bouncedAt: now, error: `Bounced: ${diagnostic}`.slice(0, 1000) },
+        select: { campaignId: true, enrollmentId: true },
+      });
+      await tx.messageEvent.create({
+        data: { workspaceId, messageId: messageRowId, type: "bounced", occurredAt: now, data: { kind: "smtp", status, diagnostic: diagnostic.slice(0, 500), recipient: email } },
+      });
+      if (input.contactId) await tx.contact.updateMany({ where: { id: input.contactId, workspaceId, bouncedAt: null }, data: { bouncedAt: now } });
+      await this.suppression.add(workspaceId, "email", email, "bounced", "bounce", null, tx);
+      if (input.contactId) {
+        await tx.enrollment.updateMany({
+          where: { workspaceId, contactId: input.contactId, status: { in: ["active", "paused"] }, ...(input.enrollmentId ? { id: { not: input.enrollmentId } } : {}) },
+          data: { status: "stopped", stopReason: "Bounced", nextRunAt: null },
+        });
+        await this.activity.log(
+          {
+            workspaceId,
+            contactId: input.contactId,
+            type: "email.bounced",
+            summary: `Email to ${email} bounced${status ? ` (${status})` : ""}`,
+            data: { messageId: messageRowId, campaignId: msg.campaignId, diagnostic, mailbox: mailbox.email },
+          },
+          tx,
+        );
+      }
+      await this.events.emitIn(tx, {
+        workspaceId,
+        type: "message.bounced",
+        subjectType: "message",
+        subjectId: messageRowId,
+        payload: { messageId: messageRowId, contactId: input.contactId ?? null, campaignId: msg.campaignId, enrollmentId: msg.enrollmentId, email, status, diagnostic, kind: "smtp" },
+      });
+    });
+    await this.events.kick();
+    this.log.log(`${mailbox.email}: ${email} refused at send time (${status || "5xx"}); recorded as a bounce`);
   }
 
   /**

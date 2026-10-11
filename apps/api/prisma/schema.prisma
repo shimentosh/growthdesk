@@ -1060,6 +1060,10 @@ model Mailbox {
   oauthScope        String           @default("")
   dailyLimit        Int              @default(50)
   minDelaySeconds   Int              @default(90)
+  /// The earliest moment the next campaign send may start (per-mailbox pacing slot, reserved atomically).
+  nextSendAt        DateTime?
+  /// Consecutive transient SMTP failures (connection refused, DNS, TLS) since the last success.
+  sendFailures      Int              @default(0)
   signature         String           @default("")
   imapUidValidity   String?
   imapUidNext       Int?

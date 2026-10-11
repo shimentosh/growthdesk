@@ -82,7 +82,8 @@ Policy for lapsed subscriptions: see docs/BILLING.md. Payment providers implemen
   (`MailboxDailyCount`, atomic); plan allowance; returns `sent | deferred | failed | uncertain | blocked`.
   Pass the same `messageRowId` on retry — it never double-sends. `kind: "campaign"` obeys the platform outreach
   kill switch and account restrictions.
-- **Chat out:** `ChatSender` (src/channels/chat-sender.ts), provided as `CHAT_SENDER` by `ChannelsModule`.
+- **Chat out:** `ChatSender` (src/channels/chat-sender.ts), provided as `CHAT_SENDER` by `ChannelsModule`; returns
+  `sent | failed | uncertain | unavailable | blocked`. Like email, `uncertain` (may have been delivered) is never retried.
 - **Credentials:** `MailboxAuthService` gives SMTP/IMAP auth (sealed password or refreshed OAuth token).
 - Secrets are sealed with AES-256-GCM (`seal`/`open`, src/common/crypto.ts); never returned to clients.
 

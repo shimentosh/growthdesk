@@ -5,6 +5,7 @@ import { open, seal } from "../common/crypto.js";
 import { ApiError } from "../common/errors.js";
 import type { Mailbox } from "../generated/prisma/client.js";
 import type { SmtpAuth, SmtpSettings } from "./smtp.js";
+import { MailboxFaultService } from "./mailbox-faults.service.js";
 
 /*
  * Credentials for a connected mailbox: the sealed app password for SMTP/IMAP
@@ -34,10 +35,14 @@ export class MailboxAuthError extends ApiError {
   }
 }
 
+/** The provider could not refresh the sign-in right now (5xx / rate limited). Already recorded on the mailbox as a transient fault. */
+export class MailboxAuthUnavailable extends Error {}
+
 @Injectable()
 export class MailboxAuthService {
   constructor(
     private readonly prisma: PrismaService,
+    private readonly faults: MailboxFaultService,
     @Inject(APP_CONFIG) private readonly config: AppConfig,
   ) {}
 
@@ -66,7 +71,10 @@ export class MailboxAuthService {
     const body = (await res.json().catch(() => ({}))) as { access_token?: string; expires_in?: number; refresh_token?: string; error?: string; error_description?: string };
     if (!res.ok || !body.access_token) {
       const why = body.error_description ?? body.error ?? `HTTP ${res.status}`;
-      await this.prisma.db.mailbox.update({ where: { id: mailbox.id, workspaceId: mailbox.workspaceId }, data: { status: "error", lastError: `Sign-in refresh failed: ${why}` } });
+      // A refused grant is final; the provider being down or rate limiting us is not.
+      const transient = res.status >= 500 || res.status === 429;
+      await this.faults.failed(mailbox, `Sign-in refresh failed: ${why}`, transient);
+      if (transient) throw new MailboxAuthUnavailable(`The mailbox's sign-in could not be refreshed right now (${why}).`);
       throw new MailboxAuthError(`The mailbox's sign-in could not be refreshed (${why}) — reconnect it.`);
     }
     await this.prisma.db.mailbox.update({

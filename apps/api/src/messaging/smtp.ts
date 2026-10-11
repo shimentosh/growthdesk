@@ -37,23 +37,42 @@ export type SendFailure = {
   /** deferred: try later. rejected: will not succeed as-is. unknown: may have been delivered — never resend automatically. */
   outcome: "deferred" | "rejected" | "unknown";
   mailboxAtFault: boolean;
+  /**
+   * The server refused the address itself (enhanced status 5.1.x: no such
+   * user, bad domain, bad syntax). A synchronous hard bounce: record it as
+   * one so the address is suppressed.
+   */
+  badAddress?: boolean;
 };
 
 export type SendResult = { sent: true; messageId: string; response: string } | { sent: false; failure: SendFailure };
 
-type SmtpError = { message?: string; code?: string; responseCode?: number; command?: string };
+type SmtpError = { message?: string; code?: string; responseCode?: number; command?: string; response?: string };
+
+/** nodemailer's pool refusing a queued message it never handed to the server (the pool was closed under it). */
+const POOL_CLOSED = /Connection pool was closed/i;
+const BAD_ADDRESS = /\b5\.1\.\d{1,3}\b/;
 
 const NEVER_CONNECTED = /ECONNREFUSED|ENOTFOUND|EAI_AGAIN|EHOSTUNREACH|ENETUNREACH|Connection timeout|Greeting never received/i;
 
-/** Ported verbatim in behaviour from LinkDesk send-outcome.ts. */
+/**
+ * Ported in behaviour from LinkDesk send-outcome.ts, plus two cases: a
+ * message the pool dropped before sending is deferred (nothing went out), and
+ * a 5.1.x refusal of a recipient is flagged as a bad address.
+ */
 export function classifySmtpError(e: unknown): SendFailure {
   const err = (e && typeof e === "object" ? e : { message: String(e) }) as SmtpError;
   const error = err.message || String(e);
   const code = err.code ?? "";
   const status = typeof err.responseCode === "number" ? err.responseCode : 0;
   // The server answered, so the answer is authoritative.
-  if (status >= 500) return { error, outcome: "rejected", mailboxAtFault: code === "EAUTH" || /^(AUTH|MAIL)/.test(err.command ?? "") };
+  if (status >= 500) {
+    const mailboxAtFault = code === "EAUTH" || /^(AUTH|MAIL)/.test(err.command ?? "");
+    const badAddress = !mailboxAtFault && BAD_ADDRESS.test(`${err.response ?? ""} ${error}`);
+    return { error, outcome: "rejected", mailboxAtFault, ...(badAddress ? { badAddress } : {}) };
+  }
   if (status >= 400) return { error, outcome: "deferred", mailboxAtFault: false };
+  if (POOL_CLOSED.test(error)) return { error, outcome: "deferred", mailboxAtFault: false };
   if (code === "EAUTH") return { error, outcome: "rejected", mailboxAtFault: true };
   if (["EENVELOPE", "EMESSAGE", "EREQUIRETLS", "ESTREAM"].includes(code)) return { error, outcome: "rejected", mailboxAtFault: false };
   if (code === "ECONNECTION" || code === "EDNS" || code === "ETLS" || NEVER_CONNECTED.test(error)) return { error, outcome: "deferred", mailboxAtFault: true };
@@ -64,14 +83,60 @@ export function classifySmtpError(e: unknown): SendFailure {
 const fingerprint = (s: SmtpSettings) =>
   [s.host, s.port, s.security, s.auth.user, "pass" in s.auth ? s.auth.pass : s.auth.accessToken].join("|");
 
-const pool = new Map<string, { key: string; transport: Transporter }>();
+/*
+ * Pooled transports, one per mailbox. A transport is never closed while it
+ * has messages in flight or queued: nodemailer's close() fails every queued
+ * message with "Connection pool was closed", and the engine would then have
+ * to treat those as unconfirmed. Instead a stale transport is retired — new
+ * sends get a fresh one at once — and the retired one is closed when its last
+ * message settles.
+ */
+type MinimalTransport = Pick<Transporter, "sendMail" | "close">;
+type Held = { key: string; transport: MinimalTransport; inflight: number; retired: boolean };
 
-function transportFor(s: SmtpSettings): Transporter {
-  const key = fingerprint(s);
-  const held = pool.get(s.mailboxId);
-  if (held?.key === key) return held.transport;
-  held?.transport.close();
-  const transport = nodemailer.createTransport({
+export class TransportPool {
+  private readonly held = new Map<string, Held>();
+
+  constructor(private readonly create: (s: SmtpSettings) => MinimalTransport) {}
+
+  /** Takes the mailbox's transport for one send; call the returned release when the send settles. */
+  acquire(s: SmtpSettings): { transport: MinimalTransport; release: () => void } {
+    const key = fingerprint(s);
+    let h = this.held.get(s.mailboxId);
+    if (h && h.key !== key) {
+      this.retire(s.mailboxId);
+      h = undefined;
+    }
+    if (!h) {
+      h = { key, transport: this.create(s), inflight: 0, retired: false };
+      this.held.set(s.mailboxId, h);
+    }
+    const taken = h;
+    taken.inflight += 1;
+    let done = false;
+    return {
+      transport: taken.transport,
+      release: () => {
+        if (done) return;
+        done = true;
+        taken.inflight -= 1;
+        if (taken.retired && taken.inflight === 0) taken.transport.close();
+      },
+    };
+  }
+
+  /** New sends get a fresh transport; this one closes once its in-flight messages settle. */
+  retire(mailboxId: string) {
+    const h = this.held.get(mailboxId);
+    if (!h) return;
+    this.held.delete(mailboxId);
+    h.retired = true;
+    if (h.inflight === 0) h.transport.close();
+  }
+}
+
+const pool = new TransportPool((s) =>
+  nodemailer.createTransport({
     host: s.host,
     port: s.port,
     // 465 is TLS from the first byte; 587/25 start plain and upgrade with STARTTLS.
@@ -87,19 +152,21 @@ function transportFor(s: SmtpSettings): Transporter {
     connectionTimeout: 15_000,
     greetingTimeout: 15_000,
     socketTimeout: 60_000,
-  });
-  pool.set(s.mailboxId, { key, transport });
-  return transport;
+  }),
+);
+
+/** Stops new sends using the mailbox's pooled transport (credentials changed, mailbox removed); queued sends still finish. */
+export function dropTransport(mailboxId: string) {
+  pool.retire(mailboxId);
 }
 
-export function dropTransport(mailboxId: string) {
-  pool.get(mailboxId)?.transport.close();
-  pool.delete(mailboxId);
-}
+/** Whether a failure says nothing about the connection itself, so the pooled transport can keep serving. */
+const recipientOnly = (f: SendFailure) => f.outcome === "rejected" && !f.mailboxAtFault;
 
 export async function sendSmtp(s: SmtpSettings, mail: OutgoingMail): Promise<SendResult> {
+  const { transport, release } = pool.acquire(s);
   try {
-    const info = await transportFor(s).sendMail({
+    const info = await transport.sendMail({
       from: mail.from,
       to: mail.to,
       subject: mail.subject,
@@ -111,8 +178,12 @@ export async function sendSmtp(s: SmtpSettings, mail: OutgoingMail): Promise<Sen
     });
     return { sent: true, messageId: info.messageId ?? mail.messageId, response: String(info.response ?? "") };
   } catch (e) {
-    dropTransport(s.mailboxId);
-    return { sent: false, failure: classifySmtpError(e) };
+    const failure = classifySmtpError(e);
+    // A broken connection or sign-in: later sends start over on a fresh transport. A refused recipient is not a reason to.
+    if (!recipientOnly(failure)) pool.retire(s.mailboxId);
+    return { sent: false, failure };
+  } finally {
+    release();
   }
 }
 

@@ -1,5 +1,5 @@
 import { Inject, Injectable, Logger, Module, type OnModuleInit } from "@nestjs/common";
-import { Processor, WorkerHost } from "@nestjs/bullmq";
+import { OnWorkerEvent, Processor, WorkerHost } from "@nestjs/bullmq";
 import type { Job } from "bullmq";
 import { APP_CONFIG, type AppConfig } from "../config/config.js";
 import { QUEUES, Queues } from "../queues/queues.js";
@@ -15,6 +15,8 @@ import { EngineService } from "./engine.service.js";
  *         (EngineService.runStep). A stale stepRun, a paused campaign or a
  *         finished enrollment makes it a no-op; infrastructure errors throw so
  *         BullMQ retries (the job carries attempts + backoff from enqueue()).
+ *         A step job that exhausts its attempts is kept (removeOnFail keeps a
+ *         week), logged, and counted on the enrollment (recordJobFailure).
  */
 
 type StepJob = { workspaceId?: string; enrollmentId?: string; stepRun?: number };
@@ -41,6 +43,24 @@ export class EngineProcessor extends WorkerHost {
       default:
         this.log.warn(`unknown engine job ${job.name}`);
         return null;
+    }
+  }
+
+  /** Every failed attempt is logged; a step job's final failure is counted on its enrollment (docs/GAP_PLAN.md §4.12). */
+  @OnWorkerEvent("failed")
+  async onFailed(job: Job<StepJob> | undefined, error: Error) {
+    if (!job) return;
+    const final = job.attemptsMade >= (job.opts.attempts ?? 1);
+    this.log.error(`${job.name} ${job.id ?? ""} failed (attempt ${job.attemptsMade}${final ? ", giving up" : ""}): ${error.message}`, error.stack);
+    if (!final || job.name !== "step") return;
+    const { workspaceId, enrollmentId, stepRun } = job.data;
+    if (!workspaceId || !enrollmentId || typeof stepRun !== "number") return;
+    try {
+      await this.engine.recordJobFailure(workspaceId, enrollmentId, stepRun, error.message);
+    } catch (e) {
+      // Not counted: free the job id so the next claim can queue the step again rather than collide with this kept job.
+      this.log.error(`could not record the failure of ${job.id}: ${e instanceof Error ? e.message : String(e)}`);
+      await job.remove().catch(() => undefined);
     }
   }
 }

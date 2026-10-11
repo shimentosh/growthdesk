@@ -494,7 +494,7 @@ export class ChannelsService implements ChatSender {
           where: { id: prior.id, workspaceId },
           data: { status: "uncertain", error: prior.error || "An earlier attempt was not confirmed. It may have been delivered, so it was not sent again." },
         });
-        return { status: "failed", reason: "An earlier attempt may have been delivered, so it was not sent again.", messageRowId: prior.id };
+        return { status: "uncertain", reason: "An earlier attempt may have been delivered, so it was not sent again.", messageRowId: prior.id };
       }
     }
 
@@ -587,7 +587,8 @@ export class ChannelsService implements ChatSender {
         return convo.id;
       });
     } catch (e) {
-      if (isUnique(e) && input.messageRowId) return { status: "failed", reason: "This message is already being sent.", messageRowId };
+      // Another attempt under the same id is in flight: its outcome is not ours to know, so never send it again from here.
+      if (isUnique(e) && input.messageRowId) return { status: "uncertain", reason: "This message is already being sent.", messageRowId };
       throw e;
     }
 
@@ -609,7 +610,7 @@ export class ChannelsService implements ChatSender {
       const err = e instanceof ProviderError ? e : new ProviderError(reasonOf(e), 0, "unknown");
       if (err.delivery === "unknown") {
         await db.message.update({ where: { id: messageRowId, workspaceId }, data: { status: "uncertain", error: `Unconfirmed: ${err.message}`.slice(0, 1000) } });
-        return { status: "failed", reason: `${err.message}. It may have been delivered, so it will not be sent again automatically.`, messageRowId };
+        return { status: "uncertain", reason: `${err.message}. It may have been delivered, so it will not be sent again automatically.`, messageRowId };
       }
       await db.message.update({ where: { id: messageRowId, workspaceId }, data: { status: "failed", error: err.message.slice(0, 1000) } });
       await db.messageEvent.create({ data: { workspaceId, messageId: messageRowId, type: "failed", data: { error: err.message.slice(0, 500) } } });
