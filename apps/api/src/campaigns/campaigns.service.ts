@@ -43,7 +43,7 @@ import {
 import { SKIP_LABELS, SKIP_REASONS, type Skipped, EnrollmentService } from "./enrollment.service.js";
 import { EngineService } from "./engine.service.js";
 import { StepRulesService } from "./step-rules.service.js";
-import { SequencesService, replaceSteps, stepDto } from "./sequences.service.js";
+import { SequencesService, editStepsInPlace, replaceSteps, stepDto, structureChange } from "./sequences.service.js";
 import { replyTrackingProblem } from "../mailboxes/mailbox-upkeep.js";
 
 // ─── Request schemas ─────────────────────────────────────────────────────────
@@ -81,7 +81,20 @@ type PatchT = z.infer<typeof CampaignPatchBody>;
 // ─── Shapes ──────────────────────────────────────────────────────────────────
 
 export type SkipItem = { reason: string; label: string; count: number };
-export type Problem = { field: string; message: string };
+/** Where to fix a problem: a link inside the workspace app (prefix it with /w/:workspaceId). */
+export type ProblemFix = { label: string; href: string };
+export type Problem = { field: string; message: string; fix?: ProblemFix };
+
+/** The campaign tab (or workspace page) that fixes a problem on `field`, unless the problem named its own. */
+const withFix = (campaignId: string, p: Problem): Problem & { fix: ProblemFix } => {
+  if (p.fix) return { ...p, fix: p.fix };
+  const tab = (t: string, label: string) => ({ ...p, fix: { label, href: `/campaigns/${campaignId}?tab=${t}` } });
+  const root = p.field.split(".")[0];
+  if (root === "audience") return tab("audience", "Edit audience");
+  if (root === "mailboxIds") return tab("mailboxes", "Choose mailboxes");
+  if (root === "schedule" || root === "settings" || root === "startAt") return tab("schedule", "Edit schedule");
+  return tab("steps", "Edit steps");
+};
 
 const skipList = (s: Skipped): SkipItem[] =>
   SKIP_REASONS.filter((r) => (s[r] ?? 0) > 0).map((r) => ({ reason: r, label: SKIP_LABELS[r], count: s[r]! }));
@@ -346,6 +359,14 @@ export class CampaignsService {
     const settings = input.settings ? mergeSettings(readSettings(c.settings), input.settings) : null;
 
     await this.prisma.db.$transaction(async (tx) => {
+      // Once anyone is enrolled their places are step numbers, so the steps keep their structure (structureChange).
+      const enrolled = input.steps ? await tx.enrollment.count({ where: { workspaceId: w.id, campaignId: id } }) : 0;
+      const current = enrolled ? await tx.sequenceStep.findMany({ where: { workspaceId: w.id, sequenceId: c.sequenceId }, orderBy: { position: "asc" } }) : [];
+      const why = input.steps && enrolled ? structureChange(current, input.steps) : null;
+      if (why) {
+        const message = `${why}. ${enrolled === 1 ? "A contact is" : `${enrolled} contacts are`} enrolled and each one's place is kept by step number, so steps can't be inserted, removed, reordered or changed to another kind. You can still edit what a step sends and when, or add steps at the end; duplicate the campaign to restructure it.`;
+        throw conflict(message, { steps: message });
+      }
       await tx.campaign.updateMany({
         where: { id, workspaceId: w.id },
         data: {
@@ -360,7 +381,8 @@ export class CampaignsService {
         },
       });
       if (input.name !== undefined) await tx.sequence.updateMany({ where: { id: c.sequenceId, workspaceId: w.id }, data: { name: input.name } });
-      if (input.steps) await replaceSteps(tx, w.id, c.sequenceId, input.steps);
+      if (input.steps && enrolled) await editStepsInPlace(tx, w.id, c.sequenceId, current, input.steps);
+      else if (input.steps) await replaceSteps(tx, w.id, c.sequenceId, input.steps);
       if (mailboxIds) await this.setMailboxes(tx, w.id, id, mailboxIds);
     });
     return this.get(ctx, id);
@@ -449,7 +471,9 @@ export class CampaignsService {
       if (report.features.length) {
         const ent = await this.entitlements.forAccount(w.billingAccountId);
         for (const f of report.features as FeatureKey[]) {
-          if (!ent.features[f]) problems.push({ field: "steps", message: `${FEATURE_LABELS[f]} is not included in the ${ent.effectivePlan.name} plan.` });
+          if (!ent.features[f]) {
+            problems.push({ field: "steps", message: `${FEATURE_LABELS[f]} is not included in the ${ent.effectivePlan.name} plan.`, fix: { label: "See plans", href: "/billing" } });
+          }
         }
       }
     }
@@ -467,8 +491,9 @@ export class CampaignsService {
         problems.push({ field: "mailboxIds", message: "None of the campaign's mailboxes is connected. Reconnect one or choose another." });
       } else if (!selected.length) {
         const any = await this.prisma.db.mailbox.findFirst({ where: { workspaceId: w.id, deletedAt: null, status: "connected" }, select: { displayName: true, email: true } });
-        if (!any) problems.push({ field: "mailboxIds", message: "Connect a mailbox before launching a campaign with email steps." });
-        else {
+        if (!any) {
+          problems.push({ field: "mailboxIds", message: "Connect a mailbox before launching a campaign with email steps.", fix: { label: "Connect a mailbox", href: "/settings/mailboxes" } });
+        } else {
           warnings.push("No mailbox is chosen, so emails go from whichever connected mailbox in the workspace has the most room that day.");
           sender = any;
         }
@@ -553,7 +578,7 @@ export class CampaignsService {
     }
 
     return {
-      problems,
+      problems: problems.map((p) => withFix(c.id, p)),
       warnings,
       candidates,
       eligible,
@@ -632,6 +657,9 @@ export class CampaignsService {
     await this.entitlements.assertCapacity(w.billingAccountId, "activeCampaigns", 1);
     const now = new Date();
     const future = !c.startedAt && c.startAt !== null && c.startAt.getTime() > now.getTime();
+    // While still paused (the engine leaves it alone): starts that fell due during the pause are spread
+    // over the coming days under the daily limit instead of all going out at once.
+    await this.enrollment.replanWaiting(w.id, c, now);
     const res = await this.prisma.db.campaign.updateMany({
       where: { id, workspaceId: w.id, deletedAt: null, status: "paused" },
       data: future ? { status: "scheduled", pausedAt: null } : { status: "running", pausedAt: null, startedAt: c.startedAt ?? now },

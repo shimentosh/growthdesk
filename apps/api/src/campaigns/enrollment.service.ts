@@ -1,5 +1,5 @@
 import { Injectable } from "@nestjs/common";
-import { ContactFilter, emailDomain, nextOpening, normalizeEmail, normalizePhone } from "@growthdesk/shared";
+import { ContactFilter, type DayLoad, emailDomain, localDay, normalizeEmail, normalizePhone, planStarts, zonedParts, zonedTime } from "@growthdesk/shared";
 import type { Campaign, Prisma } from "../generated/prisma/client.js";
 import { PrismaService } from "../prisma/prisma.service.js";
 import { ContactsService } from "../crm/contacts.service.js";
@@ -24,7 +24,6 @@ export const SKIP_LABELS: Record<SkipReason, string> = {
 };
 
 const BATCH = 1000;
-const DAY_MS = 86_400_000;
 
 const chunks = <T>(list: T[], size: number): T[][] => {
   const out: T[][] = [];
@@ -104,11 +103,50 @@ export class EnrollmentService {
   }
 
   /**
-   * Enrolls eligible contacts. Starts are staggered so at most
-   * `dailyNewLimit` contacts begin per day, `gapSeconds` apart, each inside
-   * the send window: enrollment i starts on day floor(i / limit), slot
-   * i % limit. Counting continues after the enrollments still waiting for
-   * their first step, so a later batch queues behind the earlier one.
+   * New starts already booked or made, per local day in the campaign's zone:
+   * enrollments still waiting for their first step (by when it is due), plus
+   * the enrollments whose first step ran earlier today. `waiting: false`
+   * leaves out the first group, for re-planning exactly those.
+   */
+  async dayLoads(workspaceId: string, campaign: Pick<Campaign, "id" | "schedule">, now: Date = new Date(), opts: { waiting?: boolean } = {}): Promise<Map<string, DayLoad>> {
+    const tz = readSchedule(campaign.schedule).timezone;
+    const p = zonedParts(now, tz);
+    const todayStart = zonedTime(p.year, p.month, p.day, 0, 0, tz);
+    const [waiting, [started]] = await Promise.all([
+      opts.waiting === false
+        ? Promise.resolve([])
+        : this.prisma.db.$queryRaw<{ day: string; n: number; last: Date }[]>`
+        SELECT to_char("nextRunAt" AT TIME ZONE ${tz}, 'YYYY-MM-DD') AS day, count(*)::int AS n, max("nextRunAt") AS last
+        FROM "Enrollment"
+        WHERE "workspaceId" = ${workspaceId}::uuid AND "campaignId" = ${campaign.id}::uuid
+          AND status = 'active' AND "stepRun" = 0 AND "nextRunAt" IS NOT NULL
+        GROUP BY 1`,
+      this.prisma.db.$queryRaw<{ n: number; last: Date | null }[]>`
+        SELECT count(DISTINCT se."enrollmentId")::int AS n, max(se."startedAt") AS last
+        FROM "StepExecution" se
+        WHERE se."workspaceId" = ${workspaceId}::uuid AND se."campaignId" = ${campaign.id}::uuid AND se."startedAt" >= ${todayStart}
+          AND NOT EXISTS (
+            SELECT 1 FROM "StepExecution" p
+            WHERE p."workspaceId" = se."workspaceId" AND p."enrollmentId" = se."enrollmentId" AND p."startedAt" < ${todayStart}
+          )`,
+    ]);
+    const loads = new Map<string, DayLoad>(waiting.map((w) => [w.day, { count: w.n, last: w.last.getTime() }]));
+    if (started?.n) {
+      const today = localDay(now, tz);
+      const load = loads.get(today) ?? { count: 0, last: Number.NEGATIVE_INFINITY };
+      loads.set(today, { count: load.count + started.n, last: Math.max(load.last, started.last?.getTime() ?? load.last) });
+    }
+    return loads;
+  }
+
+  /**
+   * Enrolls eligible contacts. Starts are planned so at most
+   * `dailyNewLimit` contacts begin per local day (in the campaign's zone),
+   * `gapSeconds` apart, each inside the send window (planStarts). The days
+   * already holding starts — waiting enrollments and today's first steps —
+   * count against the limit, so a later batch fills in behind an earlier
+   * one instead of landing on the same days, and closed days (a weekend)
+   * take nobody instead of passing their share to the next open day.
    */
   async enroll(
     workspaceId: string,
@@ -129,15 +167,16 @@ export class EnrollmentService {
 
     const schedule = readSchedule(campaign.schedule);
     const settings = readSettings(campaign.settings);
-    const now = Date.now();
-    const base = Math.max(now, campaign.startAt?.getTime() ?? now);
+    const now = new Date();
     const firstDelayMs = Math.max(0, Number(configOf(steps[0] ?? { config: {} }).delayMinutes ?? 0)) * 60_000;
-    const waiting = await this.prisma.db.enrollment.count({ where: { workspaceId, campaignId: campaign.id, status: "active", stepRun: 0 } });
-    const limit = Math.max(1, settings.dailyNewLimit);
-    const startOf = (i: number) => {
-      const dayOpens = nextOpening(schedule, new Date(base + Math.floor(i / limit) * DAY_MS + firstDelayMs));
-      return nextOpening(schedule, new Date(dayOpens.getTime() + (i % limit) * settings.gapSeconds * 1000));
-    };
+    const floor = new Date(Math.max(now.getTime(), campaign.startAt?.getTime() ?? 0) + firstDelayMs);
+    const starts = fresh.length
+      ? planStarts(
+          schedule,
+          fresh.map(() => floor),
+          { limit: settings.dailyNewLimit, gapMs: settings.gapSeconds * 1000, taken: await this.dayLoads(workspaceId, campaign, now) },
+        )
+      : [];
 
     let enrolled = 0;
     const enrolledIds: string[] = [];
@@ -150,7 +189,7 @@ export class EnrollmentService {
           status: "active" as const,
           position: 0,
           stepRun: 0,
-          nextRunAt: startOf(waiting + b * BATCH + k),
+          nextRunAt: starts[b * BATCH + k]!,
           source: opts.source,
           enrolledById: opts.enrolledById,
         })),
@@ -173,5 +212,38 @@ export class EnrollmentService {
     const total = await this.prisma.db.enrollment.count({ where: { workspaceId, campaignId: campaign.id } });
     await this.prisma.db.campaign.updateMany({ where: { id: campaign.id, workspaceId }, data: { enrolledCount: total } });
     return { enrolled, enrolledIds, skipped };
+  }
+
+  /**
+   * Re-plans the enrollments still waiting for their first step, keeping
+   * their order and never moving one earlier. Run while the campaign is
+   * paused, before it resumes: starts whose day passed during the pause
+   * would otherwise all come due at once, and a changed limit, gap or
+   * window applies to the queue from here on. Returns how many moved.
+   */
+  async replanWaiting(workspaceId: string, campaign: Pick<Campaign, "id" | "schedule" | "settings">, now: Date = new Date()): Promise<number> {
+    const rows = await this.prisma.db.enrollment.findMany({
+      where: { workspaceId, campaignId: campaign.id, status: "active", stepRun: 0, nextRunAt: { not: null } },
+      select: { id: true, nextRunAt: true },
+      orderBy: [{ nextRunAt: "asc" }, { id: "asc" }],
+    });
+    if (!rows.length) return 0;
+    const settings = readSettings(campaign.settings);
+    const starts = planStarts(
+      readSchedule(campaign.schedule),
+      rows.map((r) => new Date(Math.max(r.nextRunAt!.getTime(), now.getTime()))),
+      { limit: settings.dailyNewLimit, gapMs: settings.gapSeconds * 1000, taken: await this.dayLoads(workspaceId, campaign, now, { waiting: false }) },
+    );
+    const moved = rows.flatMap((r, i) => (starts[i]!.getTime() !== r.nextRunAt!.getTime() ? [{ id: r.id, at: starts[i]! }] : []));
+    let n = 0;
+    for (const batch of chunks(moved, BATCH)) {
+      // The stepRun/status guard leaves alone any row that started or stopped since it was read.
+      n += await this.prisma.db.$executeRaw`
+        UPDATE "Enrollment" e SET "nextRunAt" = v.at, "updatedAt" = now()
+        FROM unnest(${batch.map((m) => m.id)}::uuid[], ${batch.map((m) => m.at)}::timestamptz[]) AS v(id, at)
+        WHERE e.id = v.id AND e."workspaceId" = ${workspaceId}::uuid AND e."campaignId" = ${campaign.id}::uuid
+          AND e.status = 'active' AND e."stepRun" = 0`;
+    }
+    return n;
   }
 }

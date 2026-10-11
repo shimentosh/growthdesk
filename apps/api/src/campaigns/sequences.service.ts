@@ -41,12 +41,61 @@ export function sequenceDto(s: Sequence, steps?: SequenceStep[], stepCount?: num
   };
 }
 
-/** Steps are stored as a flat list addressed by position 0..n-1 and are always replaced as a whole. */
+/**
+ * Steps are stored as a flat list addressed by position 0..n-1. A list nobody
+ * is enrolled in is replaced as a whole; a campaign with enrollments goes
+ * through structureChange/editStepsInPlace instead.
+ */
 export async function replaceSteps(tx: Tx, workspaceId: string, sequenceId: string, steps: { type: StepType | string; config: unknown }[]) {
   await tx.sequenceStep.deleteMany({ where: { workspaceId, sequenceId } });
   if (!steps.length) return;
   await tx.sequenceStep.createMany({
     data: steps.map((s, position) => ({ workspaceId, sequenceId, position, type: s.type as StepType, config: (s.config ?? {}) as Prisma.InputJsonValue })),
+  });
+}
+
+type StepLike = { type: StepType | string; config: unknown };
+
+const laneOf = (s: StepLike) => {
+  const cfg = (s.config && typeof s.config === "object" ? s.config : {}) as Record<string, unknown>;
+  return `${Number(cfg.thenLength ?? 0)}/${Number(cfg.elseLength ?? 0)}`;
+};
+
+/**
+ * Why `next` cannot replace `current` while enrollments hold places in it,
+ * or null when it can. An enrollment's place is a step number (and a branch's
+ * lanes are counts of the steps after it), so once anyone is enrolled the
+ * existing steps must keep their number, kind and lane sizes: content and
+ * timing may change, and steps may be added at the end. Anything else —
+ * inserting, removing, reordering — would silently re-send a step to some
+ * contacts and skip one for others.
+ */
+export function structureChange(current: StepLike[], next: StepLike[]): string | null {
+  if (next.length < current.length) return `This removes ${current.length - next.length === 1 ? "a step" : `${current.length - next.length} steps`}`;
+  for (let i = 0; i < current.length; i++) {
+    const was = current[i]!;
+    const now = next[i]!;
+    if (was.type !== now.type) return `Step ${i + 1} changes from ${was.type} to ${now.type}`;
+    if (was.type === "branch" && laneOf(was) !== laneOf(now)) return `Step ${i + 1} changes how many steps its branches hold`;
+  }
+  return null;
+}
+
+/**
+ * Applies a list that passed structureChange without renumbering anything:
+ * existing steps are updated in place (keeping their ids) and new ones are
+ * added after them.
+ */
+export async function editStepsInPlace(tx: Tx, workspaceId: string, sequenceId: string, current: SequenceStep[], next: StepLike[]) {
+  for (const [position, step] of current.entries()) {
+    const config = (next[position]!.config ?? {}) as Prisma.InputJsonValue;
+    if (JSON.stringify(config) === JSON.stringify(step.config)) continue;
+    await tx.sequenceStep.updateMany({ where: { id: step.id, workspaceId, sequenceId, position }, data: { config } });
+  }
+  const added = next.slice(current.length);
+  if (!added.length) return;
+  await tx.sequenceStep.createMany({
+    data: added.map((s, k) => ({ workspaceId, sequenceId, position: current.length + k, type: s.type as StepType, config: (s.config ?? {}) as Prisma.InputJsonValue })),
   });
 }
 

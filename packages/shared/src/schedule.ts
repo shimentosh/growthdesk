@@ -96,39 +96,99 @@ export function localDay(date: Date, tz: string): string {
   return `${p.year}-${String(p.month).padStart(2, "0")}-${String(p.day).padStart(2, "0")}`;
 }
 
+/** The instant the local calendar day after the one containing `date` begins in `tz`. */
+function startOfNextDay(date: Date, tz: string): Date {
+  const p = zonedParts(date, tz);
+  const next = new Date(Date.UTC(p.year, p.month - 1, p.day + 1));
+  return zonedTime(next.getUTCFullYear(), next.getUTCMonth() + 1, next.getUTCDate(), 0, 0, tz);
+}
+
+const ymd = (date: Date, tz: string): [number, number, number] => {
+  const p = zonedParts(date, tz);
+  return [p.year, p.month, p.day];
+};
+
+const resolveZone = (schedule: Schedule) => (schedule.timezone && isValidTimeZone(schedule.timezone) ? schedule.timezone : "UTC");
+
 /**
  * The first instant at or after `from` that falls inside the window. Outside
  * the window the answer is the next opening rather than "no" — a step that
  * comes due at midnight goes out at nine.
+ *
+ * A window whose close is not after its open runs overnight: "22:00–06:00"
+ * on Monday opens Monday 22:00 and closes Tuesday 06:00, so `days` names the
+ * day a window opens on. Equal times mean a full 24 hours from that time.
  */
 export function nextOpening(schedule: Schedule, from: Date = new Date()): Date {
-  const tz = schedule.timezone && isValidTimeZone(schedule.timezone) ? schedule.timezone : "UTC";
+  const tz = resolveZone(schedule);
   const days = schedule.days?.length ? schedule.days : DEFAULT_SCHEDULE.days;
   const open = minutesOf(schedule.from, 9 * 60);
   const close = minutesOf(schedule.to, 17 * 60);
-  if (close <= open) return from;
+  const overnight = close <= open;
 
   let cursor = from;
-  for (let i = 0; i < 15; i++) {
+  for (let i = 0; i < 16; i++) {
     const p = zonedParts(cursor, tz);
     const now = p.hour * 60 + p.minute;
+    // The tail of an overnight window that opened the evening before.
+    if (overnight && now < close && days.includes((p.weekday + 6) % 7)) return cursor;
     if (days.includes(p.weekday)) {
       if (now < open) return zonedTime(p.year, p.month, p.day, Math.floor(open / 60), open % 60, tz);
-      if (now < close) return cursor;
+      if (overnight || now < close) return cursor;
     }
-    // The next local day, from its opening.
-    const next = new Date(Date.UTC(p.year, p.month - 1, p.day + 1));
-    cursor = zonedTime(
-      next.getUTCFullYear(),
-      next.getUTCMonth() + 1,
-      next.getUTCDate(),
-      Math.floor(open / 60),
-      open % 60,
-      tz,
-    );
+    // Overnight windows can open just after midnight (their tail), so look from the start of the next day.
+    const next = startOfNextDay(cursor, tz);
+    cursor = overnight ? next : zonedTime(...ymd(next, tz), Math.floor(open / 60), open % 60, tz);
   }
   return cursor;
 }
 
 export const isOpenNow = (schedule: Schedule, now: Date = new Date()) =>
   nextOpening(schedule, now).getTime() <= now.getTime();
+
+/** Starts already booked on one local day: how many, and the latest of them (ms). */
+export type DayLoad = { count: number; last: number };
+
+/**
+ * Start times for new enrollments under a per-day cap. Each item gets the
+ * first instant at or after its floor that is inside the window, on a local
+ * day (in the schedule's zone) with fewer than `limit` starts, and at least
+ * `gapMs` after the latest start already on that day. `taken` holds the
+ * starts already booked or made, keyed by localDay(); it is not modified.
+ *
+ * Floors are best given in ascending order: a sorted queue is planned in
+ * one pass over the days rather than one pass per item.
+ *
+ * Counting per real local day (instead of "day i = floor(i / limit)") is what
+ * keeps a weekend from folding three days' starts onto Monday, and a second
+ * batch from landing on top of the first.
+ */
+export function planStarts(schedule: Schedule, floors: Date[], opts: { limit: number; gapMs: number; taken?: Map<string, DayLoad> }): Date[] {
+  const tz = resolveZone(schedule);
+  const limit = Math.max(1, Math.floor(opts.limit));
+  const taken = new Map(opts.taken ?? []);
+  // Days skipped as full for one item are still full for the next when its floor is no earlier,
+  // so a sorted queue resumes from the last day used instead of rescanning from its floor.
+  let prev = { floor: Number.POSITIVE_INFINITY, dayStart: 0 };
+  return floors.map((floor) => {
+    const from = floor.getTime() >= prev.floor ? Math.max(floor.getTime(), prev.dayStart) : floor.getTime();
+    prev = { floor: floor.getTime(), dayStart: from };
+    let t = nextOpening(schedule, new Date(from));
+    // A day per pass at most; ten years of full days is far past any real queue.
+    for (let guard = 0; guard < 3660; guard++) {
+      const day = localDay(t, tz);
+      const load = taken.get(day) ?? { count: 0, last: Number.NEGATIVE_INFINITY };
+      if (load.count < limit) {
+        const at = nextOpening(schedule, new Date(Math.max(t.getTime(), load.last + opts.gapMs)));
+        if (localDay(at, tz) === day) {
+          taken.set(day, { count: load.count + 1, last: at.getTime() });
+          prev.dayStart = zonedTime(...ymd(at, tz), 0, 0, tz).getTime();
+          return at;
+        }
+      }
+      // This day is full (by count, or the window closed before the next gap): try the next one.
+      t = nextOpening(schedule, startOfNextDay(t, tz));
+    }
+    return t;
+  });
+}

@@ -15,7 +15,7 @@ import { formatNumber } from "@/lib/format";
 import { useApiQuery } from "@/lib/query";
 import { useFormat, useWorkspace } from "@/lib/session";
 import type { CampaignDetail, CampaignReadiness, StepStats } from "@/lib/types/campaigns";
-import { SkippedList, plural } from "./common";
+import { FixLink, SkippedList, plural } from "./common";
 
 const DAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
@@ -24,8 +24,8 @@ export function scheduleLine(s: CampaignDetail["schedule"]): string {
   const days = [...s.days].sort((a, b) => a - b);
   const weekdays = days.length === 5 && [1, 2, 3, 4, 5].every((d) => days.includes(d));
   const dayText = days.length === 7 ? "Every day" : weekdays ? "Mon–Fri" : days.map((d) => DAY_NAMES[d]).join(", ");
-  // shared/schedule.ts: an end at or before the start means no hour limit.
-  const hours = s.to <= s.from ? "any time" : `${s.from}–${s.to}`;
+  // shared/schedule.ts: an end before the start runs overnight into the next day; equal times mean 24 hours.
+  const hours = s.to === s.from ? (s.from === "00:00" ? "any time" : `24 hours from ${s.from}`) : s.to < s.from ? `${s.from}–${s.to} (overnight)` : `${s.from}–${s.to}`;
   return `${dayText}, ${hours} (${s.timezone})`;
 }
 
@@ -197,7 +197,10 @@ function Readiness({ query }: { query: UseQueryResult<CampaignReadiness, ApiErro
             {r.problems.map((p, i) => (
               <li key={i} className="flex gap-2 text-bad-ink">
                 <CircleAlert aria-hidden className="mt-0.5 size-4 shrink-0" />
-                {p.message}
+                <span className="flex min-w-0 flex-1 flex-wrap items-baseline justify-between gap-x-3 gap-y-0.5">
+                  <span>{p.message}</span>
+                  {p.fix && <FixLink fix={p.fix} />}
+                </span>
               </li>
             ))}
           </ul>

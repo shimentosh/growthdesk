@@ -92,7 +92,7 @@ export function CampaignScheduleForm({ campaign }: { campaign: CampaignDetail })
   const set = draft.settings;
   const setSchedule = (patch: Partial<CampaignSchedule>) => setDraft((d) => ({ ...d, schedule: { ...d.schedule, ...patch } }));
   const setSettings = (patch: Partial<CampaignSettings>) => setDraft((d) => ({ ...d, settings: { ...d.settings, ...patch } }));
-  const anyTime = sch.to <= sch.from;
+  const overnight = sch.to <= sch.from;
 
   const submit = (e: FormEvent) => {
     e.preventDefault();
@@ -112,7 +112,13 @@ export function CampaignScheduleForm({ campaign }: { campaign: CampaignDetail })
             <Field label="Time zone" error={err("schedule.timezone")}>
               <NativeSelect value={sch.timezone} onChange={(e) => setSchedule({ timezone: e.target.value })} options={zones.map((z) => ({ value: z, label: z }))} />
             </Field>
-            <Field label="Hours" error={err("schedule.from") ?? err("schedule.to")} hint={anyTime ? "The end is not after the start, so any time of day counts." : undefined}>
+            <Field label="Hours" error={err("schedule.from") ?? err("schedule.to")} hint={
+                overnight
+                  ? sch.to === sch.from
+                    ? "The start and end are the same, so each chosen day's window lasts 24 hours from that time."
+                    : `The end is not after the start, so the window runs overnight: it opens at ${sch.from} on each chosen day and closes at ${sch.to} the next morning.`
+                  : undefined
+              }>
               <div className="flex items-center gap-2">
                 <Input type="time" aria-label="From" value={sch.from} onChange={(e) => setSchedule({ from: e.target.value })} />
                 <span className="text-text-3">to</span>
