@@ -19,7 +19,9 @@ import {
   bracketed,
   detectBounce,
   isAutoReply,
+  machineMailReason,
   referencesOf,
+  replyTextOf,
   sanitizeInboundHtml,
   stripSubjectPrefix,
   type BounceReport,
@@ -35,11 +37,25 @@ export type IngestResult =
   | { outcome: "bounce_unmatched" }
   | { outcome: "skipped"; reason: string };
 
+/** The IMAP folder a message was read from. */
+export type InboundFolder = "inbox" | "junk";
+
 type CampaignSettings = { stopOnReply?: boolean; stopOnAutoReply?: boolean };
 const settingsOf = (value: Prisma.JsonValue | null | undefined): CampaignSettings =>
   value && typeof value === "object" && !Array.isArray(value) ? (value as CampaignSettings) : {};
 
 const STOPPABLE = ["active", "paused"] as const;
+
+type ReplyPlan = NonNullable<Awaited<ReturnType<InboundEmailService["planReply"]>>>;
+type ReplyInput = {
+  messageId: string;
+  conversation: { id: string; assigneeId: string | null };
+  receivedAt: Date;
+  sender: string;
+  name: string;
+  subject: string;
+  bodyText: string;
+};
 
 const firstId = (raw: string | undefined): string | null => bracketed(String(raw ?? "").split(/[\s,]+/).find((s) => s.trim()) ?? null);
 const bare = (id: string | null | undefined) => (id ?? "").trim().replace(/^<|>$/g, "");
@@ -57,10 +73,15 @@ const bare = (id: string | null | undefined) => (id ?? "").trim().replace(/^<|>$
  *     enrollments whose campaigns stop on reply), counts once per enrollment,
  *     raises a review task and a notification, and emits `reply.received`.
  *
- * Changes from LinkDesk: mail from strangers is filed (the contact is created
- * through ContactsService.upsert, as the CRM's single entry point), a bounce
- * is only recorded against an original message we can name, and the event
- * is written in the same transaction as the change (outbox).
+ * Changes from LinkDesk: a contact is created (through ContactsService.upsert,
+ * as the CRM's single entry point) only for mail in a thread we started;
+ * machine mail (newsletters, lists, notifications, no-reply senders) outside
+ * our threads is not filed at all, and a stranger's mail outside them is
+ * filed without a contact and counts as no reply. An opt-out is read only in
+ * what the sender wrote, never in the quoted email. A bounce is only recorded
+ * against an original message we can name. The message and its reply effects
+ * commit in one transaction, with the event in it (outbox), so a failed pass
+ * retried by the sync files the reply whole instead of as a "duplicate".
  */
 @Injectable()
 export class InboundEmailService {
@@ -76,7 +97,12 @@ export class InboundEmailService {
     private readonly queues: Queues,
   ) {}
 
-  async ingest(mailbox: Mailbox, mail: ParsedMail, uid: number): Promise<IngestResult> {
+  /**
+   * `folder` is where the sync found it. Junk is read only to rescue replies
+   * a spam filter caught, so from there nothing but mail answering a message
+   * we sent (or a bounce of one) is filed.
+   */
+  async ingest(mailbox: Mailbox, mail: ParsedMail, uid: number, folder: InboundFolder = "inbox"): Promise<IngestResult> {
     const workspaceId = mailbox.workspaceId;
     const db = this.prisma.db;
     const from = addressOf(mail);
@@ -85,14 +111,15 @@ export class InboundEmailService {
     // Our own sends copied back into INBOX (some servers do) are not inbound mail.
     if (sender === mailbox.email.toLowerCase()) return { outcome: "skipped", reason: "sent from this mailbox" };
 
-    const providerMessageId = bracketed(mail.messageId) ?? `<${uid}.${mailbox.imapUidValidity ?? "0"}.${mailbox.id}@imap.local>`;
+    const synthetic = `${uid}.${mailbox.imapUidValidity ?? "0"}.${mailbox.id}${folder === "junk" ? ".junk" : ""}@imap.local`;
+    const providerMessageId = bracketed(mail.messageId) ?? `<${synthetic}>`;
     const held = await db.message.findFirst({ where: { workspaceId, channel: "email", providerMessageId }, select: { id: true } });
     if (held) return { outcome: "duplicate", messageId: held.id };
 
     const bounce = detectBounce(mail, sender);
     if (bounce) return this.handleBounce(mailbox, mail, bounce);
 
-    return this.file(mailbox, mail, sender, from.name, providerMessageId);
+    return this.file(mailbox, mail, sender, from.name, providerMessageId, folder);
   }
 
   // ─── Bounces ─────────────────────────────────────────────────────────────────
@@ -163,11 +190,10 @@ export class InboundEmailService {
 
   // ─── Replies and new mail ────────────────────────────────────────────────────
 
-  private async file(mailbox: Mailbox, mail: ParsedMail, sender: string, senderName: string, providerMessageId: string): Promise<IngestResult> {
+  private async file(mailbox: Mailbox, mail: ParsedMail, sender: string, senderName: string, providerMessageId: string, folder: InboundFolder): Promise<IngestResult> {
     const workspaceId = mailbox.workspaceId;
     const db = this.prisma.db;
     const now = new Date();
-    const autoReply = isAutoReply(mail);
     const date = mail.date && !Number.isNaN(mail.date.getTime()) ? mail.date : null;
     const receivedAt = date && date.getTime() <= now.getTime() + 5 * 60_000 ? date : now;
     const subject = (mail.subject ?? "").slice(0, 500);
@@ -189,15 +215,28 @@ export class InboundEmailService {
     const parent = related.find(isParent) ?? related[0] ?? null;
     const outbound = related.find((m) => m.direction === "outbound" && isParent(m)) ?? related.find((m) => m.direction === "outbound") ?? null;
 
-    // 2. Who sent it: the contact holding that address, or a new one.
-    const contact = await this.contactFor(mailbox, sender, name);
-
-    // 3. Which conversation.
+    // 2. The conversation it belongs to, if there is one already.
     let found = parent ? await db.conversation.findFirst({ where: { id: parent.conversationId, workspaceId } }) : null;
     found ??= await db.conversation.findFirst({
       where: { workspaceId, channel: "email", mailboxId: mailbox.id, status: "open", peer: { equals: sender, mode: "insensitive" } },
       orderBy: [{ lastMessageAt: { sort: "desc", nulls: "last" } }, { createdAt: "desc" }],
     });
+
+    // 3. Whether it belongs to a thread we started: it answers a message we
+    // sent, or lands in a conversation where we have written. Machine mail and
+    // anything from Junk is filed only then. A stranger's mail outside our
+    // threads is filed, but makes no contact and counts as no reply.
+    const wroteThere = found ? await db.message.findFirst({ where: { workspaceId, conversationId: found.id, direction: "outbound" }, select: { id: true } }) : null;
+    const ours = Boolean(outbound || wroteThere);
+    const machine = machineMailReason(mail, sender);
+    if (!ours && folder === "junk") return { outcome: "skipped", reason: "junk mail outside our threads" };
+    if (!ours && machine) return { outcome: "skipped", reason: `machine mail (${machine})` };
+    // Machine mail in our thread (a helpdesk acknowledgement, a list echo) is not a person answering.
+    const autoReply = isAutoReply(mail) || Boolean(machine);
+
+    // 4. Who sent it: the contact holding that address, or (in our threads only) a new one.
+    const contact = await this.contactFor(mailbox, sender, name, ours);
+
     if (!found) {
       const root = referencesOf(mail)[0] ?? providerMessageId;
       // Upsert on the unique key: two passes racing on one thread end up in one conversation.
@@ -220,11 +259,27 @@ export class InboundEmailService {
     }
     const conversation = found;
 
-    // 4. The message itself, and the conversation it lands in.
+    // 5. What a reply sets in motion, read before anything is written so the
+    // message and its effects commit together: a pass that fails half-way
+    // leaves nothing behind, and the retry files the whole reply.
+    const contactId = contact?.id ?? conversation.contactId ?? null;
+    const plan = await this.planReply({
+      mailbox,
+      contactId,
+      outbound,
+      autoReply,
+      // A known contact writing afresh is answering us too; a stranger outside our threads is not.
+      countsAsReply: ours || Boolean(contact),
+      unsubscribe: !autoReply && asksToUnsubscribe(replyTextOf(mail)),
+    });
+
+    // 6. The message, the conversation it lands in, and the reply's effects, in one transaction.
     const campaignId = outbound?.campaignId ?? conversation.campaignId ?? null;
     const lastMessageAt = conversation.lastMessageAt && conversation.lastMessageAt > receivedAt ? conversation.lastMessageAt : receivedAt;
     const lastInboundAt = conversation.lastInboundAt && conversation.lastInboundAt > receivedAt ? conversation.lastInboundAt : receivedAt;
+    const reply = { conversation: { id: conversation.id, assigneeId: conversation.assigneeId }, receivedAt, sender, name: name || contact?.fullName || sender, subject, bodyText };
     let message;
+    let unsubscribed = false;
     try {
       message = await db.$transaction(async (tx) => {
         const row = await tx.message.create({
@@ -268,6 +323,7 @@ export class InboundEmailService {
             tx,
           );
         }
+        if (plan) unsubscribed = await this.applyReply(tx, plan, { ...reply, messageId: row.id });
         return row;
       });
     } catch (e) {
@@ -279,39 +335,31 @@ export class InboundEmailService {
       throw e;
     }
 
-    // 5. What a reply sets in motion.
-    const contactId = contact?.id ?? conversation.contactId ?? null;
-    const reply = await this.applyReply({
-      mailbox,
-      messageId: message.id,
-      conversation: { id: conversation.id, assigneeId: conversation.assigneeId },
-      contactId,
-      outbound,
-      autoReply,
-      receivedAt,
-      sender,
-      name: name || contact?.fullName || sender,
-      subject,
-      bodyText,
-    });
+    // 7. After commit: notifications and classification. The reply is already
+    // recorded, so a failure here is logged rather than failing the message.
+    if (plan) {
+      await this.events.kick();
+      if (unsubscribed) this.log.log(`${mailbox.email}: ${sender} asked to unsubscribe by reply`);
+      if (plan.isReply) await this.afterReply(plan, { ...reply, messageId: message.id });
+    }
 
-    return { outcome: "filed", messageId: message.id, conversationId: conversation.id, contactId, reply, autoReply };
+    return { outcome: "filed", messageId: message.id, conversationId: conversation.id, contactId, reply: Boolean(plan?.isReply), autoReply };
   }
 
-  private async applyReply(input: {
+  /**
+   * Reads what a reply would change: the enrollment it answers, the contact's
+   * other running enrollments, and whether it counts at all. Null when it
+   * changes nothing (an out-of-office the campaign ignores, a stranger's mail).
+   */
+  private async planReply(input: {
     mailbox: Mailbox;
-    messageId: string;
-    conversation: { id: string; assigneeId: string | null };
     contactId: string | null;
     outbound: { enrollmentId: string | null; campaignId: string | null } | null;
     autoReply: boolean;
-    receivedAt: Date;
-    sender: string;
-    name: string;
-    subject: string;
-    bodyText: string;
-  }): Promise<boolean> {
-    const { mailbox, contactId, autoReply, receivedAt } = input;
+    countsAsReply: boolean;
+    unsubscribe: boolean;
+  }) {
+    const { mailbox, contactId, autoReply } = input;
     const workspaceId = mailbox.workspaceId;
     const db = this.prisma.db;
     const campaignSelect = { select: { id: true, settings: true, ownerId: true, createdById: true } } as const;
@@ -322,9 +370,8 @@ export class InboundEmailService {
     const directCampaign = direct?.campaign ?? (input.outbound?.campaignId ? await db.campaign.findFirst({ where: { id: input.outbound.campaignId, workspaceId }, ...campaignSelect }) : null);
 
     // An out-of-office is not an answer unless the campaign it answers says it is.
-    const isReply = autoReply ? settingsOf(directCampaign?.settings).stopOnAutoReply === true : true;
-    const unsubscribe = !autoReply && asksToUnsubscribe(input.bodyText);
-    if (!isReply && !unsubscribe) return false;
+    const isReply = input.countsAsReply && (autoReply ? settingsOf(directCampaign?.settings).stopOnAutoReply === true : true);
+    if (!isReply && !input.unsubscribe) return null;
 
     const others = contactId
       ? await db.enrollment.findMany({
@@ -333,83 +380,93 @@ export class InboundEmailService {
         })
       : [];
     const contact = contactId ? await db.contact.findFirst({ where: { id: contactId, workspaceId }, select: { id: true, ownerId: true } }) : null;
+    return { mailbox, contactId, autoReply, isReply, unsubscribe: input.unsubscribe, direct, directCampaign, others, contact };
+  }
 
-    let unsubscribed = false;
-    await db.$transaction(async (tx) => {
-      // A written opt-out first, so the enrollments it stops say why.
-      if (unsubscribe) {
-        unsubscribed = await this.optOut(tx, workspaceId, input.sender, contactId, directCampaign?.id ?? null, input.messageId, "reply");
-      }
-      if (!isReply) return;
+  /** Writes a planned reply's effects inside the message's transaction. True when it recorded a first opt-out. */
+  private async applyReply(tx: Tx, plan: ReplyPlan, input: ReplyInput): Promise<boolean> {
+    const { mailbox, contactId, autoReply, direct, directCampaign, contact } = plan;
+    const { receivedAt } = input;
+    const workspaceId = mailbox.workspaceId;
 
-      const touch = async (enrollment: { id: string; campaignId: string }, stop: boolean) => {
-        const first = await tx.enrollment.updateMany({ where: { id: enrollment.id, workspaceId, repliedAt: null }, data: { repliedAt: receivedAt } });
-        if (first.count) await tx.campaign.updateMany({ where: { id: enrollment.campaignId, workspaceId }, data: { replyCount: { increment: 1 } } });
-        if (stop) {
-          await tx.enrollment.updateMany({
-            where: { id: enrollment.id, workspaceId, status: { in: [...STOPPABLE] } },
-            data: { status: "stopped", stopReason: "Replied", nextRunAt: null },
-          });
-        }
-      };
-      if (direct) await touch(direct, settingsOf(direct.campaign.settings).stopOnReply !== false);
-      for (const e of others) {
-        const s = settingsOf(e.campaign.settings);
-        if (s.stopOnReply === false) continue;
-        if (autoReply && s.stopOnAutoReply !== true) continue;
-        await touch(e, true);
-      }
+    // A written opt-out first, so the enrollments it stops say why.
+    const unsubscribed = plan.unsubscribe ? await this.optOut(tx, workspaceId, input.sender, contactId, directCampaign?.id ?? null, input.messageId, "reply") : false;
+    if (!plan.isReply) return unsubscribed;
 
-      if (contactId) {
-        await tx.contact.updateMany({ where: { id: contactId, workspaceId, OR: [{ lastRepliedAt: null }, { lastRepliedAt: { lt: receivedAt } }] }, data: { lastRepliedAt: receivedAt } });
-        await tx.contact.updateMany({ where: { id: contactId, workspaceId, status: { in: ["new", "contacted"] } }, data: { status: "replied" } });
-      }
-
-      const assignee = input.conversation.assigneeId ?? contact?.ownerId ?? directCampaign?.ownerId ?? directCampaign?.createdById ?? mailbox.createdById ?? null;
-      const open = await tx.task.findFirst({ where: { workspaceId, conversationId: input.conversation.id, type: "review_reply", status: "open" }, select: { id: true } });
-      if (!open) {
-        await tx.task.create({
-          data: {
-            workspaceId,
-            type: "review_reply",
-            title: `Review reply from ${input.name}`.slice(0, 300),
-            description: input.subject ? `Re: ${stripSubjectPrefix(input.subject)}`.slice(0, 1000) : "",
-            priority: "high",
-            dueAt: new Date(receivedAt.getTime() + 24 * 3600_000),
-            assigneeId: assignee,
-            contactId,
-            conversationId: input.conversation.id,
-            campaignId: directCampaign?.id ?? null,
-            enrollmentId: direct?.id ?? null,
-            source: "system",
-          },
+    const touch = async (enrollment: { id: string; campaignId: string }, stop: boolean) => {
+      const first = await tx.enrollment.updateMany({ where: { id: enrollment.id, workspaceId, repliedAt: null }, data: { repliedAt: receivedAt } });
+      if (first.count) await tx.campaign.updateMany({ where: { id: enrollment.campaignId, workspaceId }, data: { replyCount: { increment: 1 } } });
+      if (stop) {
+        await tx.enrollment.updateMany({
+          where: { id: enrollment.id, workspaceId, status: { in: [...STOPPABLE] } },
+          data: { status: "stopped", stopReason: "Replied", nextRunAt: null },
         });
       }
+    };
+    if (direct) await touch(direct, settingsOf(direct.campaign.settings).stopOnReply !== false);
+    for (const e of plan.others) {
+      const s = settingsOf(e.campaign.settings);
+      if (s.stopOnReply === false) continue;
+      if (autoReply && s.stopOnAutoReply !== true) continue;
+      await touch(e, true);
+    }
 
-      await this.events.emitIn(tx, {
-        workspaceId,
-        type: "reply.received",
-        subjectType: "conversation",
-        subjectId: input.conversation.id,
-        payload: { conversationId: input.conversation.id, messageId: input.messageId, contactId, campaignId: directCampaign?.id ?? null, isAutoReply: autoReply },
+    if (contactId) {
+      await tx.contact.updateMany({ where: { id: contactId, workspaceId, OR: [{ lastRepliedAt: null }, { lastRepliedAt: { lt: receivedAt } }] }, data: { lastRepliedAt: receivedAt } });
+      await tx.contact.updateMany({ where: { id: contactId, workspaceId, status: { in: ["new", "contacted"] } }, data: { status: "replied" } });
+    }
+
+    const assignee = input.conversation.assigneeId ?? contact?.ownerId ?? directCampaign?.ownerId ?? directCampaign?.createdById ?? mailbox.createdById ?? null;
+    const open = await tx.task.findFirst({ where: { workspaceId, conversationId: input.conversation.id, type: "review_reply", status: "open" }, select: { id: true } });
+    if (!open) {
+      await tx.task.create({
+        data: {
+          workspaceId,
+          type: "review_reply",
+          title: `Review reply from ${input.name}`.slice(0, 300),
+          description: input.subject ? `Re: ${stripSubjectPrefix(input.subject)}`.slice(0, 1000) : "",
+          priority: "high",
+          dueAt: new Date(receivedAt.getTime() + 24 * 3600_000),
+          assigneeId: assignee,
+          contactId,
+          conversationId: input.conversation.id,
+          campaignId: directCampaign?.id ?? null,
+          enrollmentId: direct?.id ?? null,
+          source: "system",
+        },
       });
-    });
-    await this.events.kick();
-    if (unsubscribed) this.log.log(`${mailbox.email}: ${input.sender} asked to unsubscribe by reply`);
-    if (!isReply) return false;
+    }
 
+    await this.events.emitIn(tx, {
+      workspaceId,
+      type: "reply.received",
+      subjectType: "conversation",
+      subjectId: input.conversation.id,
+      payload: { conversationId: input.conversation.id, messageId: input.messageId, contactId, campaignId: directCampaign?.id ?? null, isAutoReply: autoReply },
+    });
+    return unsubscribed;
+  }
+
+  /** Tells the people who own the conversation and queues the AI classification. Best effort. */
+  private async afterReply(plan: ReplyPlan, input: ReplyInput): Promise<void> {
+    const { mailbox, contact, directCampaign } = plan;
+    const workspaceId = mailbox.workspaceId;
     const recipients = [input.conversation.assigneeId, contact?.ownerId].filter((u): u is string => Boolean(u));
     if (!recipients.length) {
       const fallback = directCampaign?.ownerId ?? directCampaign?.createdById ?? mailbox.createdById;
       if (fallback) recipients.push(fallback);
     }
-    await this.notifications.notify(workspaceId, recipients, {
-      type: "reply.received",
-      title: `${input.name} replied`,
-      body: [input.subject, input.bodyText.slice(0, 280)].filter(Boolean).join("\n\n"),
-      link: `/w/${workspaceId}/inbox/${input.conversation.id}`,
-      email: true,
-    });
+    try {
+      await this.notifications.notify(workspaceId, recipients, {
+        type: "reply.received",
+        title: `${input.name} replied`,
+        body: [input.subject, input.bodyText.slice(0, 280)].filter(Boolean).join("\n\n"),
+        link: `/w/${workspaceId}/inbox/${input.conversation.id}`,
+        email: true,
+      });
+    } catch (e) {
+      this.log.warn(`could not notify about reply ${input.messageId}: ${e instanceof Error ? e.message : String(e)}`);
+    }
 
     try {
       // BullMQ refuses custom ids containing ":", hence the dash.
@@ -417,7 +474,6 @@ export class InboundEmailService {
     } catch (e) {
       this.log.warn(`could not queue reply classification for ${input.messageId}: ${e instanceof Error ? e.message : String(e)}`);
     }
-    return true;
   }
 
   /**
@@ -467,11 +523,12 @@ export class InboundEmailService {
   }
 
   /**
-   * The sender's contact: found by email identifier, else created through
+   * The sender's contact: found by email identifier, else — when `create`,
+   * i.e. the mail is in a thread we started — created through
    * ContactsService.upsert (source "inbound"). A plan's contact limit leaves
    * the conversation without a contact rather than losing the mail.
    */
-  private async contactFor(mailbox: Mailbox, sender: string, name: string): Promise<{ id: string; fullName: string } | null> {
+  private async contactFor(mailbox: Mailbox, sender: string, name: string, create: boolean): Promise<{ id: string; fullName: string } | null> {
     const workspaceId = mailbox.workspaceId;
     const db = this.prisma.db;
     const known = await db.contactIdentifier.findFirst({ where: { workspaceId, kind: "email", value: sender }, select: { contactId: true } });
@@ -479,7 +536,7 @@ export class InboundEmailService {
     if (known) {
       // The address belongs to a contact; a deleted one is not resurrected by mail.
       contactId = await this.contactIdFor(db, workspaceId, sender);
-    } else {
+    } else if (create) {
       const workspace = await db.workspace.findUnique({ where: { id: workspaceId }, select: { billingAccountId: true } });
       if (!workspace) return null;
       try {

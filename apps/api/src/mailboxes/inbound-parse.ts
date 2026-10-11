@@ -118,6 +118,27 @@ export function isAutoReply(mail: ParsedMail): boolean {
   return AUTO_SUBJECT.test(String(mail.subject ?? ""));
 }
 
+/*
+ * Mail no person wrote to us: newsletters, mailing lists, notifications and
+ * other machine-sent mail. `Precedence: bulk/list/junk`, a `List-Id` or
+ * `List-Unsubscribe` header, RFC 3834 `Auto-Submitted` other than `no`, or a
+ * no-reply style sender. The caller files it only when it answers a message
+ * we sent; otherwise it never becomes a contact, a reply, a task or AI work.
+ */
+const NO_REPLY_SENDER = /^(?:no[-_.]?reply|do[-_.]?not[-_.]?reply|notifications?|notify|alerts?|bounces?|mailer)(?:[-_.+][^@]*)?@/i;
+
+/** Why this message is machine mail, or null when a person plausibly wrote it. */
+export function machineMailReason(mail: ParsedMail, from: string): string | null {
+  const precedence = header(mail, "precedence").trim().toLowerCase();
+  if (/^(bulk|list|junk)\b/.test(precedence)) return `Precedence: ${precedence}`;
+  if (header(mail, "list-id").trim()) return "mailing list (List-Id)";
+  if (header(mail, "list-unsubscribe").trim()) return "bulk mail (List-Unsubscribe)";
+  const submitted = header(mail, "auto-submitted").trim().toLowerCase();
+  if (submitted && submitted !== "no") return `Auto-Submitted: ${submitted}`;
+  if (NO_REPLY_SENDER.test(from)) return "no-reply sender";
+  return null;
+}
+
 // ─── Delivery failures ────────────────────────────────────────────────────────
 
 export type DsnRecipient = { recipient: string; action: string; status: string; diagnostic: string };
@@ -293,9 +314,66 @@ export function sanitizeInboundHtml(html: string | false | undefined): string | 
   return clean.trim() ? clean.slice(0, MAX_HTML) : null;
 }
 
+// ─── What the person wrote ────────────────────────────────────────────────────
+
+/** Lines that start the quoted original: everything from here down is not the reply. */
+const QUOTE_BOUNDARY = [
+  /^\s*-{2,}\s*(original message|forwarded message|ursprüngliche nachricht|message d'origine|mensaje original)\s*-{2,}/i,
+  /^\s*_{10,}\s*$/, // Outlook's rule above the quoted original
+  /^\s*(sent from my|get outlook for)\b/i,
+  /^-- ?$/, // RFC 3676 signature delimiter (our own outbound signature uses "--")
+];
+/** "On <date>, <person> wrote:" in the common languages, possibly wrapped over two lines. */
+const ATTRIBUTION = /^\s*(on|am|le|el|il|op|den|em)\s.{0,300}\b(wrote|schrieb|a écrit|escribió|ha scritto|schreef|skrev|escreveu)\s*:\s*$/i;
+/** Outlook's quoted header block: From: then Sent:/Date: within the next lines. */
+const HEADER_FROM = /^\s*\*?(from|von|de|van)\s*:\*?\s/i;
+const HEADER_NEXT = /^\s*\*?(sent|date|to|subject|gesendet|datum|envoyé|enviado)\s*:/i;
+/** The opt-out line of our own outbound footer, in case a client quotes it without markers. */
+const OWN_FOOTER = /^\s*(if you would rather not hear from me again|not interested\?\s*unsubscribe)/i;
+
+/**
+ * The part of a reply its sender wrote: quoted lines (`>`), "On … wrote:"
+ * attributions, the quoted original below an Outlook header block or
+ * separator, and the signature are taken out. Bottom-posted answers survive,
+ * since only the quoted lines themselves are dropped until a hard boundary.
+ */
+export function latestReplyText(text: string): string {
+  const lines = text.replace(/\r\n?/g, "\n").split("\n");
+  const kept: string[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i]!;
+    if (QUOTE_BOUNDARY.some((re) => re.test(line))) break;
+    if (HEADER_FROM.test(line) && lines.slice(i + 1, i + 4).some((l) => HEADER_NEXT.test(l))) break;
+    if (/^\s*>/.test(line) || OWN_FOOTER.test(line)) continue;
+    if (ATTRIBUTION.test(line)) continue;
+    // A long attribution wrapped by the client: "On Tue, … Jane Doe <" / "jane@x.com> wrote:".
+    if (i + 1 < lines.length && ATTRIBUTION.test(`${line} ${lines[i + 1]}`)) {
+      i += 1;
+      continue;
+    }
+    kept.push(line);
+  }
+  return kept.join("\n").replace(/\n{3,}/g, "\n\n").trim();
+}
+
+/**
+ * The text a person wrote in this message, quotes and signature removed. An
+ * HTML-only message loses its quoted blocks (`<blockquote>`, Gmail's
+ * `gmail_quote`, Outlook's reply header) before its tags are taken out, as
+ * converted text carries no `>` markers.
+ */
+export function replyTextOf(mail: ParsedMail): string {
+  const text = (mail.text ?? "").trim();
+  if (text) return latestReplyText(text.slice(0, MAX_TEXT));
+  const html = typeof mail.html === "string" ? mail.html.slice(0, MAX_HTML * 2) : "";
+  const cut = html.search(/<div[^>]+(class="[^"]*gmail_quote|id="(divRplyFwdMsg|appendonsend)")|<hr[^>]+id="stopSpelling"/i);
+  const own = (cut >= 0 ? html.slice(0, cut) : html).replace(/<blockquote[\s\S]*<\/blockquote>/gi, "");
+  return latestReplyText(htmlToText(own));
+}
+
 const UNSUBSCRIBE_INTENT = /\b(unsubscribe|remove me|stop emailing|take me off)\b/i;
 
-/** A written opt-out at the top of a reply. */
-export const asksToUnsubscribe = (bodyText: string) => UNSUBSCRIBE_INTENT.test(bodyText.slice(0, 300));
+/** A written opt-out at the top of what the sender wrote — never in the quoted email below it. */
+export const asksToUnsubscribe = (bodyText: string) => UNSUBSCRIBE_INTENT.test(latestReplyText(bodyText).slice(0, 300));
 
 export const stripSubjectPrefix = (subject: string) => subject.replace(/^\s*((re|fwd?|aw|sv|antw)\s*:\s*)+/i, "").trim();

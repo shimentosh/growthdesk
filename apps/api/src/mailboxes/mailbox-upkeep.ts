@@ -34,3 +34,22 @@ export function healthCheckDue(box: MailboxState, now: Date): boolean {
   const age = now.getTime() - box.lastCheckedAt.getTime();
   return age >= (box.status === "error" ? ERROR_RECHECK_MS : HEALTHY_RECHECK_MS);
 }
+
+/** Replies not read for this long (the sweep runs every minute) mean reply tracking has stalled. */
+export const SYNC_STALE_MS = 30 * 60_000;
+
+export type ReplyTrackingState = { email: string; imapEnabled: boolean; imapHost: string; lastSyncedAt: Date | null; syncError: string };
+
+/**
+ * Why replies to this mailbox's emails might not stop a sequence, or null
+ * when reply tracking is working: IMAP off, the last sync failing, or no
+ * successful sync recently. Shown as a campaign launch-readiness warning.
+ */
+export function replyTrackingProblem(box: ReplyTrackingState, now: Date): string | null {
+  if (!box.imapEnabled || !box.imapHost) return `Reply tracking (IMAP) is off for ${box.email}, so replies to its emails will not stop the sequence.`;
+  if (box.syncError) return `Reading replies for ${box.email} is failing (${box.syncError.slice(0, 200)}), so replies may not stop the sequence.`;
+  if (!box.lastSyncedAt) return `Replies to ${box.email} have not been read yet, so stop-on-reply works only once its first sync succeeds.`;
+  const age = now.getTime() - box.lastSyncedAt.getTime();
+  if (age >= SYNC_STALE_MS) return `Replies to ${box.email} were last read ${Math.round(age / 60_000)} minutes ago, so stop-on-reply may act late.`;
+  return null;
+}
