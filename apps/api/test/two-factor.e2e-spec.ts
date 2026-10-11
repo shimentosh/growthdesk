@@ -6,7 +6,8 @@ import { currentStep, totpCode } from "../src/auth/totp.js";
 
 /*
  * TOTP two-factor (docs/GAP_PLAN.md 2.12): enrolment, the sign-in challenge,
- * recovery codes, turning it off, and a workspace that requires it.
+ * recovery codes, turning it off, a workspace that requires it, and the
+ * platform-admin reset for someone who lost both the app and the codes.
  *
  * A code is accepted once per 30-second step, so tests that need several
  * codes in a row clear the remembered step first (codeFor); the replay test
@@ -227,5 +228,37 @@ describe("Two-factor authentication", () => {
     await agent.get("/v1/admin/overview").expect(401);
     await agent.post("/v1/auth/2fa/verify").send({ code: await codeFor(staff.userId) }).expect(200);
     await agent.get("/v1/admin/overview").expect(200);
+  });
+
+  it("platform support resets two-factor for someone who lost the app and the codes: audited, signed out, told", async () => {
+    const lost = await signUp(t, "lost@twofa.test", "Lost", PASSWORD);
+    await enrol(lost);
+    const pending = await passwordStep(lost.email);
+    const staff = await signUp(t, "support-admin@twofa.test", "Support", PASSWORD);
+    await t.prisma.db.user.update({ where: { id: staff.userId }, data: { platformRole: "admin" } });
+    const member = await signUp(t, "member-staff@twofa.test", "Member", PASSWORD);
+
+    // Platform admins only, never on their own account.
+    await member.post(`/v1/admin/users/${lost.userId}/two-factor/reset`).expect(403);
+    await staff.post(`/v1/admin/users/${staff.userId}/two-factor/reset`).expect(403);
+    expect((await staff.get(`/v1/admin/users/${lost.userId}`).expect(200)).body.data.twoFactorEnabledAt).toBeTruthy();
+
+    const res = await staff.post(`/v1/admin/users/${lost.userId}/two-factor/reset`).expect(200);
+    expect(res.body.data).toMatchObject({ twoFactorEnabledAt: null, sessions: [] });
+    const user = await t.prisma.db.user.findUniqueOrThrow({ where: { id: lost.userId } });
+    expect(user).toMatchObject({ totpSecret: null, totpPendingSecret: null, totpEnabledAt: null, totpLastStep: null });
+    expect(await t.prisma.db.recoveryCode.count({ where: { userId: lost.userId } })).toBe(0);
+    expect(await t.prisma.db.twoFactorChallenge.count({ where: { userId: lost.userId } })).toBe(0);
+    await lost.get("/v1/auth/me").expect(401);
+    // The sign-in that was waiting for a code cannot be finished any more.
+    await pending.post("/v1/auth/2fa/verify").send({ code: "123456" }).expect(401);
+    const audit = await t.prisma.db.auditEvent.findFirstOrThrow({ where: { action: "platform.user_two_factor_reset", targetId: lost.userId } });
+    expect(audit).toMatchObject({ actorUserId: staff.userId, actorType: "platform_admin" });
+    expect(t.mail.outbox.filter((m) => m.to === lost.email && m.template === "two_factor_reset")).toHaveLength(1);
+
+    // The password alone signs in again; a second reset has nothing to do.
+    const back = await newAgent().post("/v1/auth/login").send({ email: lost.email, password: PASSWORD }).expect(200);
+    expect(back.body.data).toMatchObject({ signedIn: true });
+    await staff.post(`/v1/admin/users/${lost.userId}/two-factor/reset`).expect(409);
   });
 });

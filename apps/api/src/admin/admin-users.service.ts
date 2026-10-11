@@ -17,7 +17,7 @@ import { userFromWhere, type UserFilter } from "./user-profile.js";
 /*
  * Platform user management beyond the basics in AdminService (super-admin
  * Phase 3): notes and tags (support), verification, password reset, change
- * email, CSV export, the waitlist and sign-up invitations (admin), and
+ * email, two-factor reset, CSV export, the waitlist and sign-up invitations (admin), and
  * deletion by anonymisation (owner).
  *
  * The per-target rank rules are AdminService.assertMayManage: nobody acts on
@@ -218,6 +218,33 @@ export class AdminUsersService {
     await this.mail.sendTemplate("email_changed", user.email, { name: user.name, old_email: user.email, new_email: email }, { userId: id });
     await this.auth.sendVerification(id, email, user.name);
     await this.record(ctx, { action: "platform.user_email_changed", targetType: "user", targetId: id, metadata: { from: user.email, to: email } });
+    return this.admin.userDetail(id);
+  }
+
+  /**
+   * For someone who lost both their authenticator app and their recovery
+   * codes: two-factor goes off (secret, pending setup, recovery codes and any
+   * half-finished sign-in are cleared), every session ends, and the person is
+   * told at their address. Staff must confirm who is asking before using it;
+   * the audit row records who did. A workspace that requires two-factor asks
+   * them to set it up again on their next visit.
+   */
+  async resetTwoFactor(ctx: RequestContext, id: string) {
+    const { user } = await this.manageable(ctx, id, "reset two-factor authentication for");
+    if (!user.totpEnabledAt && !user.totpPendingSecret) throw conflict("Two-factor authentication is not on for this account.");
+    await this.prisma.db.$transaction([
+      this.prisma.db.user.update({ where: { id }, data: { totpSecret: null, totpPendingSecret: null, totpEnabledAt: null, totpLastStep: null } }),
+      this.prisma.db.recoveryCode.deleteMany({ where: { userId: id } }),
+      this.prisma.db.twoFactorChallenge.deleteMany({ where: { userId: id } }),
+    ]);
+    await this.sessions.revokeAllFor(id);
+    await this.mail.sendTemplate("two_factor_reset", user.email, { name: user.name }, { userId: id });
+    await this.record(ctx, {
+      action: "platform.user_two_factor_reset",
+      targetType: "user",
+      targetId: id,
+      metadata: { email: user.email, wasEnabled: Boolean(user.totpEnabledAt) },
+    });
     return this.admin.userDetail(id);
   }
 

@@ -7,9 +7,9 @@ import type { Mailbox } from "../generated/prisma/client.js";
 export const TRANSIENT_FAILURES_BEFORE_ERROR = 3;
 
 /*
- * The one place a send path decides a mailbox has stopped working. A
- * definitive failure (the server refused the sign-in, the OAuth grant was
- * revoked) puts it in error at once; a transient one (the server could not be
+ * The one place a send path (or the reply sync, for a refused IMAP sign-in)
+ * decides a mailbox has stopped working. A definitive failure (the server
+ * refused the sign-in, the OAuth grant was revoked) puts it in error at once; a transient one (the server could not be
  * reached) only after TRANSIENT_FAILURES_BEFORE_ERROR in a row, so one blip
  * mid-campaign does not stall every thread on the mailbox. Every transition
  * from connected to error tells the workspace's owners and admins — a mailbox
@@ -51,7 +51,7 @@ export class MailboxFaultService {
   }
 
   private async alert(mailbox: Pick<Mailbox, "id" | "workspaceId" | "email">, lastError: string) {
-    this.log.warn(`${mailbox.email} stopped working while sending: ${lastError}`);
+    this.log.warn(`${mailbox.email} stopped working: ${lastError}`);
     await this.notifications.notifyRoles(mailbox.workspaceId, ["owner", "admin"], {
       type: "mailbox.error",
       title: `${mailbox.email} stopped working`,

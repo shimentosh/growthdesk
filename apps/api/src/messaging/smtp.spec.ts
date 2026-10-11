@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { TransportPool, classifySmtpError, dropTransport, sendSmtp, type SmtpSettings } from "./smtp.js";
+import { TransportPool, classifySmtpError, dropTransport, sendSmtp, transportOptions, type SmtpSettings } from "./smtp.js";
 import { startFakeSmtp, type FakeSmtp } from "../../test/fake-smtp.js";
 
 describe("classifySmtpError", () => {
@@ -74,6 +74,48 @@ describe("TransportPool", () => {
   });
 });
 
+describe("transportOptions (DNS rebinding, GAP_PLAN 2.10)", () => {
+  const base: SmtpSettings = { mailboxId: "m1", host: "smtp.example.com", port: 587, security: "starttls", auth: { user: "u", pass: "p" }, allowSelfSigned: false };
+
+  it("connects to the pinned address and checks TLS against the name", () => {
+    const o = transportOptions({ ...base, address: "203.0.113.10" });
+    expect(o).toMatchObject({ host: "203.0.113.10", servername: "smtp.example.com", requireTLS: true });
+    expect(o.tls).toEqual({ rejectUnauthorized: true, servername: "smtp.example.com" });
+  });
+
+  it("keeps OAuth provider hosts working the same way", () => {
+    const o = transportOptions({ ...base, host: "smtp.gmail.com", address: "142.250.0.108", auth: { user: "sam@gmail.com", accessToken: "tok" } });
+    expect(o).toMatchObject({ host: "142.250.0.108", servername: "smtp.gmail.com", auth: { type: "OAuth2", user: "sam@gmail.com", accessToken: "tok" } });
+  });
+
+  it("leaves the host alone when nothing was pinned (or the name was returned unresolved)", () => {
+    for (const s of [base, { ...base, address: "smtp.example.com" }]) {
+      const o = transportOptions(s);
+      expect(o.host).toBe("smtp.example.com");
+      expect(o).not.toHaveProperty("servername");
+      expect(o.tls).toEqual({ rejectUnauthorized: true });
+    }
+  });
+
+  it("sets no TLS name for an IP literal host", () => {
+    const o = transportOptions({ ...base, host: "203.0.113.10", address: "203.0.113.10" });
+    expect(o.host).toBe("203.0.113.10");
+    expect(o).not.toHaveProperty("servername");
+  });
+
+  it("opens a fresh pooled transport when the pinned address changes", () => {
+    const made: SmtpSettings[] = [];
+    const pool = new TransportPool((s) => {
+      made.push(s);
+      return { sendMail: vi.fn(), close: vi.fn() } as never;
+    });
+    pool.acquire({ ...base, address: "203.0.113.10" }).release();
+    pool.acquire({ ...base, address: "203.0.113.10" }).release();
+    pool.acquire({ ...base, address: "203.0.113.11" }).release();
+    expect(made.map((s) => s.address)).toEqual(["203.0.113.10", "203.0.113.11"]);
+  });
+});
+
 describe("sendSmtp over a pooled connection", () => {
   let smtp: FakeSmtp;
   beforeAll(async () => {
@@ -112,5 +154,16 @@ describe("sendSmtp over a pooled connection", () => {
     const r = await sendSmtp(box("wrong"), mail("x@fake.test"));
     expect(r.sent).toBe(false);
     if (!r.sent) expect(r.failure).toMatchObject({ outcome: "rejected", mailboxAtFault: true });
+  });
+
+  it("connects to the pinned IP, not to whatever the name resolves to", async () => {
+    // .invalid never resolves (RFC 2606): the send can only succeed by using the pinned address.
+    const pinned = { ...box(), host: "smtp.rebind.invalid", address: "127.0.0.1" };
+    const ok = await sendSmtp(pinned, mail("pinned@fake.test"));
+    expect(ok.sent).toBe(true);
+    expect(smtp.accepted).toContain("pinned@fake.test");
+    const unpinned = await sendSmtp({ ...pinned, mailboxId: randomUUID(), address: undefined }, mail("unpinned@fake.test"));
+    expect(unpinned.sent).toBe(false);
+    expect(smtp.accepted).not.toContain("unpinned@fake.test");
   });
 });

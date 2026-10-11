@@ -15,7 +15,7 @@ import { Queues } from "../queues/queues.js";
 import { seal } from "../common/crypto.js";
 import { actorId, ws, type RequestContext } from "../common/context.js";
 import { badRequest, conflict, notFound, tooMany } from "../common/errors.js";
-import { assertReachableTarget, isLocalHost } from "./net-guard.js";
+import { assertReachableTarget, isLocalHost, resolvePinnedTarget } from "./net-guard.js";
 import { verifyImap } from "./imap.js";
 import { domainAuth, systemResolver, type DnsResolver } from "./domain-auth.js";
 
@@ -118,11 +118,13 @@ export class MailboxesService {
     imap: { host: string; port: number; security: string; user: string } | null;
     password: string;
   }) {
-    await assertReachableTarget(s.smtpHost, s.smtpPort, "SMTP", this.allowPrivate);
+    // The SMTP probe connects to the address just vetted, so a rebinding answer cannot aim it elsewhere.
+    const pinned = await resolvePinnedTarget(s.smtpHost, s.smtpPort, "SMTP", this.allowPrivate);
     if (s.imap) await assertReachableTarget(s.imap.host, s.imap.port, "IMAP", this.allowPrivate);
     const smtp = await verifySmtp({
       mailboxId: `probe-${randomUUID()}`,
       host: s.smtpHost,
+      address: pinned.address,
       port: s.smtpPort,
       security: s.smtpSecurity,
       auth: { user: s.smtpUser, pass: s.password },
@@ -283,9 +285,9 @@ export class MailboxesService {
   private async check(box: Mailbox): Promise<{ smtp: { ok: boolean; error: string }; imap: { ok: boolean; error: string } | null }> {
     const smtp = await (async () => {
       try {
-        await assertReachableTarget(box.smtpHost, box.smtpPort, "SMTP", this.allowPrivate);
+        const pinned = await resolvePinnedTarget(box.smtpHost, box.smtpPort, "SMTP", this.allowPrivate);
         const settings = await this.auth.smtpSettings(box);
-        const r = await verifySmtp({ ...settings, mailboxId: `probe-${randomUUID()}` });
+        const r = await verifySmtp({ ...settings, address: pinned.address, mailboxId: `probe-${randomUUID()}` });
         return r.ok ? { ok: true, error: "" } : { ok: false, error: r.error };
       } catch (e) {
         return { ok: false, error: e instanceof Error ? e.message : String(e) };

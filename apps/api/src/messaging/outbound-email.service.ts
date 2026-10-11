@@ -9,7 +9,8 @@ import { SuppressionService } from "../crm/suppression.service.js";
 import { EventsService } from "../core/events.service.js";
 import { MailboxAuthError, MailboxAuthService, MailboxAuthUnavailable } from "./mailbox-auth.service.js";
 import { MailboxFaultService } from "./mailbox-faults.service.js";
-import { sendSmtp, type SendFailure } from "./smtp.js";
+import { sendSmtp, type SendFailure, type SmtpSettings } from "./smtp.js";
+import { resolvePinnedTarget } from "../mailboxes/net-guard.js";
 import { escapeHtml, markdownToEmailHtml } from "./mail-html.js";
 import { trackingBase, unsubscribeUrl, withTracking } from "./tracking.js";
 import type { Mailbox } from "../generated/prisma/client.js";
@@ -55,6 +56,16 @@ export type SendEmailResult =
   | { status: "uncertain"; reason: string; messageRowId: string }
   | { status: "blocked"; reason: string };
 
+/** The SMTP host failed the net-guard check at send time. `transient`: the name did not resolve, which may pass. */
+class SmtpTargetRefused extends Error {
+  constructor(
+    message: string,
+    readonly transient: boolean,
+  ) {
+    super(message);
+  }
+}
+
 const startOfNextUtcDay = () => {
   const d = new Date();
   return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() + 1, 0, 5));
@@ -77,6 +88,9 @@ const startOfNextUtcDay = () => {
  *      asynchronous bounce report would be
  *   7. mailbox faults go through MailboxFaultService, which tolerates a
  *      transient blip and tells admins when a mailbox stops working
+ *   8. the SMTP host is resolved and vetted (net-guard) right before each
+ *      send, and the connection goes to that vetted IP, so a DNS answer that
+ *      changes after the check cannot point the send at a private address
  */
 @Injectable()
 export class OutboundEmailService {
@@ -233,7 +247,7 @@ export class OutboundEmailService {
     let faultRecorded = false;
     try {
       const settings = await this.auth.smtpSettings(mailbox);
-      result = await sendSmtp(settings, {
+      result = await sendSmtp({ ...settings, address: await this.pinnedAddress(settings) }, {
         from: mailbox.displayName ? `"${mailbox.displayName.replace(/"/g, "")}" <${mailbox.email}>` : mailbox.email,
         to: input.toName ? `"${input.toName.replace(/"/g, "")}" <${input.to}>` : input.to,
         subject: input.subject,
@@ -247,9 +261,11 @@ export class OutboundEmailService {
     } catch (e) {
       // Credentials could not be produced (e.g. OAuth refresh failed): nothing was sent.
       // A refused or unreadable sign-in is final; the provider being unreachable is worth another try.
+      // A host that now resolves to a private address (or names no mail port) is final too.
       const error = e instanceof Error ? e.message : String(e);
       faultRecorded = e instanceof MailboxAuthUnavailable;
-      result = { sent: false as const, failure: { error, outcome: e instanceof MailboxAuthError ? ("rejected" as const) : ("deferred" as const), mailboxAtFault: true } };
+      const final = e instanceof MailboxAuthError || (e instanceof SmtpTargetRefused && !e.transient);
+      result = { sent: false as const, failure: { error, outcome: final ? ("rejected" as const) : ("deferred" as const), mailboxAtFault: true } };
     }
 
     if (result.sent) {
@@ -298,6 +314,23 @@ export class OutboundEmailService {
     await this.prisma.db.message.update({ where: { id: messageRowId, workspaceId }, data: { status: "failed", error: failure.error.slice(0, 1000) } });
     await this.prisma.db.messageEvent.create({ data: { workspaceId, messageId: messageRowId, type: "failed", data: { error: failure.error.slice(0, 500) } } });
     return { status: "failed", reason: failure.error, messageRowId, failure };
+  }
+
+  /**
+   * The IP this send connects to: the SMTP host resolved and checked now
+   * (resolvePinnedTarget), not whatever the name answers when nodemailer
+   * looks it up again. With ALLOW_PRIVATE_MAIL_HOSTS (local test servers) the
+   * name comes back unresolved and is used as is. OAuth mailboxes go through
+   * here too: their provider hosts are public names on mail ports, and TLS is
+   * still checked against the name (smtp.ts transportOptions).
+   */
+  private async pinnedAddress(s: SmtpSettings): Promise<string> {
+    try {
+      return (await resolvePinnedTarget(s.host, s.port, "SMTP", this.config.ALLOW_PRIVATE_MAIL_HOSTS)).address;
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      throw new SmtpTargetRefused(message, /^No such /.test(message));
+    }
   }
 
   /**

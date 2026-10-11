@@ -196,6 +196,7 @@ export function UserDetail() {
                             { label: "Email", value: u.email },
                             { label: "Email confirmed", value: u.emailVerified ? "Yes" : "No" },
                             { label: "Sign-in", value: [u.hasPassword && "Password", u.googleLinked && "Google"].filter(Boolean).join(" · ") || "None set" },
+                            { label: "Two-factor", value: u.twoFactorEnabledAt ? `On since ${f.date(u.twoFactorEnabledAt)}` : "Off" },
                             { label: "Last sign-in", value: u.lastLoginAt ? f.dateTime(u.lastLoginAt) : "Never" },
                             { label: "Joined", value: f.dateTime(u.createdAt) },
                             { label: "User id", value: <span className="font-mono text-xs">{u.id}</span> },

@@ -16,6 +16,12 @@ describe("resolvePinnedTarget", () => {
     expect(pinned).toEqual({ address: "203.0.113.10", servername: "smtp.example.com" });
   });
 
+  it("prefers an IPv4 address when the name has both", async () => {
+    const pinned = await resolvePinnedTarget("smtp.example.com", 587, "SMTP", false, answers("2001:db8::25", "203.0.113.10"));
+    expect(pinned.address).toBe("203.0.113.10");
+    expect((await resolvePinnedTarget("smtp.example.com", 587, "SMTP", false, answers("2001:db8::25"))).address).toBe("2001:db8::25");
+  });
+
   it("refuses a name that resolves to a private address, even alongside a public one", async () => {
     await expect(resolvePinnedTarget("rebind.example.com", 587, "SMTP", false, answers("203.0.113.10", "10.0.0.5"))).rejects.toThrow(/private network/);
   });

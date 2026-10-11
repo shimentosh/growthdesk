@@ -2,14 +2,14 @@
 
 import Link from "next/link";
 import { useState, type FormEvent } from "react";
-import { Ellipsis, KeyRound, MailCheck, MailPlus, Megaphone, NotebookPen, Plus, Send, Tags, Trash2, AtSign, X } from "lucide-react";
+import { Ellipsis, KeyRound, MailCheck, MailPlus, Megaphone, NotebookPen, Plus, Send, ShieldOff, Tags, Trash2, AtSign, X } from "lucide-react";
 import { normalizeUserTag, USER_TAG_PATTERN } from "@growthdesk/shared";
 import { Avatar } from "@/components/ui/Avatar";
 import { Badge } from "@/components/ui/Badge";
 import { Button, IconButton } from "@/components/ui/Button";
 import { Callout } from "@/components/ui/Callout";
 import { Card, CardBody, CardFooter, CardHeader } from "@/components/ui/Card";
-import { Modal } from "@/components/ui/Dialog";
+import { ConfirmDialog, Modal } from "@/components/ui/Dialog";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/DropdownMenu";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { QueryState } from "@/components/ui/ErrorState";
@@ -349,10 +349,16 @@ function DeleteDialog({ u, open, onOpenChange }: { u: UserDetailData; open: bool
 /** The "⋯" menu beside the page's main actions. Renders nothing when the viewer can do none of it. */
 export function UserActionsMenu({ u, self }: { u: UserDetailData; self: boolean }) {
   const { role } = usePlatform();
-  const [dialog, setDialog] = useState<"email" | "delete" | null>(null);
+  const [dialog, setDialog] = useState<"email" | "delete" | "two-factor" | null>(null);
   const resend = useApiMutation({ path: `/admin/users/${u.id}/resend-verification`, success: "Confirmation link sent" });
   const verify = useApiMutation({ path: `/admin/users/${u.id}/verify-email`, invalidate: [usersKey], success: "Email marked as confirmed" });
   const reset = useApiMutation({ path: `/admin/users/${u.id}/password-reset`, success: `Password reset link sent to ${u.email}` });
+  const resetTwoFactor = useApiMutation({
+    path: `/admin/users/${u.id}/two-factor/reset`,
+    invalidate: [usersKey],
+    success: "Two-factor turned off and every session ended",
+    errorToast: false,
+  });
 
   if (u.anonymisedAt || self) return null;
   const rank = PLATFORM_RANK[role];
@@ -393,6 +399,11 @@ export function UserActionsMenu({ u, self }: { u: UserDetailData; self: boolean 
               Change email…
             </DropdownMenuItem>
           )}
+          {admin && u.twoFactorEnabledAt && (
+            <DropdownMenuItem icon={<ShieldOff />} onSelect={() => setDialog("two-factor")}>
+              Reset two-factor…
+            </DropdownMenuItem>
+          )}
           {canDelete && (
             <>
               <DropdownMenuSeparator />
@@ -405,6 +416,16 @@ export function UserActionsMenu({ u, self }: { u: UserDetailData; self: boolean 
       </DropdownMenu>
       {admin && <ChangeEmailDialog u={u} open={dialog === "email"} onOpenChange={(v) => setDialog(v ? "email" : null)} />}
       {canDelete && <DeleteDialog u={u} open={dialog === "delete"} onOpenChange={(v) => setDialog(v ? "delete" : null)} />}
+      {admin && (
+        <ConfirmDialog
+          open={dialog === "two-factor"}
+          onOpenChange={(v) => setDialog(v ? "two-factor" : null)}
+          title="Reset two-factor authentication?"
+          description={`For someone who lost both their authenticator app and their recovery codes. Confirm it is really ${u.email} asking (for example, a reply from that address) before you go on. Two-factor is turned off, the recovery codes stop working, every session ends, and they are emailed about it. They sign in with their password and set two-factor up again.`}
+          confirmLabel="Reset two-factor"
+          onConfirm={() => resetTwoFactor.mutateAsync()}
+        />
+      )}
     </>
   );
 }

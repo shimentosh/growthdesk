@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useState, type FormEvent } from "react";
 import { AuthCard, AuthFooter } from "@/components/account/AuthFrame";
+import { SupportLink } from "@/components/shell/PlatformNotices";
 import { Button, buttonClass } from "@/components/ui/Button";
 import { Field, FormError } from "@/components/ui/Field";
 import { Input } from "@/components/ui/Input";
@@ -100,7 +101,8 @@ export function LoginForm({
           </Button>
         </form>
         <AuthFooter>
-          No access to your app? Enter one of the recovery codes you saved.{" "}
+          No access to your app? Enter one of the recovery codes you saved. Lost both?{" "}
+          <SupportLink subject="Lost two-factor access">Contact support</SupportLink> to have two-factor reset.{" "}
           <button
             type="button"
             className="font-medium text-accent-hi hover:underline"
