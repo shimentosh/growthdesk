@@ -61,6 +61,13 @@ export const VerifyEmailInput = z.object({ token: z.string().min(10).max(200) })
 /** `currentPassword` may be omitted only by an account that has none yet (Google sign-in); the API checks. */
 export const ChangePasswordInput = z.object({ currentPassword: z.string().max(200).optional(), newPassword: password });
 export const UpdateProfileInput = z.object({ name: requiredText(120).optional(), timezone: timezone.optional() });
+/** A six-digit authenticator code, or (where accepted) a recovery code; spaces and dashes are ignored by the API. */
+const twoFactorCode = z.string().trim().min(6).max(32);
+export const TwoFactorCodeInput = z.object({ code: twoFactorCode });
+/** Turning two-factor off needs proof: a current code (or recovery code), or the account password. */
+export const TwoFactorDisableInput = z
+  .object({ code: twoFactorCode.optional(), password: z.string().min(1).max(200).optional() })
+  .refine((v) => Boolean(v.code || v.password), { message: "Enter a code from your app or your password", path: ["code"] });
 
 // ─── Workspaces ──────────────────────────────────────────────────────────────
 
@@ -95,6 +102,8 @@ export const UpdateWorkspaceInput = z.object({
   marketingFromName: text(120).optional(),
   marketingReplyTo: z.union([email, z.literal("")]).optional(),
 });
+/** Owner-only: whether every member must have two-factor on to use the workspace. */
+export const WorkspaceSecurityInput = z.object({ requireTwoFactor: z.boolean() });
 export const InviteMemberInput = z.object({
   email,
   role: z.enum(WORKSPACE_ROLES).exclude(["owner"]),

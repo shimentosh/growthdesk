@@ -18,6 +18,7 @@ import { useApiMutation } from "@/lib/query";
 import { useWorkspace, workspaceDetailKey } from "@/lib/session";
 import type { WorkspaceDetail } from "@/lib/types";
 import { BUSINESS_LABELS, countryName } from "./labels";
+import { SecuritySettingsCard } from "./SecuritySettingsCard";
 
 type BusinessType = (typeof BUSINESS_TYPES)[number];
 
@@ -200,6 +201,7 @@ export function GeneralSettings() {
           <>
             <WorkspaceForm />
             <NotificationsForm />
+            <SecuritySettingsCard />
           </>
         ) : (
           <ReadOnlyWorkspace />

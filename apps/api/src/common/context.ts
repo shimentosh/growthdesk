@@ -8,6 +8,8 @@ export type Identity = {
   name: string;
   platformRole: PlatformRole;
   emailVerified: boolean;
+  /** Two-factor is on for the account (a workspace can require it). */
+  twoFactor: boolean;
   sessionId: string;
 };
 

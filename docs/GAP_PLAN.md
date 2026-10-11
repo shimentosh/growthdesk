@@ -68,7 +68,7 @@ Status: ☐ open · ◐ in progress · ☑ done.
 | ☐ 2.9 | P3 | A signed click link redirects to any site, so it can be used for phishing. | `messaging/tracking.ts:42-47` | Show an interstitial page for unknown domains, or rate-limit and monitor. |
 | ☐ 2.10 | P3 | The SMTP send path does not re-check the host against DNS rebinding (IMAP does). | `mailboxes/net-guard.ts:22-25` | Pin the resolved IP. |
 | ☐ 2.11 | P2 | `ENCRYPTION_KEY` cannot be rotated: sealed values carry no key id. | `common/crypto.ts:74-106` | Add a key-version prefix and a re-seal job. |
-| ☐ 2.12 | P1 | No 2FA for accounts. | — | Add TOTP with recovery codes, and allow a workspace to require it. |
+| ☑ 2.12 | P1 | No 2FA for accounts. | `auth/two-factor.service.ts`, `auth/totp.ts`, `common/access.guard.ts` | Done: TOTP (sealed secret, hashed single-use recovery codes) with a pending challenge after password or Google sign-in, rate-limited with lockout; owners can require it per workspace; staff use it in the console. Tested in `test/two-factor.e2e-spec.ts`. |
 | ☑ 2.13 | — | `ConsentEvent` was missing from the tenant guard list. | `prisma/tenant-guard.ts` | Fixed during the marketing work. |
 
 **Already solid:** scrypt passwords and hashed tokens; HttpOnly, SameSite session cookies; signed OAuth state; tenant guard with tests; `@Permission` on every route; parameterised SQL; AES-GCM secrets that are never returned; an SSRF guard on outgoing webhooks; signed Stripe, Twilio, WhatsApp and Telegram webhooks; sanitised inbound HTML; CSV export protected from formula injection; non-root containers.
@@ -150,7 +150,7 @@ Status: ☐ open · ◐ in progress · ☑ done.
 | ☑ 5.10 | P2 | Maintenance mode is invisible. "Contact support" leads nowhere. A second workspace hitting the limit shows bare text. | `common/access.guard.ts:108`, `apps/web/src/app/onboarding/CreateWorkspace.tsx:47-52` | Banner, support form or address, and an upgrade prompt. **Done:** public `GET /status` (maintenance + support email); a maintenance banner in the workspace shell, account area and onboarding (refetched when a write gets 503); "Contact support" is a `mailto:` to the Branding support address (plain text when none is set; there is no customer-facing support-case API); a 402 on a new workspace shows the upgrade prompt linking to billing. |
 | ☐ 5.11 | P3 | Smaller issues: /login while signed in shows the form, the post-checkout poll never ends, template previews can arrive out of order, archive can't be undone, SMTP host can't be edited, meeting buttons can be double-clicked, reports show zeros with no empty state, and the inbox only polls (no live updates). | see audit | Small fixes. |
 
-**Missing account features:** ☐ 2FA · ☐ change email · ☐ personal notification preferences · ☐ personal data export · ☐ delete account · ☐ link or unlink Google.
+**Missing account features:** ☑ 2FA · ☐ change email · ☐ personal notification preferences · ☐ personal data export · ☐ delete account · ☐ link or unlink Google.
 
 **Already solid:** the API client and error envelope, 402 upgrade dialogs, loading, empty and error states, double-submit guards, optimistic rollbacks, every auth flow, invitations, the workspace switcher, the billing UI, the import wizard, and the admin operations tools.
 

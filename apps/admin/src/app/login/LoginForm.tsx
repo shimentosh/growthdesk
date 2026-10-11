@@ -8,20 +8,61 @@ import { Card, CardBody } from "@/components/ui/Card";
 import { Field, FormError } from "@/components/ui/Field";
 import { IconTile } from "@/components/ui/IconTile";
 import { Input } from "@/components/ui/Input";
-import { fieldsOf, get, messageOf, post } from "@/lib/api";
+import { ApiError, fieldsOf, get, messageOf, post } from "@/lib/api";
 import { signOut } from "@/lib/session";
 import type { Me } from "@/lib/types";
 
 type Account = { email: string; name: string };
 
-/** Email + password only: staff accounts are created with `pnpm admin:create`, never registered here. */
+/**
+ * Email + password only: staff accounts are created with `pnpm admin:create`, never registered here.
+ * A staff account with two-factor on is then asked for a code (or a recovery code) before any session exists.
+ */
 export function LoginForm({ next, noAccess: initialNoAccess }: { next: string; noAccess: Account | null }) {
+  const [step, setStep] = useState<"password" | "code">("password");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [code, setCode] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [fields, setFields] = useState<Record<string, string>>({});
   const [noAccess, setNoAccess] = useState<Account | null>(initialNoAccess);
+
+  /** After the session exists: staff go on, a customer account sees "no platform access". */
+  async function finish() {
+    const me = await get<Me>("/auth/me", { noAuthRedirect: true });
+    if (me.user.platformRole === "none") {
+      setNoAccess({ email: me.user.email, name: me.user.name });
+      setBusy(false);
+      return;
+    }
+    // A full load, so the proxy and the panel layout see the new session cookie.
+    window.location.assign(next);
+  }
+
+  function fail(err: unknown) {
+    setFields(fieldsOf(err));
+    setError(messageOf(err));
+    setBusy(false);
+  }
+
+  async function submitCode(e: FormEvent) {
+    e.preventDefault();
+    setBusy(true);
+    setError(null);
+    setFields({});
+    try {
+      await post("/auth/2fa/verify", { code }, { noAuthRedirect: true });
+      await finish();
+    } catch (err) {
+      // The pending sign-in ran out (time or attempts): back to the password.
+      if (err instanceof ApiError && err.code === "two_factor_expired") {
+        setStep("password");
+        setCode("");
+      }
+      fail(err);
+    }
+  }
 
   async function submit(e: FormEvent) {
     e.preventDefault();
@@ -29,19 +70,15 @@ export function LoginForm({ next, noAccess: initialNoAccess }: { next: string; n
     setError(null);
     setFields({});
     try {
-      await post("/auth/login", { email, password }, { noAuthRedirect: true });
-      const me = await get<Me>("/auth/me", { noAuthRedirect: true });
-      if (me.user.platformRole === "none") {
-        setNoAccess({ email: me.user.email, name: me.user.name });
+      const res = await post<{ signedIn: boolean; twoFactorRequired?: boolean }>("/auth/login", { email, password }, { noAuthRedirect: true });
+      if (res.twoFactorRequired) {
+        setStep("code");
         setBusy(false);
         return;
       }
-      // A full load, so the proxy and the panel layout see the new session cookie.
-      window.location.assign(next);
+      await finish();
     } catch (err) {
-      setFields(fieldsOf(err));
-      setError(messageOf(err));
-      setBusy(false);
+      fail(err);
     }
   }
 
@@ -74,6 +111,43 @@ export function LoginForm({ next, noAccess: initialNoAccess }: { next: string; n
               <Button variant="primary" icon={<LogOut />} className="w-full" onClick={() => void signOut()}>
                 Sign out
               </Button>
+            </CardBody>
+          ) : step === "code" ? (
+            <CardBody className="flex flex-col gap-5 px-6 py-7 sm:px-8">
+              <div className="text-center">
+                <h1 className="text-xl font-semibold tracking-[-0.02em] text-text-hi">Two-factor authentication</h1>
+                <p className="mx-auto mt-1.5 max-w-[34ch] text-sm text-pretty text-text-3">Enter the 6-digit code from your authenticator app, or one of your recovery codes.</p>
+              </div>
+              <form onSubmit={submitCode} className="flex flex-col gap-3" noValidate>
+                <FormError error={Object.keys(fields).length ? null : error} />
+                <Field label="Code" error={fields.code}>
+                  <Input
+                    autoComplete="one-time-code"
+                    autoFocus
+                    required
+                    maxLength={32}
+                    value={code}
+                    onChange={(e) => setCode(e.target.value)}
+                    placeholder="123456"
+                    className="font-mono tracking-wider"
+                  />
+                </Field>
+                <Button type="submit" variant="primary" loading={busy} disabled={code.trim().length < 6} className="mt-1 w-full">
+                  Verify
+                </Button>
+                <Button
+                  variant="ghost"
+                  className="w-full"
+                  onClick={() => {
+                    setStep("password");
+                    setCode("");
+                    setError(null);
+                    setFields({});
+                  }}
+                >
+                  Start over
+                </Button>
+              </form>
             </CardBody>
           ) : (
             <CardBody className="flex flex-col gap-5 px-6 py-7 sm:px-8">

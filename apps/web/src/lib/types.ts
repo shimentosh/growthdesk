@@ -16,6 +16,7 @@ export type Me = {
     platformRole: PlatformRole;
     hasPassword: boolean;
     googleLinked: boolean;
+    twoFactorEnabled: boolean;
   };
   workspaces: MeWorkspace[];
   lastWorkspaceId: string | null;
@@ -102,6 +103,25 @@ export type SessionRow = {
   createdAt: string;
   lastSeenAt: string;
   current: boolean;
+};
+
+/** GET /auth/2fa */
+export type TwoFactorStatus = {
+  enabled: boolean;
+  enabledAt: string | null;
+  recoveryCodesRemaining: number;
+  /** Workspaces the person belongs to that require two-factor. */
+  requiredBy: { id: string; name: string }[];
+};
+
+/** POST /auth/2fa/setup */
+export type TwoFactorSetup = { secret: string; otpauthUri: string; qrSvg: string };
+
+/** GET/PUT /workspaces/:id/security */
+export type WorkspaceSecurity = {
+  requireTwoFactor: boolean;
+  canChange: boolean;
+  membersWithoutTwoFactor: { id: string; name: string; email: string; role: WorkspaceRole }[];
 };
 
 /** GET /invitations/:token */

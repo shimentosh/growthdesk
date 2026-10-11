@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, type ReactNode } from "react";
-import { useParams, usePathname } from "next/navigation";
+import { useParams, usePathname, useRouter } from "next/navigation";
 import { MaintenanceBanner, SupportLink } from "@/components/shell/PlatformNotices";
 import { Sidebar } from "@/components/shell/Sidebar";
 import { Topbar } from "@/components/shell/Topbar";
@@ -24,6 +24,7 @@ import { useWorkspaceDetailQuery, WorkspaceProvider } from "@/lib/session";
 export default function WorkspaceLayout({ children }: { children: ReactNode }) {
   const { workspaceId } = useParams<{ workspaceId: string }>();
   const pathname = usePathname();
+  const router = useRouter();
   const ws = useWorkspaceDetailQuery(workspaceId);
   const [navOpen, setNavOpen] = useState(false);
 
@@ -35,7 +36,14 @@ export default function WorkspaceLayout({ children }: { children: ReactNode }) {
   // A route change closes the mobile drawer.
   useEffect(() => setNavOpen(false), [pathname]);
 
+  // The workspace requires two-factor and this account has none: off to enrol (the account page explains why).
+  const needsTwoFactor = ws.error?.code === "two_factor_required";
+  useEffect(() => {
+    if (needsTwoFactor) router.replace("/account#two-factor");
+  }, [needsTwoFactor, router]);
+
   if (ws.isPending) return <LoadingBlock className="min-h-dvh" label="Opening workspace…" />;
+  if (needsTwoFactor) return <LoadingBlock className="min-h-dvh" label="This workspace requires two-factor authentication…" />;
   if (ws.isError) {
     return (
       <Page width="narrow" className="pt-[12vh]">

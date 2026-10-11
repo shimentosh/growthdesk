@@ -5,6 +5,7 @@ import { MailService } from "../core/mail.service.js";
 import { AuditService } from "../core/audit.service.js";
 import { PlatformSettingsService, type PlatformSettings } from "../core/platform-settings.service.js";
 import { SessionService } from "./session.service.js";
+import { TwoFactorService } from "./two-factor.service.js";
 import { hashPassword, hashToken, newToken, verifyPassword } from "../common/crypto.js";
 import { ApiError, badRequest, conflict, forbidden, notFound, tooMany, unauthorized } from "../common/errors.js";
 import type { RequestContext } from "../common/context.js";
@@ -43,6 +44,7 @@ export class AuthService {
     private readonly mail: MailService,
     private readonly audit: AuditService,
     private readonly platform: PlatformSettingsService,
+    private readonly twoFactor: TwoFactorService,
     @Inject(APP_CONFIG) private readonly config: AppConfig,
   ) {}
 
@@ -217,6 +219,8 @@ export class AuthService {
     }
     if (user.suspendedAt) throw forbidden("This account is suspended. Contact support.");
     await this.prisma.db.signInFailure.deleteMany({ where: { email, ip: ctx.ip || "unknown" } });
+    // Two-factor accounts get a short-lived challenge, not a session (two-factor.service.ts).
+    if (user.totpEnabledAt) return this.twoFactor.startChallenge(user.id, ctx, "password");
     const session = await this.sessions.start(user.id, ctx.ip, ctx.userAgent);
     await this.audit.record({ ...ctx, identity: undefined }, { action: "auth.signed_in", targetType: "user", targetId: user.id }, "user");
     return session;
@@ -292,6 +296,7 @@ export class AuthService {
         platformRole: user.platformRole,
         hasPassword: Boolean(user.passwordHash),
         googleLinked: Boolean(user.googleSub),
+        twoFactorEnabled: Boolean(user.totpEnabledAt),
       },
       workspaces: user.memberships.map((m) => ({ ...m.workspace, role: m.role })),
       lastWorkspaceId: session?.workspaceId ?? null,
@@ -397,6 +402,7 @@ export class AuthService {
       }
     }
     if (user.suspendedAt) throw forbidden("This account is suspended. Contact support.");
+    if (user.totpEnabledAt) return this.twoFactor.startChallenge(user.id, ctx, "google");
     return this.sessions.start(user.id, ctx.ip, ctx.userAgent);
   }
 }

@@ -146,6 +146,10 @@ export class AccessGuard implements CanActivate {
       timezone: w.timezone,
       currency: w.currency,
     };
+    // The owner's two-factor requirement: the web app sends a member refused here to enrol.
+    if (w.requireTwoFactor && !ctx.identity.twoFactor) {
+      throw new ApiError(403, "two_factor_required", `${w.name} requires two-factor authentication. Turn it on in your account settings to continue.`);
+    }
     if (w.status === "suspended" && !meta<boolean>(ALLOW_SUSPENDED)) {
       throw locked(`This workspace is suspended${w.suspendedReason ? `: ${w.suspendedReason}` : ""}. Contact support.`);
     }

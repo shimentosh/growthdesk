@@ -22,6 +22,7 @@ import { isApiError } from "../common/errors.js";
 import { PrismaService } from "../prisma/prisma.service.js";
 import { AuthService } from "./auth.service.js";
 import { SessionService } from "./session.service.js";
+import { TwoFactorService } from "./two-factor.service.js";
 import { parseAttributionCookie } from "./signup-profile.js";
 
 /** Carries a Google sign-up's invitation token and consent tick across the OAuth round-trip (validated again on return). */
@@ -39,6 +40,7 @@ export class AuthController {
     private readonly auth: AuthService,
     private readonly sessions: SessionService,
     private readonly prisma: PrismaService,
+    private readonly twoFactor: TwoFactorService,
   ) {}
 
   @Public()
@@ -76,8 +78,13 @@ export class AuthController {
   @HttpCode(200)
   @Post("login")
   async login(@Body(LoginInput) body: z.infer<typeof LoginInput>, @Ctx() ctx: RequestContext, @Res({ passthrough: true }) res: Response) {
-    const session = await this.auth.login(body.email, body.password, ctx);
-    this.sessions.setCookie(res, session.token);
+    const result = await this.auth.login(body.email, body.password, ctx);
+    // Two-factor on: no session yet. The code goes to POST /auth/2fa/verify, which reads this cookie.
+    if ("challenge" in result) {
+      this.twoFactor.setChallengeCookie(res, result.challenge);
+      return { signedIn: false, twoFactorRequired: true };
+    }
+    this.sessions.setCookie(res, result.token);
     return { signedIn: true };
   }
 
@@ -209,12 +216,16 @@ export class AuthController {
     const valid = nonce && sig && cookie === state && safeEqual(sig, hmac(derivedKey("oauth-state"), nonce, "base64url"));
     if (!valid || !code) return res.redirect(302, "/login?error=google_state");
     try {
-      const session = await this.auth.googleCallback(code, ctx, {
+      const result = await this.auth.googleCallback(code, ctx, {
         inviteToken: signup.invite || undefined,
         marketingConsent: signup.consent,
         attribution: attributionFrom(res),
       });
-      this.sessions.setCookie(res, session.token);
+      if ("challenge" in result) {
+        this.twoFactor.setChallengeCookie(res, result.challenge);
+        return res.redirect(302, "/login?step=2fa");
+      }
+      this.sessions.setCookie(res, result.token);
       return res.redirect(302, "/");
     } catch (e) {
       // A sign-up the policy refused goes back to the register page, which explains the code.
