@@ -24,6 +24,6 @@
     "admin:create": "pnpm --filter @growthdesk/api run admin:create"
   },
   "devDependencies": {
-    "typescript": "6.0.3"
+    "typescript": "7.0.2"
   }
 }
