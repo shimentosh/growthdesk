@@ -13,6 +13,7 @@ import {
   Minus,
   MousePointerClick,
   MoveVertical,
+  Square,
   Trash2,
   Type,
   type LucideIcon,
@@ -103,7 +104,7 @@ export function VariablePicker({ variables, required, disabled }: { variables: P
 
 // ─── Blocks ─────────────────────────────────────────────────────────────────
 
-const ICONS: Record<EmailBlockType, LucideIcon> = {
+const ICONS: Partial<Record<EmailBlockType, LucideIcon>> = {
   heading: Heading,
   text: Type,
   button: MousePointerClick,
@@ -234,6 +235,9 @@ function BlockFields({ block, set, disabled }: { block: EmailBlock; set: (b: Ema
           <input type="range" min={4} max={120} step={4} value={block.height} onChange={(e) => set({ ...block, height: Number(e.target.value) })} disabled={disabled} className="w-full accent-[var(--color-accent)]" />
         </Field>
       );
+    default:
+      // The workspace designer's richer blocks (hero, columns…) are not offered for system email.
+      return <p className="text-xs text-text-3">This block can only be edited in the workspace email designer.</p>;
   }
 }
 
@@ -249,7 +253,7 @@ export function BlockEditor({ blocks, onChange, hasActionUrl, disabled }: { bloc
   return (
     <div className="flex flex-col gap-2">
       {blocks.map((b, i) => {
-        const Icon = ICONS[b.type];
+        const Icon = ICONS[b.type] ?? Square;
         return (
           <div key={b.id} className="rounded-lg border border-line bg-panel">
             <div className="flex items-center justify-between gap-2 border-b border-line px-2.5 py-1">
@@ -276,7 +280,7 @@ export function BlockEditor({ blocks, onChange, hasActionUrl, disabled }: { bloc
         <div className="flex flex-wrap items-center gap-1.5 rounded-lg border border-dashed border-line-strong px-2.5 py-2">
           <span className="mr-1 text-xs text-text-3">Add</span>
           {EMAIL_BLOCK_TYPES.map(({ type, label: l }) => {
-            const Icon = ICONS[type];
+            const Icon = ICONS[type] ?? Square;
             return (
               <Button key={type} size="sm" variant="ghost" icon={<Icon />} onClick={() => onChange([...blocks, starterBlock(type, hasActionUrl)])} disabled={blocks.length >= 100}>
                 {l}

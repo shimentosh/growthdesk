@@ -130,6 +130,7 @@ function Editor({ template }: { template: Template | null }) {
           template ? (
             <>
               <Badge quiet>v{template.version}</Badge>
+              {template.fromLibrary && <Badge tone="info">Library</Badge>}
               {template.archivedAt && <Badge tone="warn">Archived</Badge>}
             </>
           ) : undefined

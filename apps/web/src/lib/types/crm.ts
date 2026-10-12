@@ -12,6 +12,7 @@ import type {
   DealStatus,
   EnrollmentStatus,
   IdentifierKind,
+  LifecycleStage,
   MeetingStatus,
   Priority,
   Qualification,
@@ -58,6 +59,12 @@ export type Contact = {
   consentSource: string;
   /** When consentStatus last changed (null when it never has). */
   consentAt: string | null;
+  /** lead → sales → contact. */
+  lifecycleStage: LifecycleStage;
+  /** When lifecycleStage last changed (null when it never has). */
+  stageChangedAt: string | null;
+  /** Archived people are left out of lists, pickers and audiences unless asked for. */
+  archivedAt: string | null;
   createdAt: string;
   updatedAt: string;
 };

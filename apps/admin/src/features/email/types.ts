@@ -17,7 +17,8 @@ export type EmailSettings = {
   webhookUrl: string;
   effective: { provider: MailProviderId; reason: string; transactionalFrom: string; marketingFrom: string; replyTo: string | null };
   defaults: { mailFrom: string; replyTo: string | null };
-  smtp: { host: string; port: number; secure: boolean; authenticated: boolean };
+  /** What SMTP sends through now: the server saved here, else the environment's (fromEnv). */
+  smtp: { host: string; port: number; secure: boolean; authenticated: boolean; user: string; passwordSet: boolean; fromEnv: boolean };
 };
 
 export type EmailSettingsPatch = Partial<{
@@ -28,6 +29,11 @@ export type EmailSettingsPatch = Partial<{
   marketingFrom: string;
   replyTo: string;
   resendRateLimitPerSec: number;
+  smtpHost: string;
+  smtpPort: number;
+  smtpSecure: boolean;
+  smtpUser: string;
+  smtpPassword: string;
 }>;
 
 export type SendResult = {

@@ -80,7 +80,7 @@ export function CampaignReport({ campaign: c }: { campaign: MarketingCampaign })
   return (
     <>
       <PageHeader
-        back={{ href: mk.href("/campaigns"), label: "Email campaigns" }}
+        back={{ href: ws.href("/campaigns?type=marketing"), label: "Campaigns" }}
         icon={<EntityTile of="marketingCampaigns" />}
         title={c.name}
         meta={<CampaignStatusBadge status={c.status} />}
@@ -234,7 +234,7 @@ function ContentPreview({ campaign: c }: { campaign: MarketingCampaign }) {
         </p>
         {c.preheader && <p className="mt-1 text-xs text-text-2">{fill(c.preheader, PREVIEW_VARS)}</p>}
       </Card>
-      <DesignPreview blocks={c.blocks} preheader={c.preheader} className="h-[min(760px,calc(100dvh-8rem))] min-h-[480px]" />
+      <DesignPreview blocks={c.blocks} theme={c.theme} preheader={c.preheader} className="h-[min(760px,calc(100dvh-8rem))] min-h-[480px]" />
     </div>
   );
 }

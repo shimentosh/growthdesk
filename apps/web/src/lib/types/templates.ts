@@ -17,6 +17,8 @@ export type Template = {
   /** WhatsApp: the approved template name the chat provider sends instead of free text. */
   waTemplate: string;
   waLanguage: string;
+  /** Seeded from the built-in template library (still editable). */
+  fromLibrary: boolean;
   archivedAt: string | null;
   createdById: string | null;
   createdAt: string;
@@ -31,8 +33,12 @@ export type TemplateListParams = {
   pageSize?: number;
   channel?: Channel;
   q?: string;
+  category?: string;
   archived?: "true" | "false" | "all";
 };
+
+/** GET /templates/categories — categories in use on active templates, library order first. */
+export type TemplateCategory = { category: string; count: number };
 
 /** POST /templates body (shared `TemplateInput`) and PATCH body (`TemplatePatch`, every key optional). */
 export type TemplateBody = {

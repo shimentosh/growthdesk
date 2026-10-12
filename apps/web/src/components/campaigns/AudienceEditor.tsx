@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useState } from "react";
 import { useQueries } from "@tanstack/react-query";
 import { Users, X } from "lucide-react";
@@ -11,6 +12,8 @@ import { Checkbox } from "@/components/ui/Checkbox";
 import { Field, FormError } from "@/components/ui/Field";
 import { Input, NativeSelect } from "@/components/ui/Input";
 import { ContactPicker, contactLabel, useMembers } from "@/components/pickers/Pickers";
+import { LIST_READ } from "@/components/crm/lifecycle";
+import { useMarketing, useMarketingLists } from "@/components/marketing/common";
 import { get } from "@/lib/api";
 import { formatNumber } from "@/lib/format";
 import { useApiQuery } from "@/lib/query";
@@ -24,6 +27,11 @@ type Mode = CampaignAudience["type"];
 type Filter = Omit<ContactFilterT, "createdAfter" | "createdBefore"> & { createdAfter?: string; createdBefore?: string };
 
 const MODES: { value: Mode; label: string; hint: string }[] = [
+  {
+    value: "lists",
+    label: "Lead lists",
+    hint: "Resolved when you launch: the leads on any of these lists then. People already handed to sales or made contacts are left out.",
+  },
   { value: "filter", label: "Contacts matching a filter", hint: "Resolved when you launch: whoever matches then is enrolled." },
   { value: "view", label: "A saved contact view", hint: "Resolved when you launch, with the view's filters at that moment." },
   { value: "contacts", label: "Specific contacts", hint: "Exactly the contacts you pick." },
@@ -52,7 +60,11 @@ export function AudienceEditor({ campaign }: { campaign: CampaignDetail }) {
   const locked = lockedReason(campaign.status);
   const disabled = Boolean(locked) || !ws.can("campaigns.write");
   const stored = campaign.audience;
-  const [mode, setMode] = useState<Mode>(stored?.type ?? "filter");
+  const [mode, setMode] = useState<Mode>(stored?.type ?? "lists");
+  const [listIds, setListIds] = useState<string[]>(stored?.type === "lists" ? stored.listIds : []);
+  const mk = useMarketing();
+  const canLists = ws.can(LIST_READ);
+  const lists = useMarketingLists(true);
   const [ids, setIds] = useState<string[]>(stored?.type === "contacts" ? stored.contactIds : []);
   const [viewId, setViewId] = useState(stored?.type === "view" ? stored.viewId : "");
   const [filter, setFilter] = useState<Filter>(filterOf(stored));
@@ -67,7 +79,11 @@ export function AudienceEditor({ campaign }: { campaign: CampaignDetail }) {
   );
 
   const audience: CampaignAudience | null =
-    mode === "contacts" ? { type: "contacts", contactIds: ids } : mode === "view" ? (viewId ? { type: "view", viewId } : null) : { type: "filter", filter: cleanFilter(filter) as ContactFilterT };
+    mode === "lists"
+      ? listIds.length
+        ? { type: "lists", listIds }
+        : null
+      : mode === "contacts" ? { type: "contacts", contactIds: ids } : mode === "view" ? (viewId ? { type: "view", viewId } : null) : { type: "filter", filter: cleanFilter(filter) as ContactFilterT };
   const dirty = JSON.stringify(audience) !== JSON.stringify(stored?.type === "filter" ? { type: "filter", filter: cleanFilter(filterOf(stored)) } : stored);
   const fields = save.error?.fields ?? {};
 
@@ -127,6 +143,50 @@ export function AudienceEditor({ campaign }: { campaign: CampaignDetail }) {
             <Field label="Audience" hint={MODES.find((m) => m.value === mode)?.hint}>
               <NativeSelect value={mode} onChange={(e) => setMode(e.target.value as Mode)} options={MODES.map((m) => ({ value: m.value, label: m.label }))} />
             </Field>
+
+            {mode === "lists" && (
+              <Field label="Lead lists" required error={fields["audience.listIds"]} hint="Pick one or more. Someone on two lists is enrolled once.">
+                {!canLists ? (
+                  <p className="text-sm text-text-3">Your role cannot see lead lists.</p>
+                ) : lists.isPending ? (
+                  <p className="text-sm text-text-3">Loading lists…</p>
+                ) : lists.isError ? (
+                  <p className="text-sm text-bad-ink">Lists could not be loaded: {lists.error.message}</p>
+                ) : (lists.data ?? []).filter((l) => !l.archivedAt || listIds.includes(l.id)).length === 0 ? (
+                  <p className="text-sm text-text-3">
+                    No lead lists yet.{" "}
+                    {ws.can("contacts.import") && (
+                      <Link href={ws.href("/imports")} className="text-accent-ink hover:text-accent-hi">
+                        Import a CSV into a new list
+                      </Link>
+                    )}
+                  </p>
+                ) : (
+                  <ul className="divide-y divide-line rounded-md border border-line">
+                    {(lists.data ?? [])
+                      .filter((l) => !l.archivedAt || listIds.includes(l.id))
+                      .map((l) => (
+                        <li key={l.id} className="flex items-center justify-between gap-3 px-3 py-2">
+                          <Checkbox
+                            checked={listIds.includes(l.id)}
+                            disabled={disabled}
+                            onCheckedChange={(on) => setListIds(on ? [...listIds, l.id] : listIds.filter((x) => x !== l.id))}
+                            label={
+                              <span className="font-medium">
+                                {l.name}
+                                {l.archivedAt && <span className="ml-1.5 text-xs font-normal text-text-3">(archived)</span>}
+                              </span>
+                            }
+                          />
+                          <Link href={mk.href(`/lists/${l.id}`)} className="shrink-0 text-xs text-text-3 tabular-nums hover:text-accent-hi">
+                            {formatNumber(l.counts.subscribed + l.counts.pending)} people
+                          </Link>
+                        </li>
+                      ))}
+                  </ul>
+                )}
+              </Field>
+            )}
 
             {mode === "view" && (
               <Field label="Saved view" required error={fields["audience.viewId"]}>

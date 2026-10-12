@@ -10,6 +10,7 @@ import { ContactCallActions } from "@/components/calls/ContactCallActions";
 import { ContactDetailsCard } from "@/components/crm/ContactDetailsCard";
 import { ContactPrivacyMenu } from "@/components/crm/ContactPrivacyMenu";
 import { CustomFieldsCard } from "@/components/crm/CustomFieldsCard";
+import { ArchivedBanner, ContactLifecycleMenu, StageBadge } from "@/components/crm/lifecycle";
 import { NotesPanel } from "@/components/crm/NotesPanel";
 import { ConsentCard, ContactActivityCards, DealsCard, IdentityCard, MarketingListsCard } from "@/components/crm/RelatedCards";
 import { TagEditor } from "@/components/crm/Tags";
@@ -116,14 +117,19 @@ function Loaded({ contact: c, onDeleted }: { contact: ContactDetail; onDeleted: 
   return (
     <Page width="capped">
       <PageHeader
-        back={{ href: ws.href("/contacts"), label: "Contacts" }}
+        back={c.lifecycleStage === "lead" || c.lifecycleStage === "sales" ? { href: ws.href(c.lifecycleStage === "sales" ? "/leads?stage=sales" : "/leads"), label: "Leads" } : { href: ws.href("/contacts"), label: "Contacts" }}
         title={
           <span className="flex items-center gap-2.5">
             <Avatar size="md" name={c.fullName} email={c.email} />
             {name}
           </span>
         }
-        meta={<StatusBadge value={c.status} />}
+        meta={
+          <>
+            <StageBadge stage={c.lifecycleStage} />
+            <StatusBadge value={c.status} />
+          </>
+        }
         description={
           subtitle || c.company ? (
             <>
@@ -138,9 +144,10 @@ function Loaded({ contact: c, onDeleted }: { contact: ContactDetail; onDeleted: 
           ) : undefined
         }
         actions={
-          ws.can(["calls.make", "contacts.delete", "contacts.export", "contacts.erase"]) ? (
+          ws.can(["calls.make", "contacts.write", "contacts.delete", "contacts.export", "contacts.erase"]) ? (
             <>
               <ContactCallActions contact={c} />
+              <ContactLifecycleMenu contact={c} name={name} />
               <ContactPrivacyMenu contactId={c.id} name={name} />
               {ws.can("contacts.delete") && (
                 <Button variant="danger" icon={<Trash2 />} onClick={() => setConfirmDelete(true)}>
@@ -151,6 +158,8 @@ function Loaded({ contact: c, onDeleted }: { contact: ContactDetail; onDeleted: 
           ) : undefined
         }
       />
+
+      <ArchivedBanner contact={c} className="mb-5" />
 
       {warnings.length > 0 && (
         <Callout tone="warn" title="Contact restrictions" className="mb-5">

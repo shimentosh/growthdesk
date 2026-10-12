@@ -126,7 +126,10 @@ export class ImportsService {
     return { headers, sample: rows.slice(0, 10), totalRows: rows.length, suggested, fields: IMPORT_FIELDS };
   }
 
-  async start(ctx: RequestContext, input: { fileName: string; csv: string; mapping: Record<string, string>; tags: string[]; onDuplicate: "update" | "skip"; leadSource?: string; defaultCountry?: string }) {
+  async start(
+    ctx: RequestContext,
+    input: { fileName: string; csv: string; mapping: Record<string, string>; tags: string[]; onDuplicate: "update" | "skip"; leadSource?: string; defaultCountry?: string; listId?: string | null; newListName?: string },
+  ) {
     const w = ws(ctx);
     await this.entitlements.assertFullAccess(w.billingAccountId, "Importing");
     const { headers, rows } = parseCsv(input.csv);
@@ -141,20 +144,31 @@ export class ImportsService {
     if (!targets.some((t) => ["email", "phone", "fullName", "firstName", "lastName"].includes(t))) {
       throw badRequest("Map at least one of: email, phone, or a name column.");
     }
+    // Imported people land in a lead list: one chosen, or a new one made for this file.
+    let listId: string | null = null;
+    if (input.listId) {
+      const list = await this.prisma.db.marketingList.findFirst({ where: { id: input.listId, workspaceId: w.id } });
+      if (!list) throw notFound("That list");
+      if (list.archivedAt) throw badRequest("That list is archived. Restore it, or choose another list.");
+      listId = list.id;
+    } else if (input.newListName?.trim()) {
+      const list = await this.prisma.db.marketingList.create({ data: { workspaceId: w.id, name: input.newListName.trim(), description: `Imported from ${input.fileName}`, createdById: actorId(ctx) } });
+      listId = list.id;
+    }
     const row = await this.prisma.db.import.create({
       data: {
         workspaceId: w.id,
         source: "csv",
         fileName: input.fileName,
         mapping: input.mapping,
-        options: { tags: input.tags, onDuplicate: input.onDuplicate, leadSource: input.leadSource ?? "", defaultCountry: input.defaultCountry ?? "" },
+        options: { tags: input.tags, onDuplicate: input.onDuplicate, leadSource: input.leadSource ?? "", defaultCountry: input.defaultCountry ?? "", listId },
         rows: rows as never,
         totalRows: rows.length,
         createdById: actorId(ctx),
       },
     });
     await this.queues.add("imports", "process", { workspaceId: w.id, importId: row.id }, { jobId: `import-${row.id}` });
-    return { id: row.id, totalRows: rows.length, status: row.status };
+    return { id: row.id, totalRows: rows.length, status: row.status, listId };
   }
 
   /**
@@ -167,7 +181,9 @@ export class ImportsService {
     const ws = await this.prisma.db.workspace.findUniqueOrThrow({ where: { id: workspaceId } });
     const rows = (imp.rows ?? []) as Row[];
     const mapping = imp.mapping as Record<string, string>;
-    const options = imp.options as { tags?: string[]; onDuplicate?: "update" | "skip"; leadSource?: string; defaultCountry?: string };
+    const options = imp.options as { tags?: string[]; onDuplicate?: "update" | "skip"; leadSource?: string; defaultCountry?: string; listId?: string | null };
+    const listId = options.listId ? ((await this.prisma.db.marketingList.findFirst({ where: { id: options.listId, workspaceId }, select: { id: true } }))?.id ?? null) : null;
+    const listSource = `Import: ${imp.fileName ?? "file"}`;
     const errors = [...((imp.errors ?? []) as { row: number; message: string }[])];
     let { processedRows, createdCount, updatedCount, skippedCount, failedCount } = imp;
     await this.prisma.db.import.update({ where: { id: imp.id, workspaceId }, data: { status: "processing", startedAt: imp.startedAt ?? new Date() } });
@@ -193,6 +209,13 @@ export class ImportsService {
             emitEvent: "lead.imported",
             createBlocked: !isUnlimited(remaining) && remaining <= 0 ? "Your plan's contact limit was reached; this row was not created." : undefined,
           });
+          // Skipped duplicates still join the list: the file named them as leads for it.
+          if (listId) {
+            await this.prisma.db.listMembership.createMany({
+              data: [{ workspaceId, listId, contactId: res.contactId, status: "subscribed", source: listSource, subscribedAt: new Date() }],
+              skipDuplicates: true,
+            });
+          }
           if (res.created) {
             createdCount += 1;
             remaining -= 1;

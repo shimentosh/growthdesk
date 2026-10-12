@@ -5,6 +5,7 @@ import { Prisma } from "../generated/prisma/client.js";
 import { PrismaService, type Tx } from "../prisma/prisma.service.js";
 import { EventsService } from "../core/events.service.js";
 import { ActivityService } from "../crm/activity.service.js";
+import { advanceStage } from "../crm/lifecycle.js";
 import { badRequest, conflict, notFound } from "../common/errors.js";
 import { actorId, ownershipScope, ws, type RequestContext } from "../common/context.js";
 import { DEFAULT_STAGES } from "../workspaces/workspaces.service.js";
@@ -211,6 +212,8 @@ export class PipelineService {
         },
       });
       await tx.dealStageChange.create({ data: { workspaceId: w.id, dealId: deal.id, fromStageId: null, toStageId: stage.id, changedById: actorId(ctx) } });
+      // An open deal puts the person in sales; a deal created already won makes them a contact.
+      await advanceStage(tx, w.id, [deal.contactId], deal.status === "won" ? "contact" : "sales");
       await this.activity.log({ workspaceId: w.id, dealId: deal.id, contactId: deal.contactId, companyId: deal.companyId, actorId: actorId(ctx), type: "deal.created", summary: `Deal "${deal.name}" created in ${stage.name}` }, tx);
       await this.events.emitIn(tx, { workspaceId: w.id, type: "deal.created", subjectType: "deal", subjectId: deal.id, actorId: actorId(ctx), payload: { stageId: stage.id, contactId: deal.contactId } });
       return deal.id;
@@ -272,6 +275,7 @@ export class PipelineService {
       }
       if (status === "won" && deal.contactId) {
         await tx.contact.updateMany({ where: { id: deal.contactId, workspaceId: w.id }, data: { status: "customer" } });
+        await advanceStage(tx, w.id, [deal.contactId], "contact");
       }
     });
     await this.events.kick();
@@ -317,6 +321,7 @@ export class PipelineService {
           createdById: actorId(ctx),
         },
       });
+      await advanceStage(tx, w.id, [m.contactId], m.status === "completed" ? "contact" : "sales");
       await this.activity.log({ workspaceId: w.id, contactId: m.contactId, dealId: m.dealId, actorId: actorId(ctx), type: "meeting.booked", summary: `Meeting booked: ${m.title}`, data: { startsAt: m.startsAt } }, tx);
       await this.events.emitIn(tx, { workspaceId: w.id, type: "meeting.booked", subjectType: "meeting", subjectId: m.id, actorId: actorId(ctx), payload: { contactId: m.contactId, dealId: m.dealId, startsAt: m.startsAt } });
       return m;
@@ -345,7 +350,10 @@ export class PipelineService {
         },
       });
       if (!res.count) throw notFound("That meeting");
-      return tx.meeting.findFirstOrThrow({ where: { id, workspaceId: w.id } });
+      const m = await tx.meeting.findFirstOrThrow({ where: { id, workspaceId: w.id } });
+      // A meeting that took place turns the person into a contact.
+      if (input.status === "completed") await advanceStage(tx, w.id, [m.contactId], "contact");
+      return m;
     });
   }
 }

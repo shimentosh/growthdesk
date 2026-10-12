@@ -22,7 +22,7 @@ import { cn } from "@/lib/cn";
 import { useApiQuery } from "@/lib/query";
 import { useFormat, useWorkspace } from "@/lib/session";
 import type { Paged } from "@/lib/types";
-import type { Template } from "@/lib/types/templates";
+import type { Template, TemplateCategory } from "@/lib/types/templates";
 
 export default function TemplatesPage() {
   return (
@@ -44,7 +44,7 @@ type Archived = (typeof ARCHIVED)[number];
 const TH = "h-9 px-3 text-left text-xs font-medium whitespace-nowrap text-text-3";
 const TD = "px-3 py-2 align-middle";
 
-/** Search, channel, archived and page live in the URL (?q=&channel=&archived=&page=&pageSize=). */
+/** Search, channel, category, archived and page live in the URL (?q=&channel=&category=&archived=&page=&pageSize=). */
 function useListParams() {
   const sp = useSearchParams();
   const router = useRouter();
@@ -56,6 +56,7 @@ function useListParams() {
   const state = {
     q: sp.get("q") ?? "",
     channel: ((CHANNELS as readonly string[]).includes(channel) ? channel : "") as Channel | "",
+    category: (sp.get("category") ?? "").slice(0, 60),
     archived: ((ARCHIVED as readonly string[]).includes(archived) ? archived : "false") as Archived,
     page: Number.isInteger(page) && page > 0 ? page : 1,
     pageSize: PAGE_SIZES.includes(pageSize) ? pageSize : 50,
@@ -66,6 +67,7 @@ function useListParams() {
     const p = new URLSearchParams();
     if (next.q.trim()) p.set("q", next.q.trim());
     if (next.channel) p.set("channel", next.channel);
+    if (next.category) p.set("category", next.category);
     if (next.archived !== "false") p.set("archived", next.archived);
     if (next.page > 1) p.set("page", String(next.page));
     if (next.pageSize !== 50) p.set("pageSize", String(next.pageSize));
@@ -84,11 +86,18 @@ function Templates() {
   const { state, update } = useListParams();
   const canWrite = ws.can("templates.write");
   const list = useApiQuery<Paged<Template>>(ws.key("templates", "list"), ws.path("/templates"), {
-    query: { q: state.q || undefined, channel: state.channel || undefined, archived: state.archived, page: state.page, pageSize: state.pageSize },
+    query: { q: state.q || undefined, channel: state.channel || undefined, category: state.category || undefined, archived: state.archived, page: state.page, pageSize: state.pageSize },
     keepPrevious: true,
   });
+  const categories = useApiQuery<TemplateCategory[]>(ws.key("templates", "categories"), ws.path("/templates/categories"), { staleTime: 30_000 });
+  const categoryOptions = [
+    { value: "", label: "All categories" },
+    ...(categories.data ?? []).map((c) => ({ value: c.category, label: `${c.category} (${c.count})` })),
+    // A category from the URL that no active template uses any more.
+    ...(state.category && !categories.data?.some((c) => c.category === state.category) ? [{ value: state.category, label: state.category }] : []),
+  ];
   const rows = list.data?.items ?? [];
-  const filtered = Boolean(state.q || state.channel || state.archived !== "false");
+  const filtered = Boolean(state.q || state.channel || state.category || state.archived !== "false");
   const create = canWrite ? (
     <Button variant="primary" icon={<Plus />} href={ws.href("/templates/new")}>
       New template
@@ -113,7 +122,7 @@ function Templates() {
         title="No templates match"
         description="Search looks at the name, category and subject."
         action={
-          <Button size="sm" icon={<X />} onClick={() => update({ q: "", channel: "", archived: "false" })}>
+          <Button size="sm" icon={<X />} onClick={() => update({ q: "", channel: "", category: "", archived: "false" })}>
             Clear filters
           </Button>
         }
@@ -134,11 +143,14 @@ function Templates() {
   } else {
     body = (
       <div className={cn("overflow-x-auto transition-opacity", list.isFetching && list.isPlaceholderData && "opacity-60")}>
-        <table className="w-full min-w-[720px] border-collapse text-sm">
+        <table className="w-full min-w-[860px] border-collapse text-sm">
           <thead className="border-b border-line bg-s-2">
             <tr>
               <th scope="col" className={TH}>
                 Name
+              </th>
+              <th scope="col" className={TH}>
+                Category
               </th>
               <th scope="col" className={TH}>
                 Channel
@@ -163,11 +175,29 @@ function Templates() {
                     <span className="min-w-0">
                       <span className="flex items-center gap-2">
                         <span className="truncate font-medium text-text group-hover:text-accent-hi">{t.name}</span>
+                        {t.fromLibrary && (
+                          <Badge tone="info" title="From the built-in template library">
+                            Library
+                          </Badge>
+                        )}
                         {t.archivedAt && <Badge>Archived</Badge>}
                       </span>
-                      {t.category && <span className="block truncate text-xs text-text-3">{t.category}</span>}
                     </span>
                   </Link>
+                </td>
+                <td className={cn(TD, "max-w-48 whitespace-nowrap")}>
+                  {t.category ? (
+                    <button
+                      type="button"
+                      title={`Show only ${t.category}`}
+                      onClick={() => update({ category: t.category })}
+                      className="max-w-full truncate text-left text-text-2 hover:text-accent-hi hover:underline"
+                    >
+                      {t.category}
+                    </button>
+                  ) : (
+                    <span className="text-text-3">—</span>
+                  )}
                 </td>
                 <td className={cn(TD, "whitespace-nowrap")}>
                   <Badge quiet>{labelOf(t.channel)}</Badge>
@@ -195,7 +225,7 @@ function Templates() {
       />
       <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center">
         <SearchInput value={state.q} onChange={(q) => update({ q })} placeholder="Search templates" className="sm:max-w-xs" />
-        <div className="grid grid-cols-2 gap-2 sm:flex">
+        <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap">
           <NativeSelect
             aria-label="Channel"
             className="sm:w-40"
@@ -203,6 +233,7 @@ function Templates() {
             onChange={(e) => update({ channel: e.target.value as Channel | "" })}
             options={[{ value: "", label: "All channels" }, ...CHANNELS.map((c) => ({ value: c, label: labelOf(c) }))]}
           />
+          <NativeSelect aria-label="Category" className="sm:w-52" value={state.category} onChange={(e) => update({ category: e.target.value })} options={categoryOptions} />
           <NativeSelect
             aria-label="Archived"
             className="sm:w-36"

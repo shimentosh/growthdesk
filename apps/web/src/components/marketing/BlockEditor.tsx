@@ -15,10 +15,22 @@ import {
   Link2,
   ListPlus,
   Plus,
+  X,
   Trash2,
   TriangleAlert,
 } from "lucide-react";
-import { designProblems, EmailBlock as EmailBlockSchema, newBlock, type EmailBlock, type EmailBlockType } from "@growthdesk/shared";
+import {
+  designProblems,
+  EmailBlock as EmailBlockSchema,
+  newBlock,
+  resolveTheme,
+  SOCIAL_NETWORKS,
+  type EmailBlock,
+  type EmailBlockType,
+  type EmailColumnItem,
+  type EmailTheme,
+  type SocialNetwork,
+} from "@growthdesk/shared";
 import { Button, IconButton } from "@/components/ui/Button";
 import { Callout } from "@/components/ui/Callout";
 import {
@@ -34,10 +46,10 @@ import {
 import { EmptyState } from "@/components/ui/EmptyState";
 import { Field } from "@/components/ui/Field";
 import { ENTITY } from "@/components/ui/icons";
-import { Input, Textarea } from "@/components/ui/Input";
+import { Input, NativeSelect, Textarea } from "@/components/ui/Input";
 import { focusAt, spliceToken } from "@/components/templates/VariableMenu";
-import { BLOCK_META, BLOCK_TYPES, BlockTile, blockSummary, makeBlockId } from "@/components/marketing/designs/blocks";
-import { Choice, TokenMenu } from "@/components/marketing/designs/controls";
+import { BLOCK_META, BLOCK_TYPES, BlockTile, blockSummary, makeBlockId, problemBlockIndex, SOCIAL_LABEL } from "@/components/marketing/designs/blocks";
+import { Choice, ColorField, Slider, TokenMenu } from "@/components/marketing/designs/controls";
 import { cn } from "@/lib/cn";
 
 /*
@@ -49,21 +61,22 @@ import { cn } from "@/lib/cn";
  * that expands into the block's fields. Field shapes follow the shared
  * EmailBlock schema, and its messages show under the field they belong to;
  * the design's send blockers (designProblems) sit on top, each one a link to
- * its block.
+ * its block. `theme` (optional) only sets what the "default" colours look like.
  */
-export function BlockEditor({ blocks, onChange, disabled }: { blocks: EmailBlock[]; onChange: (blocks: EmailBlock[]) => void; disabled?: boolean }) {
+export function BlockEditor({ blocks, onChange, disabled, theme }: { blocks: EmailBlock[]; onChange: (blocks: EmailBlock[]) => void; disabled?: boolean; theme?: EmailTheme }) {
   // A short design opens fully; a long one starts as a tidy list of summaries.
   const [open, setOpen] = useState<Set<string>>(() => new Set(blocks.length <= 3 ? blocks.map((b) => b.id) : []));
   const reveal = useRef<string | null>(null);
   const cards = useRef(new Map<string, HTMLLIElement>());
 
   const problems = useMemo(() => designProblems(blocks), [blocks]);
-  // "Button 3 needs…" → block index 2.
+  const resolved = useMemo(() => resolveTheme(theme), [theme]);
+  // "Button 3 needs…" → block index 2 (a block can have several).
   const flagged = useMemo(() => {
-    const m = new Map<number, string>();
+    const m = new Map<number, string[]>();
     for (const p of problems) {
-      const hit = /^(?:Button|Image) (\d+) /.exec(p);
-      if (hit) m.set(Number(hit[1]) - 1, p);
+      const at = problemBlockIndex(p);
+      if (at !== null) m.set(at, [...(m.get(at) ?? []), p]);
     }
     return m;
   }, [problems]);
@@ -124,11 +137,11 @@ export function BlockEditor({ blocks, onChange, disabled }: { blocks: EmailBlock
         <Callout tone="warn" title={problems.length === 1 ? "One thing to fix before this can be sent" : `${problems.length} things to fix before this can be sent`}>
           <ul className="mt-1 flex flex-col gap-0.5 text-xs">
             {problems.map((p) => {
-              const at = /^(?:Button|Image) (\d+) /.exec(p);
+              const at = problemBlockIndex(p);
               return (
                 <li key={p}>
-                  {at ? (
-                    <button type="button" onClick={() => showBlock(Number(at[1]) - 1)} className="text-left underline decoration-line-strong underline-offset-2 hover:text-text">
+                  {at !== null ? (
+                    <button type="button" onClick={() => showBlock(at)} className="text-left underline decoration-line-strong underline-offset-2 hover:text-text">
                       {p}
                     </button>
                   ) : (
@@ -160,7 +173,8 @@ export function BlockEditor({ blocks, onChange, disabled }: { blocks: EmailBlock
               index={i}
               count={blocks.length}
               expanded={open.has(b.id)}
-              problem={flagged.get(i)}
+              problems={flagged.get(i)}
+              theme={resolved}
               disabled={disabled}
               cardRef={(el) => {
                 if (el) cards.current.set(b.id, el);
@@ -219,7 +233,8 @@ function BlockCard({
   index,
   count,
   expanded,
-  problem,
+  problems = [],
+  theme,
   disabled,
   cardRef,
   onToggle,
@@ -233,7 +248,8 @@ function BlockCard({
   index: number;
   count: number;
   expanded: boolean;
-  problem?: string;
+  problems?: string[];
+  theme: Theme;
   disabled?: boolean;
   cardRef: (el: HTMLLIElement | null) => void;
   onToggle: () => void;
@@ -246,14 +262,18 @@ function BlockCard({
   const bodyId = useId();
   const meta = BLOCK_META[block.type];
   const hasFields = block.type !== "divider";
-  // The shared schema's messages, by field ("url" → "Use a full link starting with https://").
+  // The shared schema's messages, by field ("url" → "Use a full link starting with https://") and by full path ("items.1.linkUrl").
   const errors = useMemo(() => {
     const parsed = EmailBlockSchema.safeParse(block);
     const out: Record<string, string> = {};
-    if (!parsed.success) for (const issue of parsed.error.issues) out[String(issue.path[0] ?? "")] ??= issue.message;
+    if (!parsed.success)
+      for (const issue of parsed.error.issues) {
+        out[String(issue.path[0] ?? "")] ??= issue.message;
+        if (issue.path.length > 1) out[issue.path.join(".")] ??= issue.message;
+      }
     return out;
   }, [block]);
-  const invalid = Boolean(problem) || Object.keys(errors).length > 0;
+  const invalid = problems.length > 0 || Object.keys(errors).length > 0;
 
   return (
     <li ref={cardRef} className={cn("min-w-0 scroll-my-4 rounded-lg border bg-panel shadow-card transition-colors", invalid ? "border-warn-edge" : "border-line")}>
@@ -308,7 +328,7 @@ function BlockCard({
       </div>
       {hasFields && expanded && (
         <fieldset id={bodyId} disabled={disabled} className="flex min-w-0 flex-col gap-3 border-t border-line px-3 pt-3 pb-3.5">
-          <BlockFields block={block} errors={errors} problem={problem} disabled={disabled} onChange={onChange} />
+          <BlockFields block={block} errors={errors} problems={problems} theme={theme} disabled={disabled} onChange={onChange} />
         </fieldset>
       )}
     </li>
@@ -321,6 +341,18 @@ const ALIGN = [
   { value: "right" as const, label: "Align right", icon: <AlignRight />, iconOnly: true },
 ];
 
+type Theme = ReturnType<typeof resolveTheme>;
+
+/** A full link, as designProblems wants it (https://host.tld/…, mailto: or a token). */
+const FULL_URL = /^(https?:\/\/[^/\s]+\.[^\s]+|mailto:\S+|\{\{.+\}\})$/i;
+
+/** Black or white, whichever reads better on `bg` (as the renderer picks it). */
+function contrastOn(bg: string): string {
+  const n = parseInt(bg.slice(1), 16);
+  const [r, g, b] = [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+  return (r * 299 + g * 587 + b * 114) / 1000 > 150 ? "#1d1d1f" : "#ffffff";
+}
+
 /** Button colours that read well on white; "Default" leaves it to the email's accent. */
 const SWATCHES = [
   { value: "#1d1d1f", label: "Graphite" },
@@ -329,29 +361,31 @@ const SWATCHES = [
   { value: "#d70015", label: "Red" },
   { value: "#8944ab", label: "Purple" },
 ];
-const DEFAULT_BUTTON = "#0071e3";
 
 type Errors = Record<string, string>;
 
 function BlockFields({
   block: b,
   errors,
-  problem,
+  problems,
+  theme: t,
   disabled,
   onChange,
 }: {
   block: EmailBlock;
   errors: Errors;
-  problem?: string;
+  problems: string[];
+  theme: Theme;
   disabled?: boolean;
   onChange: (patch: Partial<EmailBlock>) => void;
 }) {
   const textRef = useRef<HTMLTextAreaElement>(null);
   const headingRef = useRef<HTMLInputElement>(null);
   const labelRef = useRef<HTMLInputElement>(null);
+  const problem = problems[0];
 
   /** Drops a token at the caret of `el`, whose value is `value` and lives in `key`. */
-  const insertToken = (el: HTMLInputElement | HTMLTextAreaElement | null, key: "text" | "label", value: string, token: string) => {
+  const insertToken = (el: HTMLInputElement | HTMLTextAreaElement | null, key: string, value: string, token: string) => {
     const next = spliceToken(el, value, token);
     onChange({ [key]: next.value } as Partial<EmailBlock>);
     focusAt(el, next.caret);
@@ -424,7 +458,7 @@ function BlockFields({
             </Field>
             <Field label="Colour" error={errors.color}>
               <div role="group" aria-label="Button colour" className="flex h-8 items-center gap-1.5">
-                <Swatch colour={DEFAULT_BUTTON} label="Default (blue)" selected={!colour} onClick={() => onChange({ color: undefined })} />
+                <Swatch colour={t.accent} label="Theme accent" selected={!colour} onClick={() => onChange({ color: undefined })} />
                 {SWATCHES.map((s) => (
                   <Swatch key={s.value} colour={s.value} label={s.label} selected={colour?.toLowerCase() === s.value} onClick={() => onChange({ color: s.value })} />
                 ))}
@@ -435,12 +469,12 @@ function BlockFields({
                     colour && !SWATCHES.some((s) => s.value === colour.toLowerCase()) && "border-accent text-text",
                   )}
                 >
-                  <span aria-hidden className="size-4 rounded-full border border-black/10" style={{ background: colour ?? DEFAULT_BUTTON }} />
-                  <span className="font-mono tabular-nums">{(colour ?? DEFAULT_BUTTON).toLowerCase()}</span>
+                  <span aria-hidden className="size-4 rounded-full border border-black/10" style={{ background: colour ?? t.accent }} />
+                  <span className="font-mono tabular-nums">{(colour ?? t.accent).toLowerCase()}</span>
                   <input
                     type="color"
                     aria-label="Custom colour"
-                    value={colour ?? DEFAULT_BUTTON}
+                    value={colour ?? t.accent}
                     onChange={(e) => onChange({ color: e.target.value })}
                     className="absolute inset-0 size-full cursor-pointer opacity-0 disabled:cursor-not-allowed"
                   />
@@ -485,6 +519,321 @@ function BlockFields({
           <Slider value={b.height} min={4} max={120} step={4} unit="px" label="Spacer height" onChange={(height) => onChange({ height })} />
         </Field>
       );
+
+    case "header":
+      return (
+        <>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <Field label="Brand name" error={errors.brand} hint="Shown as a wordmark when there is no logo, and as the logo's description.">
+              <Input ref={headingRef} value={b.brand} maxLength={80} onChange={(e) => onChange({ brand: e.target.value })} placeholder="Acme" />
+            </Field>
+            <Field label="Tagline" error={errors.tagline} hint="Optional. A short line under the brand.">
+              <Input value={b.tagline} maxLength={120} onChange={(e) => onChange({ tagline: e.target.value })} placeholder="Monthly product news" />
+            </Field>
+          </div>
+          <Field label="Logo URL" error={errors.logo} hint="Optional. A public https:// image about 32 px tall; a PNG with a transparent background works best.">
+            <Input type="url" inputMode="url" value={b.logo} maxLength={2000} onChange={(e) => onChange({ logo: e.target.value })} placeholder="https://example.com/logo.png" />
+          </Field>
+          <div className="flex flex-wrap gap-x-5 gap-y-3">
+            <Field label="Alignment">
+              <Choice aria-label="Header alignment" value={b.align} disabled={disabled} onChange={(align) => onChange({ align })} options={ALIGN} />
+            </Field>
+            <Field label="Background" error={errors.background}>
+              <ColorField label="Header background" value={b.background} fallback={t.surface} disabled={disabled} onChange={(background) => onChange({ background })} />
+            </Field>
+            <Field label="Text colour" error={errors.color}>
+              <ColorField
+                label="Header text colour"
+                value={b.color}
+                fallback={b.background ? contrastOn(b.background) : t.heading}
+                disabled={disabled}
+                onChange={(color) => onChange({ color })}
+              />
+            </Field>
+          </div>
+        </>
+      );
+
+    case "hero": {
+      const bg = b.background ?? t.tint;
+      return (
+        <>
+          <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,2fr)]">
+            <Field label="Eyebrow" error={errors.eyebrow} hint="Optional. A small label above the title.">
+              <Input value={b.eyebrow} maxLength={80} onChange={(e) => onChange({ eyebrow: e.target.value })} placeholder="New" />
+            </Field>
+            <Field label="Title" error={errors.title} labelAction={!disabled && <TokenMenu onPick={(tok) => insertToken(headingRef.current, "title", b.title, tok)} />}>
+              <Input ref={headingRef} value={b.title} maxLength={200} onChange={(e) => onChange({ title: e.target.value })} placeholder="A big idea, said simply" />
+            </Field>
+          </div>
+          <Field
+            label="Text"
+            error={errors.text}
+            labelAction={!disabled && <TextToolbar el={textRef} value={b.text} onChange={(text) => onChange({ text })} onToken={(tok) => insertToken(textRef.current, "text", b.text, tok)} />}
+          >
+            <Textarea ref={textRef} rows={3} value={b.text} maxLength={2000} onChange={(e) => onChange({ text: e.target.value })} placeholder="One or two lines on why it matters." />
+          </Field>
+          <Field label="Image URL" error={errors.image} hint="Optional. Shown under the text, full width.">
+            <Input type="url" inputMode="url" value={b.image} maxLength={2000} onChange={(e) => onChange({ image: e.target.value })} placeholder="https://example.com/hero.jpg" />
+          </Field>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <Field label="Button label" error={errors.buttonLabel} hint="Leave empty for no button.">
+              <Input ref={labelRef} value={b.buttonLabel} maxLength={80} onChange={(e) => onChange({ buttonLabel: e.target.value })} placeholder="Find out more" />
+            </Field>
+            <Field label="Button link" error={errors.buttonUrl ?? (problem ? "Use a full link, like https://example.com/offer." : undefined)}>
+              <Input type="url" inputMode="url" value={b.buttonUrl} maxLength={2000} onChange={(e) => onChange({ buttonUrl: e.target.value })} placeholder="https://example.com/offer" />
+            </Field>
+          </div>
+          <div className="flex flex-wrap gap-x-5 gap-y-3">
+            <Field label="Alignment">
+              <Choice aria-label="Hero alignment" value={b.align} disabled={disabled} onChange={(align) => onChange({ align })} options={ALIGN} />
+            </Field>
+            <Field label="Background" error={errors.background}>
+              <ColorField label="Hero background" value={b.background} fallback={t.tint} disabled={disabled} onChange={(background) => onChange({ background })} />
+            </Field>
+            <Field label="Text colour" error={errors.color}>
+              <ColorField label="Hero text colour" value={b.color} fallback={contrastOn(bg)} disabled={disabled} onChange={(color) => onChange({ color })} />
+            </Field>
+          </div>
+        </>
+      );
+    }
+
+    case "columns": {
+      const setItem = (j: number, patch: Partial<EmailColumnItem>) => onChange({ items: b.items.map((it, k) => (k === j ? { ...it, ...patch } : it)) });
+      const setCount = (n: 2 | 3) => {
+        if (n === b.items.length) return;
+        onChange({ items: n < b.items.length ? b.items.slice(0, n) : [...b.items, { image: "", title: "Another point", text: "A short line about it.", linkLabel: "", linkUrl: "" }] });
+      };
+      return (
+        <>
+          <div className="flex flex-wrap gap-x-5 gap-y-3">
+            <Field label="Columns" hint="They stack on phones.">
+              <Choice<2 | 3>
+                aria-label="Number of columns"
+                value={b.items.length === 3 ? 3 : 2}
+                disabled={disabled}
+                onChange={setCount}
+                options={[
+                  { value: 2, label: "Two" },
+                  { value: 3, label: "Three" },
+                ]}
+              />
+            </Field>
+            <Field label="Alignment">
+              <Choice aria-label="Column alignment" value={b.align} disabled={disabled} onChange={(align) => onChange({ align })} options={ALIGN} />
+            </Field>
+          </div>
+          {b.items.map((it, j) => {
+            const linkProblem = problems.some((p) => p.startsWith(`Column ${j + 1} in block`));
+            return (
+              <div key={j} className="flex flex-col gap-3 rounded-md border border-line bg-s-2 p-3">
+                <p className="text-xs font-semibold text-text-2">Column {j + 1}</p>
+                <Field label="Title" error={errors[`items.${j}.title`]}>
+                  <Input value={it.title} maxLength={200} onChange={(e) => setItem(j, { title: e.target.value })} placeholder="A feature or product" />
+                </Field>
+                <Field label="Text" error={errors[`items.${j}.text`]}>
+                  <Textarea rows={2} value={it.text} maxLength={2000} onChange={(e) => setItem(j, { text: e.target.value })} placeholder="A short line about it." />
+                </Field>
+                <Field label="Image URL" error={errors[`items.${j}.image`]} hint="Optional.">
+                  <Input type="url" inputMode="url" value={it.image} maxLength={2000} onChange={(e) => setItem(j, { image: e.target.value })} placeholder="https://example.com/photo.jpg" />
+                </Field>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <Field label="Link label" error={errors[`items.${j}.linkLabel`]} hint="Optional.">
+                    <Input value={it.linkLabel} maxLength={80} onChange={(e) => setItem(j, { linkLabel: e.target.value })} placeholder="Read more" />
+                  </Field>
+                  <Field label="Link" error={errors[`items.${j}.linkUrl`] ?? (linkProblem ? "Use a full link, like https://example.com/page." : undefined)}>
+                    <Input type="url" inputMode="url" value={it.linkUrl} maxLength={2000} onChange={(e) => setItem(j, { linkUrl: e.target.value })} placeholder="https://example.com/page" />
+                  </Field>
+                </div>
+              </div>
+            );
+          })}
+        </>
+      );
+    }
+
+    case "quote":
+      return (
+        <>
+          <Field label="Quote" error={errors.text}>
+            <Textarea ref={textRef} rows={3} value={b.text} maxLength={1000} onChange={(e) => onChange({ text: e.target.value })} placeholder="This changed how our team works." />
+          </Field>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <Field label="Who said it" error={errors.author}>
+              <Input value={b.author} maxLength={120} onChange={(e) => onChange({ author: e.target.value })} placeholder="Jamie Lee" />
+            </Field>
+            <Field label="Role" error={errors.role} hint="Optional.">
+              <Input value={b.role} maxLength={160} onChange={(e) => onChange({ role: e.target.value })} placeholder="Head of Sales, Acme" />
+            </Field>
+          </div>
+        </>
+      );
+
+    case "callout":
+      return (
+        <>
+          <Field label="Title" error={errors.title} labelAction={!disabled && <TokenMenu onPick={(tok) => insertToken(headingRef.current, "title", b.title, tok)} />}>
+            <Input ref={headingRef} value={b.title} maxLength={200} onChange={(e) => onChange({ title: e.target.value })} placeholder="Limited time" />
+          </Field>
+          <Field
+            label="Text"
+            error={errors.text}
+            labelAction={!disabled && <TextToolbar el={textRef} value={b.text} onChange={(text) => onChange({ text })} onToken={(tok) => insertToken(textRef.current, "text", b.text, tok)} />}
+          >
+            <Textarea ref={textRef} rows={3} value={b.text} maxLength={2000} onChange={(e) => onChange({ text: e.target.value })} placeholder="Use code **WELCOME20** before Friday." />
+          </Field>
+          <div className="flex flex-wrap gap-x-5 gap-y-3">
+            <Field label="Alignment">
+              <Choice aria-label="Callout alignment" value={b.align} disabled={disabled} onChange={(align) => onChange({ align })} options={ALIGN} />
+            </Field>
+            <Field label="Background" error={errors.background}>
+              <ColorField label="Callout background" value={b.background} fallback={t.tint} disabled={disabled} onChange={(background) => onChange({ background })} />
+            </Field>
+          </div>
+        </>
+      );
+
+    case "list": {
+      const setItems = (items: string[]) => onChange({ items });
+      const moveItem = (j: number, by: -1 | 1) => {
+        const a = b.items[j];
+        const c = b.items[j + by];
+        if (a === undefined || c === undefined) return;
+        setItems(b.items.map((x, k) => (k === j ? c : k === j + by ? a : x)));
+      };
+      return (
+        <>
+          <Field label="Style">
+            <Choice
+              aria-label="List style"
+              value={b.ordered ? "ordered" : "bullets"}
+              disabled={disabled}
+              onChange={(v) => onChange({ ordered: v === "ordered" })}
+              options={[
+                { value: "bullets", label: "Bullets" },
+                { value: "ordered", label: "Numbered" },
+              ]}
+            />
+          </Field>
+          <Group
+            label="Items"
+            error={errors.items}
+            hint={
+              <>
+                Each item takes <code className="font-mono">**bold**</code>, <code className="font-mono">*italic*</code> and links. Enter adds the next item.
+              </>
+            }
+          >
+            <ol className="flex flex-col gap-1.5">
+              {b.items.map((item, j) => (
+                <li key={j} className="flex items-center gap-1">
+                  <span aria-hidden className="w-5 shrink-0 text-right text-xs text-text-3 tabular-nums">
+                    {b.ordered ? `${j + 1}.` : "•"}
+                  </span>
+                  <Input
+                    aria-label={`Item ${j + 1}`}
+                    value={item}
+                    maxLength={500}
+                    invalid={Boolean(errors[`items.${j}`])}
+                    onChange={(e) => setItems(b.items.map((x, k) => (k === j ? e.target.value : x)))}
+                    onKeyDown={(e) => {
+                      // Enter adds the next item, like a word processor.
+                      if (e.key === "Enter" && !e.nativeEvent.isComposing && b.items.length < 12) {
+                        e.preventDefault();
+                        setItems([...b.items.slice(0, j + 1), "", ...b.items.slice(j + 1)]);
+                        const row = e.currentTarget.closest("li");
+                        requestAnimationFrame(() => row?.nextElementSibling?.querySelector("input")?.focus());
+                      }
+                    }}
+                    placeholder="A point worth making"
+                    className="min-w-0 flex-1"
+                  />
+                  {!disabled && (
+                    <span className="flex shrink-0 items-center">
+                      <IconButton size="sm" label={`Move item ${j + 1} up`} icon={<ArrowUp />} disabled={j === 0} onClick={() => moveItem(j, -1)} />
+                      <IconButton size="sm" label={`Move item ${j + 1} down`} icon={<ArrowDown />} disabled={j === b.items.length - 1} onClick={() => moveItem(j, 1)} />
+                      <IconButton size="sm" label={`Remove item ${j + 1}`} icon={<X />} disabled={b.items.length <= 1} onClick={() => setItems(b.items.filter((_, k) => k !== j))} />
+                    </span>
+                  )}
+                </li>
+              ))}
+            </ol>
+          </Group>
+          {!disabled && (
+            <div>
+              <Button size="sm" icon={<Plus />} disabled={b.items.length >= 12} title={b.items.length >= 12 ? "A list holds up to 12 items." : undefined} onClick={() => setItems([...b.items, ""])}>
+                Add item
+              </Button>
+            </div>
+          )}
+        </>
+      );
+    }
+
+    case "social": {
+      const setLinks = (links: typeof b.links) => onChange({ links });
+      const used = new Set(b.links.map((l) => l.network));
+      const nextNetwork = SOCIAL_NETWORKS.find((n) => !used.has(n)) ?? "website";
+      return (
+        <>
+          <Group label="Links" error={errors.links} hint="Each one shows as a small labelled button.">
+            {b.links.length === 0 ? (
+              <p className="text-xs text-text-3">No links yet. Add your website or a social profile.</p>
+            ) : (
+              <ul className="flex flex-col gap-1.5">
+                {b.links.map((l, j) => {
+                  const err = errors[`links.${j}.url`] ?? (problem && !FULL_URL.test(l.url.trim()) ? "Use a full link, like https://linkedin.com/company/acme." : undefined);
+                  return (
+                    <li key={j} className="flex flex-col gap-1">
+                      <div className="flex items-center gap-1.5">
+                        <NativeSelect
+                          aria-label={`Network for link ${j + 1}`}
+                          className="w-36 shrink-0"
+                          value={l.network}
+                          disabled={disabled}
+                          onChange={(e) => setLinks(b.links.map((x, k) => (k === j ? { ...x, network: e.target.value as SocialNetwork } : x)))}
+                          options={SOCIAL_NETWORKS.map((n) => ({ value: n, label: SOCIAL_LABEL[n] }))}
+                        />
+                        <Input
+                          type="url"
+                          inputMode="url"
+                          aria-label={`${SOCIAL_LABEL[l.network]} link`}
+                          value={l.url}
+                          maxLength={2000}
+                          invalid={Boolean(err)}
+                          onChange={(e) => setLinks(b.links.map((x, k) => (k === j ? { ...x, url: e.target.value } : x)))}
+                          placeholder="https://"
+                          className="min-w-0 flex-1"
+                        />
+                        {!disabled && <IconButton size="sm" label={`Remove ${SOCIAL_LABEL[l.network]} link`} icon={<X />} onClick={() => setLinks(b.links.filter((_, k) => k !== j))} />}
+                      </div>
+                      {err && <p className="pl-39 text-xs text-bad-ink">{err}</p>}
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+          </Group>
+          <div className="flex flex-wrap items-end gap-x-5 gap-y-3">
+            {!disabled && (
+              <Button
+                size="sm"
+                icon={<Plus />}
+                disabled={b.links.length >= 8}
+                title={b.links.length >= 8 ? "Up to 8 links." : undefined}
+                onClick={() => setLinks([...b.links, { network: nextNetwork, url: "https://" }])}
+              >
+                Add link
+              </Button>
+            )}
+            <Field label="Alignment">
+              <Choice aria-label="Social links alignment" value={b.align} disabled={disabled} onChange={(align) => onChange({ align })} options={ALIGN} />
+            </Field>
+          </div>
+        </>
+      );
+    }
 
     case "divider":
       return null;
@@ -542,6 +891,17 @@ function ToolbarButton({ label, icon, onClick }: { label: string; icon: ReactNod
   );
 }
 
+/** Like Field, for a label over several controls (each row names itself): no shared id or invalid state. */
+function Group({ label, hint, error, children }: { label: string; hint?: ReactNode; error?: string; children: ReactNode }) {
+  return (
+    <div role="group" aria-label={label} className="flex min-w-0 flex-col gap-1.5">
+      <p className="text-xs font-medium text-text-2">{label}</p>
+      {children}
+      {(error || hint) && <p className={cn("text-xs", error ? "text-bad-ink" : "text-text-3")}>{error || hint}</p>}
+    </div>
+  );
+}
+
 function Swatch({ colour, label, selected, onClick }: { colour: string; label: string; selected: boolean; onClick: () => void }) {
   return (
     <button
@@ -556,26 +916,5 @@ function Swatch({ colour, label, selected, onClick }: { colour: string; label: s
         selected ? "ring-2 ring-accent ring-offset-2 ring-offset-panel" : "hover:ring-2 hover:ring-line-strong hover:ring-offset-1 hover:ring-offset-panel",
       )}
     />
-  );
-}
-
-function Slider({ value, min, max, step, unit, label, onChange }: { value: number; min: number; max: number; step: number; unit: string; label: string; onChange: (v: number) => void }) {
-  return (
-    <div className="flex items-center gap-3">
-      <input
-        type="range"
-        aria-label={label}
-        min={min}
-        max={max}
-        step={step}
-        value={value}
-        onChange={(e) => onChange(Number(e.target.value))}
-        className="h-8 min-w-0 flex-1 accent-accent disabled:opacity-60"
-      />
-      <span className="w-14 shrink-0 text-right text-sm text-text-2 tabular-nums">
-        {value}
-        <span className="text-text-3"> {unit}</span>
-      </span>
-    </div>
   );
 }

@@ -24,12 +24,12 @@ const contacts = (n: number) => `${formatNumber(n)} contact${n === 1 ? "" : "s"}
 const skippedTotal = (r: AddMembersResult) => SKIP_REASONS.reduce((sum, k) => sum + (r.skipped[k] ?? 0), 0);
 
 /**
- * Subscribe contacts to a marketing list (POST marketing/lists/:id/members).
- * Give it a list, contacts, both or neither: whatever is missing is chosen in
- * the dialog. The answer says who was added and why anyone was left out.
- * People without recorded consent can be added on a second pass once the
- * person adding them confirms they agreed, and says where; that is recorded
- * as the contact's consent.
+ * Add contacts to a lead list (POST marketing/lists/:id/members). Give it a
+ * list, contacts, both or neither: whatever is missing is chosen in the
+ * dialog. The answer says who was added and why anyone was left out.
+ * Consent is not needed to join a lead list; when the person adding them
+ * ticks "I have consent" and says where, it is recorded on each contact, and
+ * only people with recorded consent receive marketing email.
  */
 export function AddToListModal({
   open,
@@ -70,6 +70,8 @@ export function AddToListModal({
   const options = (lists.data ?? []).filter((l) => l.id === fixedListId || !excludeListIds.includes(l.id));
   const targetName = listName ?? lists.data?.find((l) => l.id === listId)?.name ?? "the list";
 
+  const [withConsent, setWithConsent] = useState(false);
+
   const add = useApiMutation<AddMembersResult, AddBody>({
     path: () => mk.path(`/lists/${listId}/members`),
     // Lists, members and contact memberships live under the marketing key; consent shows on the contact.
@@ -90,6 +92,7 @@ export function AddToListModal({
     setAgreed(false);
     setSource("");
     setSourceError(null);
+    setWithConsent(false);
     add.reset();
   };
   const change = (next: boolean) => {
@@ -103,7 +106,11 @@ export function AddToListModal({
   const submit = (e: FormEvent) => {
     e.preventDefault();
     if (!listId || !ids.length) return;
-    add.mutate({ contactIds: ids });
+    if (withConsent && !source.trim()) {
+      setSourceError("Say where they agreed, e.g. the signup form or the event.");
+      return;
+    }
+    add.mutate({ contactIds: ids, ...(withConsent ? { consent: { confirmed: true as const, source: source.trim() } } : {}) });
   };
   const confirmConsent = (e: FormEvent) => {
     e.preventDefault();
@@ -128,7 +135,7 @@ export function AddToListModal({
         {!fixedListId &&
           (noLists ? (
             <Callout tone="info" title={lists.data?.length ? "Already on every list" : "No lists yet"}>
-              {lists.data?.length ? "There is no other active list to add to." : "Create a list under Marketing → Lists first."}
+              {lists.data?.length ? "There is no other active list to add to." : "Create a list under Campaigns → Lead lists first."}
             </Callout>
           ) : (
             <Field label="List" required error={lists.isError ? `Lists could not be loaded: ${lists.error.message}` : undefined}>
@@ -178,7 +185,30 @@ export function AddToListModal({
             )}
           </Field>
         )}
-        <p className="text-xs text-text-3">Only people with recorded marketing consent are added. Anyone else is listed afterwards, with the reason.</p>
+        <div className="flex flex-col gap-2 rounded-md border border-line px-3 py-2.5">
+          <Checkbox
+            checked={withConsent}
+            onCheckedChange={(c) => {
+              setWithConsent(c);
+              setSourceError(null);
+            }}
+            label="I have consent for marketing email"
+            description="Optional. Anyone can join a lead list for outreach; only people with recorded consent receive marketing campaigns."
+          />
+          {withConsent && (
+            <Field label="Where did they agree?" required error={sourceError ?? fieldErrors["consent.source"]}>
+              <Input
+                value={source}
+                maxLength={200}
+                placeholder="Signup form at the October webinar"
+                onChange={(e) => {
+                  setSource(e.target.value);
+                  setSourceError(null);
+                }}
+              />
+            </Field>
+          )}
+        </div>
       </form>
     );
     footer = (
@@ -198,7 +228,7 @@ export function AddToListModal({
         {apiError && <FormError error={apiError.message} />}
         <ul className="flex flex-col divide-y divide-line rounded-md border border-line">
           <ResultRow icon={<CircleCheck />} tone="ok" label={`Added to ${targetName}`} value={result.added} />
-          {result.alreadyMember > 0 && <ResultRow icon={<ListChecks />} label="Already subscribed" value={result.alreadyMember} />}
+          {result.alreadyMember > 0 && <ResultRow icon={<ListChecks />} label="Already on the list" value={result.alreadyMember} />}
           {skipped.map((k) => (
             <ResultRow key={k} icon={<CircleMinus />} tone={k === "no_consent" ? "warn" : undefined} label={`Skipped: ${SKIP_LABEL[k]}`} value={result.skipped[k]} />
           ))}
@@ -271,8 +301,8 @@ export function AddToListModal({
         result
           ? `${people(ids.length)} checked against ${targetName}.`
           : fixedContactIds
-            ? `Subscribe ${contactsLabel ?? contacts(fixedContactIds.length)} to a marketing list.`
-            : "They receive the campaigns sent to this list."
+            ? `Add ${contactsLabel ?? contacts(fixedContactIds.length)} to a lead list.`
+            : "They can be enrolled in outreach campaigns sent to this list."
       }
       footer={footer}
     >

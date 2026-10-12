@@ -1,44 +1,52 @@
-import { Inject, Injectable } from "@nestjs/common";
+import { Injectable } from "@nestjs/common";
 import nodemailer, { type Transporter } from "nodemailer";
-import { APP_CONFIG, type AppConfig } from "../config/config.js";
+import { PlatformSettingsService, type SmtpConfig } from "../core/platform-settings.service.js";
 import { type OutgoingMail, type PlatformMailProvider, ProviderError, type SendResult } from "./provider.js";
 
 /*
- * Platform mail over SMTP_* (Mailpit in development; any relay in
- * production). The default provider, and the fallback when Resend is not
- * configured or refuses our key. SMTP has no idempotency: a retry after a
- * dropped connection can deliver twice, so only clear 4xx answers and
- * connection failures before the message was accepted are retried.
+ * Platform mail over SMTP: the server saved in admin → Email settings, else
+ * SMTP_* (Mailpit in development). The default provider, and the fallback
+ * when Resend is not configured or refuses our key. SMTP has no idempotency:
+ * a retry after a dropped connection can deliver twice, so only clear 4xx
+ * answers and connection failures before the message was accepted are retried.
  */
 @Injectable()
 export class SmtpProvider implements PlatformMailProvider {
   readonly id = "smtp" as const;
-  private transport: Transporter | null = null;
+  /** The pooled transport and the settings it was built from; rebuilt when an admin changes them. */
+  private transport: { key: string; transporter: Transporter } | null = null;
 
-  constructor(@Inject(APP_CONFIG) private readonly config: AppConfig) {}
+  constructor(private readonly settings: PlatformSettingsService) {}
 
-  private transporter(): Transporter {
-    if (!this.transport) {
-      this.transport = nodemailer.createTransport({
-        host: this.config.SMTP_HOST,
-        port: this.config.SMTP_PORT,
-        secure: this.config.SMTP_SECURE,
-        auth: this.config.SMTP_USER ? { user: this.config.SMTP_USER, pass: this.config.SMTP_PASSWORD ?? "" } : undefined,
-        connectionTimeout: 10_000,
-        greetingTimeout: 10_000,
-        socketTimeout: 30_000,
-      });
+  private async transporter(): Promise<Transporter> {
+    const c: SmtpConfig = await this.settings.smtp();
+    const key = JSON.stringify([c.host, c.port, c.secure, c.user, c.password]);
+    if (this.transport?.key !== key) {
+      this.transport?.transporter.close();
+      this.transport = {
+        key,
+        transporter: nodemailer.createTransport({
+          host: c.host,
+          port: c.port,
+          secure: c.secure,
+          auth: c.user ? { user: c.user, pass: c.password } : undefined,
+          connectionTimeout: 10_000,
+          greetingTimeout: 10_000,
+          socketTimeout: 30_000,
+        }),
+      };
     }
-    return this.transport;
+    return this.transport.transporter;
   }
 
-  describe() {
-    return { host: this.config.SMTP_HOST, port: this.config.SMTP_PORT, secure: this.config.SMTP_SECURE, authenticated: Boolean(this.config.SMTP_USER) };
+  async describe() {
+    const c = await this.settings.smtp();
+    return { host: c.host, port: c.port, secure: c.secure, authenticated: Boolean(c.user), user: c.user, passwordSet: Boolean(c.password), fromEnv: c.fromEnv };
   }
 
   async send(mail: OutgoingMail): Promise<SendResult> {
     try {
-      const info = await this.transporter().sendMail({
+      const info = await (await this.transporter()).sendMail({
         from: mail.from,
         to: mail.to,
         subject: mail.subject,

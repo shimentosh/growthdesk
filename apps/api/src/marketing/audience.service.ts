@@ -42,7 +42,7 @@ export class AudienceService {
 
   where(workspaceId: string, a: StoredAudience): Prisma.ContactWhereInput {
     const and: Prisma.ContactWhereInput[] = [
-      { workspaceId, deletedAt: null, email: { not: null }, doNotContact: false, bouncedAt: null, consentStatus: "granted" },
+      { workspaceId, deletedAt: null, archivedAt: null, email: { not: null }, doNotContact: false, bouncedAt: null, consentStatus: "granted" },
       { listMemberships: { some: { workspaceId, listId: { in: a.listIds }, status: "subscribed", list: { archivedAt: null } } } },
     ];
     if (a.excludeListIds.length) and.push({ NOT: { listMemberships: { some: { workspaceId, listId: { in: a.excludeListIds }, status: "subscribed" } } } });

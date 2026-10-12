@@ -6,6 +6,7 @@ import { PrismaService } from "../prisma/prisma.service.js";
 import type { Mailbox } from "../generated/prisma/client.js";
 import { EntitlementsService } from "../billing/entitlements.service.js";
 import { AuditService } from "../core/audit.service.js";
+import { PlatformSettingsService } from "../core/platform-settings.service.js";
 import { OAUTH_PROVIDERS } from "../messaging/mailbox-auth.service.js";
 import { dropTransport, verifySmtp } from "../messaging/smtp.js";
 import { derivedKey, hmac, safeEqual, seal } from "../common/crypto.js";
@@ -18,7 +19,6 @@ export const isOAuthProvider = (p: string): p is OAuthProvider => p === "gmail" 
 
 const STATE_TTL_MS = 10 * 60_000;
 const LABEL: Record<OAuthProvider, string> = { gmail: "Google", microsoft: "Microsoft 365" };
-const ENV: Record<OAuthProvider, string> = { gmail: "GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET", microsoft: "MICROSOFT_CLIENT_ID and MICROSOFT_CLIENT_SECRET" };
 
 type State = { w: string; u: string; p: OAuthProvider; exp: number; n: string };
 
@@ -48,6 +48,7 @@ export class MailboxOAuthService {
     private readonly entitlements: EntitlementsService,
     private readonly audit: AuditService,
     private readonly mailboxes: MailboxesService,
+    private readonly platform: PlatformSettingsService,
     @Inject(APP_CONFIG) private readonly config: AppConfig,
   ) {}
 
@@ -60,11 +61,10 @@ export class MailboxOAuthService {
   }
 
   /** The OAuth client, or a clear 503 when this installation has none. */
-  client(provider: OAuthProvider) {
-    const id = provider === "gmail" ? this.config.GOOGLE_CLIENT_ID : this.config.MICROSOFT_CLIENT_ID;
-    const secret = provider === "gmail" ? this.config.GOOGLE_CLIENT_SECRET : this.config.MICROSOFT_CLIENT_SECRET;
-    if (!id || !secret) throw unavailable(`${LABEL[provider]} sign-in is not configured on this installation (set ${ENV[provider]}). Connect the mailbox with SMTP/IMAP instead.`);
-    return { id, secret };
+  async client(provider: OAuthProvider) {
+    const client = await this.platform.oauthClient(provider === "gmail" ? "google" : "microsoft");
+    if (!client) throw unavailable(`${LABEL[provider]} sign-in is not configured on this installation (a platform admin adds it in the admin console under Settings → Google and Microsoft sign-in). Connect the mailbox with SMTP/IMAP instead.`);
+    return client;
   }
 
   signState(state: State): string {
@@ -99,7 +99,7 @@ export class MailboxOAuthService {
   async start(ctx: RequestContext, provider: string) {
     if (!isOAuthProvider(provider)) throw notFound("That mailbox provider");
     const w = ws(ctx);
-    const client = this.client(provider);
+    const client = await this.client(provider);
     await this.entitlements.assertFullAccess(w.billingAccountId, "Connecting a mailbox");
     const state = this.signState({ w: w.id, u: me(ctx).userId, p: provider, exp: Date.now() + STATE_TTL_MS, n: randomBytes(9).toString("base64url") });
     const p = OAUTH_PROVIDERS[provider];
@@ -113,7 +113,7 @@ export class MailboxOAuthService {
         ? { access_type: "offline", prompt: "consent", include_granted_scopes: "true" }
         : { response_mode: "query", prompt: "select_account" }),
     });
-    const host = provider === "gmail" ? "https://accounts.google.com/o/oauth2/v2/auth" : `https://login.microsoftonline.com/${encodeURIComponent(this.config.MICROSOFT_TENANT)}/oauth2/v2.0/authorize`;
+    const host = provider === "gmail" ? "https://accounts.google.com/o/oauth2/v2/auth" : `https://login.microsoftonline.com/${encodeURIComponent(await this.platform.microsoftTenant())}/oauth2/v2.0/authorize`;
     return { url: `${host}?${params.toString()}` };
   }
 
@@ -129,7 +129,7 @@ export class MailboxOAuthService {
     if (!isOAuthProvider(provider)) return fail("Unknown mailbox provider.");
     if (!state || state.p !== provider) return fail("That sign-in link has expired or is not valid. Start connecting the mailbox again.");
     try {
-      this.client(provider); // not configured: its message says how to connect instead
+      await this.client(provider); // not configured: its message says how to connect instead
       const box = await this.complete(provider, state, query, ctx);
       return `${page}?connected=1&mailbox=${encodeURIComponent(box.id)}`;
     } catch (e) {
@@ -211,8 +211,8 @@ export class MailboxOAuthService {
   }
 
   private async exchange(provider: OAuthProvider, code: string) {
-    const client = this.client(provider);
-    const res = await fetch(OAUTH_PROVIDERS[provider].tokenUrl(this.config.MICROSOFT_TENANT), {
+    const client = await this.client(provider);
+    const res = await fetch(OAUTH_PROVIDERS[provider].tokenUrl(await this.platform.microsoftTenant()), {
       method: "POST",
       headers: { "content-type": "application/x-www-form-urlencoded", accept: "application/json" },
       body: new URLSearchParams({

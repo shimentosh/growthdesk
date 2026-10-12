@@ -79,6 +79,7 @@ export const TENANT_MODELS = new Set<string>([
   "AiUsage",
   "AiCache",
   "WorkspaceExport",
+  "LibrarySeed",
 ]);
 
 const WHERE_OPERATIONS = new Set([

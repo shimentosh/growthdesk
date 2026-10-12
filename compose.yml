@@ -1,0 +1,155 @@
+# Growthdesk on Dokploy (Docker Compose deployment).
+# Postgres and Redis are separate Dokploy database services; point DATABASE_URL and
+# REDIS_URL at their internal connection URLs. Domains are set in Dokploy, which
+# routes them through its Traefik on dokploy-network, so nothing publishes host ports:
+#   web   -> growthdesk.sentosh.com        (port 3600)
+#   admin -> admin-growthdesk.sentosh.com  (port 3602)
+#   api   -> api-growthdesk.sentosh.com    (port 3601, optional: browsers use the web app's /api proxy)
+# Dokploy writes the Environment tab to .env next to this file, which fills the ${...} values.
+name: growthdesk
+
+# Every service: rotated JSON logs (Docker keeps at most 5 x 10 MB per container).
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: ${LOG_MAX_SIZE:-10m}
+    max-file: "${LOG_MAX_FILES:-5}"
+
+x-api-env: &api-env
+  NODE_ENV: production
+  API_HOST: 0.0.0.0
+  API_PORT: 3601
+  PUBLIC_APP_URL: ${PUBLIC_APP_URL:?set PUBLIC_APP_URL}
+  ADMIN_APP_URL: ${ADMIN_APP_URL:?set ADMIN_APP_URL}
+  ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-}
+  TRUSTED_PROXY_HOPS: ${TRUSTED_PROXY_HOPS:-1}
+  DATABASE_URL: ${DATABASE_URL:?set DATABASE_URL}
+  REDIS_URL: ${REDIS_URL:?set REDIS_URL}
+  ENCRYPTION_KEY: ${ENCRYPTION_KEY:?set ENCRYPTION_KEY}
+  SESSION_DAYS: ${SESSION_DAYS:-14}
+  # Mail (SMTP, Resend, senders), Google/Microsoft sign-in, Stripe, AI, the trial limit and data
+  # retention are set in the admin console (Settings, Email settings), not here.
+  # Optional: logging and error reporting start before the database is read, so they stay here.
+  LOG_LEVEL: ${LOG_LEVEL:-log}
+  LOG_FORMAT: ${LOG_FORMAT:-json}
+  SENTRY_DSN: ${SENTRY_DSN:-}
+  SENTRY_ENVIRONMENT: ${SENTRY_ENVIRONMENT:-}
+  SENTRY_RELEASE: ${SENTRY_RELEASE:-}
+  # Account lifecycle (docs/PRIVACY_OPS.md). Exports live on the exports-data volume, shared by api and worker.
+  WORKSPACE_PURGE_DAYS: ${WORKSPACE_PURGE_DAYS:-30}
+  DATA_EXPORT_DAYS: ${DATA_EXPORT_DAYS:-7}
+  DATA_EXPORT_DIR: /app/.data/exports
+
+# dokploy-network reaches the Postgres/Redis services and Traefik. Other stacks share it,
+# so web and admin call the API by an alias that exists only on this stack's own network.
+x-networks: &networks
+  default: {}
+  dokploy-network: {}
+
+services:
+  migrate:
+    build: { context: ., dockerfile: infra/Dockerfile.api }
+    environment: *api-env
+    command: ["sh", "-c", "node_modules/.bin/prisma migrate deploy && node dist/scripts/seed.js"]
+    networks: *networks
+    logging: *logging
+    restart: "no"
+
+  api:
+    build: { context: ., dockerfile: infra/Dockerfile.api }
+    environment: *api-env
+    volumes: [exports-data:/app/.data/exports]
+    networks:
+      default: { aliases: [growthdesk-api] }
+      dokploy-network: {}
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3601/v1/health"]
+      interval: 15s
+      retries: 5
+      start_period: 30s
+    # In-flight requests finish (Nest shutdown hooks) before Docker sends SIGKILL.
+    stop_grace_period: 30s
+    deploy:
+      resources:
+        limits: { memory: "${API_MEMORY:-1g}" }
+    logging: *logging
+    restart: unless-stopped
+
+  worker:
+    build: { context: ., dockerfile: infra/Dockerfile.api }
+    environment: *api-env
+    command: ["node", "--enable-source-maps", "dist/worker.js"]
+    volumes: [exports-data:/app/.data/exports]
+    networks: *networks
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+    # The worker touches this file every 30 s, after Redis took its heartbeat (src/worker/heartbeat.ts).
+    healthcheck:
+      test: ["CMD", "node", "-e", "process.exit(Date.now() - require('fs').statSync('/tmp/growthdesk-worker-heartbeat').mtimeMs < 120000 ? 0 : 1)"]
+      interval: 30s
+      retries: 3
+      start_period: 60s
+    # Shutdown waits for running jobs (imports, sends, mailbox syncs); give them time before SIGKILL.
+    stop_grace_period: ${WORKER_STOP_GRACE:-120s}
+    deploy:
+      resources:
+        limits: { memory: "${WORKER_MEMORY:-1g}" }
+    logging: *logging
+    restart: unless-stopped
+
+  web:
+    build:
+      context: .
+      dockerfile: infra/Dockerfile.web
+      # Browser error reporting is compiled in; leave blank for none.
+      args:
+        NEXT_PUBLIC_SENTRY_DSN: ${NEXT_PUBLIC_SENTRY_DSN:-}
+    environment:
+      API_URL: http://growthdesk-api:3601
+      SENTRY_DSN: ${SENTRY_DSN:-}
+      SENTRY_ENVIRONMENT: ${SENTRY_ENVIRONMENT:-}
+      SENTRY_RELEASE: ${SENTRY_RELEASE:-}
+    expose: ["3600"]
+    networks: *networks
+    depends_on: [api]
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3600/healthz"]
+      interval: 15s
+      retries: 5
+      start_period: 20s
+    stop_grace_period: 15s
+    deploy:
+      resources:
+        limits: { memory: "${WEB_MEMORY:-768m}" }
+    logging: *logging
+    restart: unless-stopped
+
+  admin:
+    build: { context: ., dockerfile: infra/Dockerfile.admin }
+    environment:
+      API_URL: http://growthdesk-api:3601
+      PUBLIC_APP_URL: ${PUBLIC_APP_URL}
+      ADMIN_ENV_LABEL: ${ADMIN_ENV_LABEL:-}
+    expose: ["3602"]
+    networks: *networks
+    depends_on: [api]
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3602/healthz"]
+      interval: 30s
+      retries: 5
+      start_period: 20s
+    stop_grace_period: 15s
+    deploy:
+      resources:
+        limits: { memory: "${ADMIN_MEMORY:-512m}" }
+    logging: *logging
+    restart: unless-stopped
+
+networks:
+  dokploy-network:
+    external: true
+
+volumes:
+  exports-data:

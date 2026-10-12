@@ -80,7 +80,7 @@ export class AiEngine {
       provider: s.aiProvider,
       apiKey,
       model: s.aiModel.trim() || DEFAULT_MODELS[s.aiProvider][tier],
-      baseUrl: this.config.AI_BASE_URL,
+      baseUrl: await this.platform.aiBaseUrl(),
       timeoutMs: DEFAULT_TIMEOUT_MS,
     };
   }

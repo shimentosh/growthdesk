@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { Eye, Monitor, Smartphone } from "lucide-react";
-import type { EmailBlock } from "@growthdesk/shared";
+import { resolveTheme, type EmailBlock, type EmailTheme } from "@growthdesk/shared";
 import { Card, CardHeader } from "@/components/ui/Card";
 import { EmailPreview, PREVIEW_VARS } from "@/components/marketing/common";
 import { Choice } from "@/components/marketing/designs/controls";
@@ -20,7 +20,7 @@ type Device = "desktop" | "mobile";
  * renderEmail, sample contact, the company profile's footer) at desktop
  * width, scaled down to fit when the column is narrower, or at phone width.
  */
-export function DesignPreview({ blocks, preheader, className }: { blocks: EmailBlock[]; preheader?: string; className?: string }) {
+export function DesignPreview({ blocks, theme, preheader, className }: { blocks: EmailBlock[]; theme?: EmailTheme | null; preheader?: string; className?: string }) {
   const ws = useWorkspace();
   const [device, setDevice] = useState<Device>("desktop");
   const box = useRef<HTMLDivElement>(null);
@@ -46,6 +46,7 @@ export function DesignPreview({ blocks, preheader, className }: { blocks: EmailB
   // Desktop fills a wide column; otherwise the email keeps its natural width and shrinks to fit.
   const width = !mobile && scale === 1 && size ? size.w : natural;
   const height = size ? (size.h - gutter) / scale : 0;
+  const page = resolveTheme(theme).background;
 
   return (
     <Card className={cn("flex flex-col overflow-hidden", className)}>
@@ -65,7 +66,7 @@ export function DesignPreview({ blocks, preheader, className }: { blocks: EmailB
           />
         }
       />
-      <div ref={box} className={cn("relative min-h-0 flex-1 overflow-hidden", mobile ? "bg-well" : "bg-[#f5f5f7]")}>
+      <div ref={box} className={cn("relative min-h-0 flex-1 overflow-hidden", mobile && "bg-well")} style={mobile ? undefined : { background: page }}>
         {size && (
           <div
             className={cn("absolute left-1/2 origin-top", mobile ? "top-4 overflow-hidden rounded-[26px] border-[5px] border-s-5 shadow-card" : "top-0")}
@@ -73,10 +74,11 @@ export function DesignPreview({ blocks, preheader, className }: { blocks: EmailB
           >
             <EmailPreview
               blocks={blocks}
+              theme={theme}
               preheader={preheader}
               legalName={profile.legalName.trim() || ws.name}
               postalAddress={profile.postalAddress.trim() || "Your postal address"}
-              className="block size-full border-0 bg-[#f5f5f7]"
+              className="block size-full border-0"
             />
           </div>
         )}

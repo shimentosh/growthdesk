@@ -44,6 +44,7 @@ import { IconTile, type Tint } from "@/components/ui/IconTile";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/DropdownMenu";
 import { Field } from "@/components/ui/Field";
 import { Input, NativeSelect, Textarea } from "@/components/ui/Input";
+import { Select, type SelectOption } from "@/components/ui/Select";
 import { MemberPicker } from "@/components/pickers/Pickers";
 import { selectOptions, useContactCustomFields, type CustomFieldDef } from "@/components/automation/ConditionEditor";
 import { DurationInput } from "@/components/automation/fields";
@@ -287,6 +288,39 @@ function useChannelTemplates(channel: "email" | "whatsapp" | "telegram") {
   });
 }
 
+/**
+ * The picker's options: grouped by category (library order kept by name within
+ * a group), searchable by name and category, the library ones marked.
+ */
+function templateOptions(rows: Template[], value: string | null | undefined, pending: boolean): SelectOption[] {
+  const usable = rows.filter((t) => !t.archivedAt || t.id === value);
+  const groups = new Map<string, Template[]>();
+  for (const t of usable) {
+    const key = t.category.trim() || "Other";
+    groups.set(key, [...(groups.get(key) ?? []), t]);
+  }
+  const ordered = [...groups.entries()].sort(([a], [b]) => (a === "Other" ? 1 : b === "Other" ? -1 : a.localeCompare(b)));
+  const out: SelectOption[] = [{ value: "", label: pending ? "Loading templates…" : "No template: write the message here" }];
+  for (const [category, items] of ordered)
+    for (const t of [...items].sort((a, b) => a.name.localeCompare(b.name)))
+      out.push({
+        value: t.id,
+        label: (
+          <span className="flex min-w-0 items-center gap-2">
+            <span className="truncate">
+              {t.name}
+              {t.archivedAt ? " (archived)" : ""}
+            </span>
+            {t.fromLibrary && <Badge tone="info">Library</Badge>}
+          </span>
+        ),
+        text: `${t.name} ${category}`,
+        group: groups.size > 1 ? category : undefined,
+      });
+  if (value && !usable.some((t) => t.id === value) && !pending) out.push({ value, label: "A template that no longer exists" });
+  return out;
+}
+
 function TemplateSelect({ channel, value, onChange, error }: { channel: "email" | "whatsapp" | "telegram"; value: string | null | undefined; onChange: (id: string | null) => void; error?: string }) {
   const ws = useWorkspace();
   const list = useChannelTemplates(channel);
@@ -312,17 +346,13 @@ function TemplateSelect({ channel, value, onChange, error }: { channel: "email" 
         ) : undefined
       }
     >
-      <NativeSelect value={value ?? ""} placeholder={list.isPending ? "Loading templates…" : "No template: write the message here"} onChange={(e) => onChange(e.target.value || null)}>
-        {rows
-          .filter((t) => !t.archivedAt || t.id === value)
-          .map((t) => (
-            <option key={t.id} value={t.id}>
-              {t.name}
-              {t.archivedAt ? " (archived)" : ""}
-            </option>
-          ))}
-        {value && !current && !list.isPending && <option value={value}>A template that no longer exists</option>}
-      </NativeSelect>
+      <Select
+        value={value ?? ""}
+        placeholder={list.isPending ? "Loading templates…" : "No template: write the message here"}
+        searchable={rows.length > 8}
+        onValueChange={(v) => onChange(v || null)}
+        options={templateOptions(rows, value, list.isPending)}
+      />
     </Field>
   );
 }

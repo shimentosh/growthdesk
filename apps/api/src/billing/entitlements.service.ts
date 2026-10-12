@@ -196,9 +196,10 @@ export class EntitlementsService {
       case "sendingDomains":
         return db.sendingDomain.count({ where: { workspaceId: inIds, deletedAt: null } });
       case "marketingContacts": {
-        // A contact counts once however many lists it is subscribed to.
+        // A contact counts once however many lists it is subscribed to. Lead lists also hold
+        // people without marketing consent; only those the marketing engine could mail count.
         const rows = await db.listMembership.findMany({
-          where: { workspaceId: inIds, status: "subscribed", contact: { deletedAt: null } },
+          where: { workspaceId: inIds, status: "subscribed", contact: { deletedAt: null, consentStatus: "granted" } },
           distinct: ["contactId"],
           select: { contactId: true },
         });

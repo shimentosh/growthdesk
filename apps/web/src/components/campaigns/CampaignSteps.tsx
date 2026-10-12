@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useState } from "react";
 import { Button } from "@/components/ui/Button";
 import { Callout } from "@/components/ui/Callout";
@@ -43,6 +44,7 @@ export function CampaignSteps({ campaign }: { campaign: CampaignDetail }) {
           remove, reorder or change the kind of existing steps. Duplicate the campaign to restructure it.
         </Callout>
       )}
+      <ChannelNotes steps={steps} />
       {save.error && !save.error.isPlanLimit && !Object.keys(fields).some((k) => k.startsWith("steps")) && <FormError error={save.error.message} />}
       <Card>
         <CardBody>
@@ -94,4 +96,47 @@ const lanes = (s: SequenceStep) => `${Number(s.config.thenLength ?? 0)}/${Number
 function changesStructure(before: SequenceStep[], after: SequenceStep[]): boolean {
   if (after.length < before.length) return true;
   return before.some((s, i) => s.type !== after[i]!.type || (s.type === "branch" && lanes(s) !== lanes(after[i]!)));
+}
+
+/** What each non-email channel needs before its steps can reach anyone. */
+const CHANNEL_NOTES: { type: "whatsapp" | "telegram" | "call_task"; title: string; text: string; href?: string }[] = [
+  {
+    type: "whatsapp",
+    title: "WhatsApp",
+    text: "Needs a connected WhatsApp Business number. The first message to someone must use an approved template; free text only works inside a 24-hour reply window.",
+    href: "/settings/channels",
+  },
+  {
+    type: "telegram",
+    title: "Telegram",
+    text: "Only reaches people who have messaged your bot first. For anyone else, use a manual task step instead.",
+    href: "/settings/channels",
+  },
+  { type: "call_task", title: "Calls", text: "A call step creates a call task for the owner, with click-to-call when calling is set up.", href: "/settings/calling" },
+];
+
+function ChannelNotes({ steps }: { steps: SequenceStep[] }) {
+  const ws = useWorkspace();
+  const used = new Set(steps.map((s) => s.type));
+  const notes = CHANNEL_NOTES.filter((n) => used.has(n.type));
+  if (!notes.length) return null;
+  return (
+    <Callout tone="info" title="Channel requirements">
+      <ul className="flex flex-col gap-1">
+        {notes.map((n) => (
+          <li key={n.type}>
+            <span className="font-medium text-text">{n.title}:</span> {n.text}
+            {n.href && ws.can("integrations.read") && (
+              <>
+                {" "}
+                <Link href={ws.href(n.href)} className="text-accent-ink hover:text-accent-hi">
+                  Set up
+                </Link>
+              </>
+            )}
+          </li>
+        ))}
+      </ul>
+    </Callout>
+  );
 }

@@ -3,7 +3,7 @@
 import { Search, X } from "lucide-react";
 import { useEffect, useRef, useState, type Ref } from "react";
 import { cn } from "@/lib/cn";
-import { controlClass, fullUnlessSized } from "./Input";
+import { controlClass, fullUnlessSized } from "./control";
 
 export type SearchInputProps = {
   /** The committed search (e.g. from the URL). The box follows it when it changes from outside. */

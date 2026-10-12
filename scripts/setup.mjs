@@ -25,7 +25,7 @@ if (!existsSync("apps/web/.env.local") && existsSync("apps/web/.env.example")) {
 }
 
 run("pnpm install");
-run("docker compose up -d --wait");
+run("docker compose -f docker-compose.yml up -d --wait");
 run("pnpm --filter @growthdesk/shared run build");
 run("pnpm --filter @growthdesk/api exec prisma migrate deploy");
 run("pnpm --filter @growthdesk/api exec prisma generate");

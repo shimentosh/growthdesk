@@ -42,60 +42,60 @@ export class MarketingController {
     private readonly campaigns: MarketingCampaignsService,
   ) {}
 
-  // ─── Lists ────────────────────────────────────────────────────────────────
+  // ─── Lists (lead lists: shared with outreach, so contact permissions also reach them) ────────────────────────────────────────────────────────────────
 
-  @Permission("marketing.read")
+  @Permission("marketing.read", "contacts.read")
   @Get("lists")
   listLists(@Ctx() ctx: RequestContext, @Query(IncludeArchived) q: z.infer<typeof IncludeArchived>) {
     return this.lists.list(ctx, q.archived === "true");
   }
 
-  @Permission("marketing.write")
+  @Permission("marketing.write", "contacts.write")
   @Post("lists")
   createList(@Ctx() ctx: RequestContext, @Body(MarketingListInput) body: z.infer<typeof MarketingListInput>) {
     return this.lists.create(ctx, body);
   }
 
-  @Permission("marketing.read")
+  @Permission("marketing.read", "contacts.read")
   @Get("lists/:id")
   getList(@Ctx() ctx: RequestContext, @Param("id") id: string) {
     return this.lists.get(ctx, id);
   }
 
-  @Permission("marketing.write")
+  @Permission("marketing.write", "contacts.write")
   @Patch("lists/:id")
   updateList(@Ctx() ctx: RequestContext, @Param("id") id: string, @Body(patchOf(MarketingListInput)) body: Partial<z.infer<typeof MarketingListInput>>) {
     return this.lists.update(ctx, id, body);
   }
 
-  @Permission("marketing.write")
+  @Permission("marketing.write", "contacts.write")
   @HttpCode(200)
   @Post("lists/:id/archive")
   archiveList(@Ctx() ctx: RequestContext, @Param("id") id: string, @Body(Archive) body: z.infer<typeof Archive>) {
     return this.lists.archive(ctx, id, body.archived);
   }
 
-  @Permission("marketing.read")
+  @Permission("marketing.read", "contacts.read")
   @Get("lists/:id/members")
   members(@Ctx() ctx: RequestContext, @Param("id") id: string, @Query(ListMembersQuery) q: z.infer<typeof ListMembersQuery>) {
     return this.lists.members(ctx, id, q);
   }
 
-  @Permission("marketing.write")
+  @Permission("marketing.write", "contacts.write")
   @HttpCode(200)
   @Post("lists/:id/members")
   addMembers(@Ctx() ctx: RequestContext, @Param("id") id: string, @Body(ListMembersAdd) body: z.infer<typeof ListMembersAdd>) {
     return this.lists.addMembers(ctx, id, body);
   }
 
-  @Permission("marketing.write")
+  @Permission("marketing.write", "contacts.write")
   @HttpCode(200)
   @Post("lists/:id/members/remove")
   removeMembers(@Ctx() ctx: RequestContext, @Param("id") id: string, @Body(ListMembersRemove) body: z.infer<typeof ListMembersRemove>) {
     return this.lists.removeMembers(ctx, id, body.contactIds);
   }
 
-  @Permission("marketing.read")
+  @Permission("marketing.read", "contacts.read")
   @Get("contacts/:contactId/lists")
   contactLists(@Ctx() ctx: RequestContext, @Param("contactId") contactId: string) {
     return this.lists.forContact(ctx, contactId);

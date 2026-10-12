@@ -5,16 +5,17 @@ import { PrismaService } from "../prisma/prisma.service.js";
 import { ContactsService } from "../crm/contacts.service.js";
 import { CrmExtrasService } from "../crm/crm-extras.service.js";
 import { parseWith } from "../common/decorators.js";
-import type { RequestContext } from "../common/context.js";
+import { ws, type RequestContext } from "../common/context.js";
 import { type AudienceT, configOf, firstActionStep, readSchedule, readSettings } from "./campaign-config.js";
 
-export const SKIP_REASONS = ["not_found", "deleted", "do_not_contact", "unsubscribed", "bounced", "suppressed", "no_email", "already_enrolled"] as const;
+export const SKIP_REASONS = ["not_found", "deleted", "archived", "do_not_contact", "unsubscribed", "bounced", "suppressed", "no_email", "already_enrolled"] as const;
 export type SkipReason = (typeof SKIP_REASONS)[number];
 export type Skipped = Partial<Record<SkipReason, number>>;
 
 export const SKIP_LABELS: Record<SkipReason, string> = {
   not_found: "not in this workspace",
   deleted: "deleted",
+  archived: "archived",
   do_not_contact: "marked do-not-contact",
   unsubscribed: "unsubscribed",
   bounced: "bounced",
@@ -48,6 +49,16 @@ export class EnrollmentService {
   async candidates(ctx: RequestContext, audience: AudienceT | null): Promise<string[]> {
     if (!audience) return [];
     if (audience.type === "contacts") return [...new Set(audience.contactIds)];
+    if (audience.type === "lists") {
+      // Lead lists hold people at every stage; outreach only goes to leads. Someone who unsubscribed from a list is left out.
+      const rows = await this.prisma.db.listMembership.findMany({
+        where: { workspaceId: ws(ctx).id, listId: { in: audience.listIds }, status: { not: "unsubscribed" }, list: { archivedAt: null }, contact: { lifecycleStage: "lead" } },
+        select: { contactId: true },
+        orderBy: { createdAt: "asc" },
+        take: 100_000,
+      });
+      return [...new Set(rows.map((r) => r.contactId))];
+    }
     if (audience.type === "view") {
       const view = await this.extras.getView(ctx, audience.viewId);
       return this.contacts.idsFor(ctx, parseWith(ContactFilter, view.filters ?? {}));
@@ -68,7 +79,7 @@ export class EnrollmentService {
     for (const batch of chunks([...new Set(ids)], 5000)) {
       const rows = await this.prisma.db.contact.findMany({
         where: { workspaceId, id: { in: batch } },
-        select: { id: true, email: true, phone: true, deletedAt: true, doNotContact: true, unsubscribedAt: true, bouncedAt: true },
+        select: { id: true, email: true, phone: true, deletedAt: true, archivedAt: true, doNotContact: true, unsubscribedAt: true, bouncedAt: true },
       });
       const byId = new Map(rows.map((r) => [r.id, r]));
       const open: typeof rows = [];
@@ -76,6 +87,7 @@ export class EnrollmentService {
         const c = byId.get(id);
         if (!c) skip("not_found");
         else if (c.deletedAt) skip("deleted");
+        else if (c.archivedAt) skip("archived");
         else if (c.doNotContact) skip("do_not_contact");
         else if (c.unsubscribedAt) skip("unsubscribed");
         else if (c.bouncedAt) skip("bounced");

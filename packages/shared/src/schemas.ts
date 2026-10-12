@@ -5,6 +5,7 @@ import {
   CHANNELS,
   CONSENT_STATUSES,
   CONTACT_STATUSES,
+  LIFECYCLE_STAGES,
   MAILBOX_PROVIDERS,
   MEETING_STATUSES,
   PRIORITIES,
@@ -141,6 +142,7 @@ export const ContactInput = z.object({
   priority: z.enum(PRIORITIES).optional(),
   qualification: z.enum(QUALIFICATIONS).optional(),
   status: z.enum(CONTACT_STATUSES).optional(),
+  lifecycleStage: z.enum(LIFECYCLE_STAGES).optional(),
   score: z.number().int().min(0).max(100).nullable().optional(),
   customFields: customFields.optional(),
   nextActionAt: isoDate.nullable().optional(),
@@ -183,6 +185,11 @@ export const ContactFilter = z.object({
   createdAfter: isoDate.optional(),
   createdBefore: isoDate.optional(),
   campaignId: uuid.optional(),
+  stage: z.array(z.enum(LIFECYCLE_STAGES)).optional(),
+  /** Members of a lead list (any membership status but unsubscribed). */
+  listId: uuid.optional(),
+  /** Archived people are left out unless asked for: "include" adds them, "only" shows just them. */
+  archived: z.enum(["include", "only"]).optional(),
 });
 export type ContactFilterT = z.infer<typeof ContactFilter>;
 
@@ -203,6 +210,12 @@ export const BulkContactAction = z.discriminatedUnion("action", [
   z.object({ action: z.literal("qualification"), ids: z.array(uuid).min(1).max(5000), qualification: z.enum(QUALIFICATIONS) }),
   z.object({ action: z.literal("delete"), ids: z.array(uuid).min(1).max(5000) }),
   z.object({ action: z.literal("enroll"), ids: z.array(uuid).min(1).max(5000), campaignId: uuid }),
+  z.object({ action: z.literal("archive"), ids: z.array(uuid).min(1).max(5000) }),
+  z.object({ action: z.literal("unarchive"), ids: z.array(uuid).min(1).max(5000) }),
+  z.object({ action: z.literal("stage"), ids: z.array(uuid).min(1).max(5000), stage: z.enum(LIFECYCLE_STAGES) }),
+  /** Hands people to sales: stage → sales, optionally a new owner, and stops their outreach sequences. */
+  z.object({ action: z.literal("transfer_to_sales"), ids: z.array(uuid).min(1).max(5000), ownerId: uuid.nullable().optional() }),
+  z.object({ action: z.literal("add_to_list"), ids: z.array(uuid).min(1).max(5000), listId: uuid }),
 ]);
 
 export const MergeContactsInput = z.object({
@@ -259,6 +272,9 @@ export const ImportStartInput = z.object({
   onDuplicate: z.enum(["update", "skip"]).default("update"),
   leadSource: text(100).optional(),
   defaultCountry: z.string().length(2).toUpperCase().optional(),
+  /** The lead list the imported people join: an existing list, or a new one by name. */
+  listId: optionalUuid,
+  newListName: text(120).optional(),
 });
 
 export const SuppressionInput = z.object({
@@ -472,6 +488,7 @@ export const AudienceInput = z.discriminatedUnion("type", [
   z.object({ type: z.literal("contacts"), contactIds: z.array(uuid).max(50000) }),
   z.object({ type: z.literal("view"), viewId: uuid }),
   z.object({ type: z.literal("filter"), filter: ContactFilter }),
+  z.object({ type: z.literal("lists"), listIds: z.array(uuid).min(1).max(50) }),
 ]);
 
 export const CampaignInput = z.object({
@@ -705,4 +722,51 @@ export const PlatformSettingsInput = z.object({
   defaultTrialDays: z.number().int().min(0).max(365).nullable().optional(),
   // Public site.
   landingEnabled: z.boolean().optional(),
+  // AI endpoint ("" = AI_BASE_URL, else the provider default).
+  aiBaseUrl: z
+    .string()
+    .trim()
+    .max(500)
+    .refine((v) => v === "" || /^https?:\/\/\S+$/.test(v), "Enter a URL starting with https://")
+    .optional(),
+  // OAuth clients. Secrets are write-only; "" clears them.
+  googleClientId: z.string().trim().max(300).optional(),
+  googleClientSecret: z.string().trim().max(500).optional(),
+  microsoftClientId: z.string().trim().max(300).optional(),
+  microsoftClientSecret: z.string().trim().max(500).optional(),
+  microsoftTenant: z
+    .string()
+    .trim()
+    .max(100)
+    .refine((v) => v === "" || /^[A-Za-z0-9.-]+$/.test(v), "Use common, organizations, a tenant id or a domain")
+    .optional(),
+  // Stripe. Write-only; "" clears them.
+  stripeSecretKey: z
+    .string()
+    .trim()
+    .max(500)
+    .refine((v) => v === "" || /^(sk|rk)_(live|test)_\S+$/.test(v), "Paste a secret key (sk_live_…, sk_test_…) or a restricted key (rk_…)")
+    .optional(),
+  stripeWebhookSecret: z
+    .string()
+    .trim()
+    .max(500)
+    .refine((v) => v === "" || /^whsec_\S+$/.test(v), "Paste the signing secret from Stripe (it starts with whsec_)")
+    .optional(),
+  // Free trials per signup IP per day (0 = no limit; null = the server default).
+  trialsPerIpPerDay: z.number().int().min(0).max(1000).nullable().optional(),
+  // History retention in days per table (0 = keep forever). A missing key keeps the server default.
+  retentionDays: z
+    .object({
+      domainEvents: z.number().int().min(0).max(36500),
+      messageEvents: z.number().int().min(0).max(36500),
+      workflowRuns: z.number().int().min(0).max(36500),
+      stepExecutions: z.number().int().min(0).max(36500),
+      activityNoise: z.number().int().min(0).max(36500),
+      aiUsage: z.number().int().min(0).max(36500),
+      billingEvents: z.number().int().min(0).max(36500),
+      marketingSends: z.number().int().min(0).max(36500),
+    })
+    .partial()
+    .optional(),
 });

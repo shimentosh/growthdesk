@@ -2,6 +2,7 @@ import { Inject, Injectable } from "@nestjs/common";
 import { APP_CONFIG, type AppConfig } from "../config/config.js";
 import { PrismaService } from "../prisma/prisma.service.js";
 import { open, seal } from "../common/crypto.js";
+import { DATA_RETENTION, type DataRetentionKey } from "../worker/maintenance-policy.js";
 
 /*
  * Install-level policy, edited in the platform admin. Each setting is read by
@@ -53,6 +54,38 @@ export type PlatformSettings = {
   // Public site.
   /** false = "/" sends visitors to /login instead of the landing page. */
   landingEnabled: boolean;
+
+  // Platform mail over SMTP. smtpHost "" = the SMTP_* environment (Mailpit in development).
+  smtpHost: string;
+  smtpPort: number;
+  /** true = implicit TLS (465); false = STARTTLS when the server offers it. */
+  smtpSecure: boolean;
+  smtpUser: string;
+  /** Sealed; never returned to a client. */
+  smtpPasswordSealed: string;
+
+  // OAuth clients: Google sign-in and Gmail mailboxes; Microsoft 365 mailboxes. Id "" = the environment's pair.
+  googleClientId: string;
+  /** Sealed; never returned to a client. */
+  googleClientSecretSealed: string;
+  microsoftClientId: string;
+  /** Sealed; never returned to a client. */
+  microsoftClientSecretSealed: string;
+  /** "" = MICROSOFT_TENANT. */
+  microsoftTenant: string;
+
+  // Stripe. Each falls back to its STRIPE_* environment value.
+  /** Sealed; never returned to a client. */
+  stripeSecretKeySealed: string;
+  /** Sealed (whsec_…); never returned to a client. */
+  stripeWebhookSecretSealed: string;
+
+  /** An OpenAI-compatible gateway or self-hosted endpoint; "" = AI_BASE_URL, else the provider default. */
+  aiBaseUrl: string;
+  /** Free trials per signup IP in a rolling day; null = TRIALS_PER_IP_PER_DAY. 0 = no limit. */
+  trialsPerIpPerDay: number | null;
+  /** History retention in days per table (worker/maintenance-policy.ts DATA_RETENTION); a missing key = its RETENTION_* environment value. */
+  retentionDays: Partial<Record<DataRetentionKey, number>>;
 };
 
 const DEFAULTS: PlatformSettings = {
@@ -80,11 +113,41 @@ const DEFAULTS: PlatformSettings = {
   requireEmailVerification: true,
   defaultTrialDays: null,
   landingEnabled: true,
+  smtpHost: "",
+  smtpPort: 587,
+  smtpSecure: false,
+  smtpUser: "",
+  smtpPasswordSealed: "",
+  googleClientId: "",
+  googleClientSecretSealed: "",
+  microsoftClientId: "",
+  microsoftClientSecretSealed: "",
+  microsoftTenant: "",
+  stripeSecretKeySealed: "",
+  stripeWebhookSecretSealed: "",
+  aiBaseUrl: "",
+  trialsPerIpPerDay: null,
+  retentionDays: {},
 };
 
 /** Write-only secret inputs → the sealed setting each one is stored in. */
-const SECRETS = { aiApiKey: "aiApiKeySealed", resendApiKey: "resendApiKeySealed", resendWebhookSecret: "resendWebhookSecretSealed" } as const;
-type SecretInput = { [K in keyof typeof SECRETS]?: string };
+export const SECRETS = {
+  aiApiKey: "aiApiKeySealed",
+  resendApiKey: "resendApiKeySealed",
+  resendWebhookSecret: "resendWebhookSecretSealed",
+  smtpPassword: "smtpPasswordSealed",
+  googleClientSecret: "googleClientSecretSealed",
+  microsoftClientSecret: "microsoftClientSecretSealed",
+  stripeSecretKey: "stripeSecretKeySealed",
+  stripeWebhookSecret: "stripeWebhookSecretSealed",
+} as const;
+export type SecretName = keyof typeof SECRETS;
+export const isSecretName = (k: string): k is SecretName => k in SECRETS;
+type SecretInput = { [K in SecretName]?: string };
+type Sealed = (typeof SECRETS)[SecretName];
+
+export type OAuthClient = { id: string; secret: string; fromEnv: boolean };
+export type SmtpConfig = { host: string; port: number; secure: boolean; user: string; password: string; fromEnv: boolean };
 
 const TTL_MS = 5_000;
 
@@ -131,13 +194,71 @@ export class PlatformSettingsService {
     return this.config.RESEND_WEBHOOK_SECRET ?? "";
   }
 
+  /** The SMTP server for platform mail: the admin-set one when it names a host, else SMTP_*. */
+  async smtp(): Promise<SmtpConfig> {
+    const s = await this.get();
+    if (s.smtpHost) {
+      return { host: s.smtpHost, port: s.smtpPort, secure: s.smtpSecure, user: s.smtpUser, password: s.smtpUser ? (open(s.smtpPasswordSealed) ?? "") : "", fromEnv: false };
+    }
+    const c = this.config;
+    return { host: c.SMTP_HOST, port: c.SMTP_PORT, secure: c.SMTP_SECURE, user: c.SMTP_USER ?? "", password: c.SMTP_PASSWORD ?? "", fromEnv: true };
+  }
+
+  /**
+   * The OAuth client for Google (sign-in and Gmail mailboxes) or Microsoft 365, or null when there is none.
+   * The id and secret travel as a pair: an admin-set client id uses the admin-set secret, never the environment's.
+   */
+  async oauthClient(provider: "google" | "microsoft"): Promise<OAuthClient | null> {
+    const s = await this.get();
+    const [id, sealed, envId, envSecret] =
+      provider === "google"
+        ? [s.googleClientId, s.googleClientSecretSealed, this.config.GOOGLE_CLIENT_ID, this.config.GOOGLE_CLIENT_SECRET]
+        : [s.microsoftClientId, s.microsoftClientSecretSealed, this.config.MICROSOFT_CLIENT_ID, this.config.MICROSOFT_CLIENT_SECRET];
+    if (id) {
+      const secret = open(sealed) ?? "";
+      return secret ? { id, secret, fromEnv: false } : null;
+    }
+    return envId && envSecret ? { id: envId, secret: envSecret, fromEnv: true } : null;
+  }
+
+  async microsoftTenant(): Promise<string> {
+    return (await this.get()).microsoftTenant || this.config.MICROSOFT_TENANT;
+  }
+
+  /** Stripe's API key and webhook signing secret: each the admin-set one, else its STRIPE_* environment value. */
+  async stripe(): Promise<{ secretKey: string; webhookSecret: string }> {
+    const s = await this.get();
+    return {
+      secretKey: (s.stripeSecretKeySealed ? open(s.stripeSecretKeySealed) : this.config.STRIPE_SECRET_KEY) ?? "",
+      webhookSecret: (s.stripeWebhookSecretSealed ? open(s.stripeWebhookSecretSealed) : this.config.STRIPE_WEBHOOK_SECRET) ?? "",
+    };
+  }
+
+  async aiBaseUrl(): Promise<string | undefined> {
+    return (await this.get()).aiBaseUrl || this.config.AI_BASE_URL;
+  }
+
+  async trialsPerIpPerDay(): Promise<number> {
+    return (await this.get()).trialsPerIpPerDay ?? this.config.TRIALS_PER_IP_PER_DAY;
+  }
+
+  /** Retention in days for every history table: the admin-set value, else the environment's (0 = keep forever). */
+  async retentionDays(): Promise<Record<DataRetentionKey, number>> {
+    const s = await this.get();
+    const out = {} as Record<DataRetentionKey, number>;
+    for (const [k, env] of Object.entries(DATA_RETENTION) as [DataRetentionKey, (typeof DATA_RETENTION)[DataRetentionKey]][]) {
+      out[k] = s.retentionDays[k] ?? this.config[env];
+    }
+    return out;
+  }
+
   async update(patch: Partial<PlatformSettings> & SecretInput, userId: string | null): Promise<PlatformSettings> {
     const entries: [string, unknown][] = [];
     for (const [k, v] of Object.entries(patch)) {
       if (v === undefined) continue;
-      if (k in SECRETS) {
+      if (isSecretName(k)) {
         // Sealed settings are only ever written through their write-only input.
-        entries.push([SECRETS[k as keyof typeof SECRETS], v ? seal(String(v)) : ""]);
+        entries.push([SECRETS[k], v ? seal(String(v)) : ""]);
       } else if (k in DEFAULTS && !Object.values<string>(SECRETS).includes(k)) {
         entries.push([k, v]);
       }
@@ -153,14 +274,51 @@ export class PlatformSettingsService {
     return this.get();
   }
 
-  /** What the admin panel may see: everything except the sealed secrets (only whether each is set). */
+  /**
+   * What the admin panel may see: everything except the sealed secrets. For each secret, `<name>Set` says
+   * whether one applies and `<name>FromEnv` whether it comes from the server's environment. `env` carries the
+   * environment's non-secret values, shown as what applies when a setting is left empty.
+   */
   async publicView() {
-    const { aiApiKeySealed, resendApiKeySealed, resendWebhookSecretSealed, ...rest } = await this.get();
+    const s = await this.get();
+    const rest = Object.fromEntries(Object.entries(s).filter(([k]) => !Object.values<string>(SECRETS).includes(k))) as Omit<PlatformSettings, Sealed>;
+    const [aiKey, resendKey, resendSecret, smtp, google, microsoft, stripe] = await Promise.all([
+      this.aiApiKey(),
+      this.resendApiKey(),
+      this.resendWebhookSecret(),
+      this.smtp(),
+      this.oauthClient("google"),
+      this.oauthClient("microsoft"),
+      this.stripe(),
+    ]);
+    const c = this.config;
     return {
       ...rest,
-      aiApiKeySet: Boolean(aiApiKeySealed) || Boolean(await this.aiApiKey()),
-      resendApiKeySet: Boolean(resendApiKeySealed) || Boolean(await this.resendApiKey()),
-      resendWebhookSecretSet: Boolean(resendWebhookSecretSealed) || Boolean(await this.resendWebhookSecret()),
+      aiApiKeySet: Boolean(aiKey),
+      aiApiKeyFromEnv: !s.aiApiKeySealed && Boolean(aiKey),
+      resendApiKeySet: Boolean(resendKey),
+      resendApiKeyFromEnv: !s.resendApiKeySealed && Boolean(resendKey),
+      resendWebhookSecretSet: Boolean(resendSecret),
+      resendWebhookSecretFromEnv: !s.resendWebhookSecretSealed && Boolean(resendSecret),
+      smtpPasswordSet: Boolean(smtp.password),
+      smtpPasswordFromEnv: smtp.fromEnv && Boolean(smtp.password),
+      googleClientSecretSet: Boolean(google),
+      googleClientSecretFromEnv: Boolean(google?.fromEnv),
+      microsoftClientSecretSet: Boolean(microsoft),
+      microsoftClientSecretFromEnv: Boolean(microsoft?.fromEnv),
+      stripeSecretKeySet: Boolean(stripe.secretKey),
+      stripeSecretKeyFromEnv: !s.stripeSecretKeySealed && Boolean(stripe.secretKey),
+      stripeWebhookSecretSet: Boolean(stripe.webhookSecret),
+      stripeWebhookSecretFromEnv: !s.stripeWebhookSecretSealed && Boolean(stripe.webhookSecret),
+      env: {
+        smtp: { host: c.SMTP_HOST, port: c.SMTP_PORT, secure: c.SMTP_SECURE, user: c.SMTP_USER ?? "" },
+        googleClientId: c.GOOGLE_CLIENT_ID ?? "",
+        microsoftClientId: c.MICROSOFT_CLIENT_ID ?? "",
+        microsoftTenant: c.MICROSOFT_TENANT,
+        aiBaseUrl: c.AI_BASE_URL ?? "",
+        trialsPerIpPerDay: c.TRIALS_PER_IP_PER_DAY,
+        retentionDays: Object.fromEntries(Object.entries(DATA_RETENTION).map(([k, env]) => [k, c[env]])) as Record<DataRetentionKey, number>,
+      },
     };
   }
 

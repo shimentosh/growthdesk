@@ -126,12 +126,14 @@ export const LooseObject = z.record(z.string(), z.unknown());
 export type AudienceT =
   | { type: "contacts"; contactIds: string[] }
   | { type: "view"; viewId: string }
-  | { type: "filter"; filter: z.infer<typeof ContactFilter> };
+  | { type: "filter"; filter: z.infer<typeof ContactFilter> }
+  | { type: "lists"; listIds: string[] };
 
 export function readAudience(raw: unknown): AudienceT | null {
   if (!isObj(raw)) return null;
   if (raw.type === "contacts" && Array.isArray(raw.contactIds)) return { type: "contacts", contactIds: raw.contactIds.filter((v): v is string => typeof v === "string") };
   if (raw.type === "view" && typeof raw.viewId === "string") return { type: "view", viewId: raw.viewId };
+  if (raw.type === "lists" && Array.isArray(raw.listIds)) return { type: "lists", listIds: raw.listIds.filter((v): v is string => typeof v === "string") };
   if (raw.type === "filter" && isObj(raw.filter)) {
     const parsed = ContactFilter.safeParse(raw.filter);
     return parsed.success ? { type: "filter", filter: parsed.data } : null;
@@ -154,16 +156,25 @@ const FILTER_LABELS: Record<string, string> = {
   createdAfter: "created after",
   createdBefore: "created before",
   campaignId: "in campaign",
+  stage: "stage",
+  listId: "in list",
+  archived: "archived",
 };
 
-/** One line a person can read: who this campaign is for. */
-export function describeAudience(audience: AudienceT | null, viewName?: string | null): string {
+/** One line a person can read: who this campaign is for. `names` is the saved view's name, or the lists' names. */
+export function describeAudience(audience: AudienceT | null, names?: string | string[] | null): string {
+  const viewName = typeof names === "string" ? names : null;
   if (!audience) return "No audience chosen yet";
   if (audience.type === "contacts") {
     const n = new Set(audience.contactIds).size;
     return `${n.toLocaleString()} selected contact${n === 1 ? "" : "s"}`;
   }
   if (audience.type === "view") return viewName ? `Contacts in the saved view “${viewName}”` : "Contacts in a saved view that no longer exists";
+  if (audience.type === "lists") {
+    const listNames = Array.isArray(names) ? names : [];
+    if (!listNames.length) return "Lead lists that no longer exist";
+    return listNames.length === 1 ? `Leads in “${listNames[0]}”` : `Leads in ${listNames.length} lists: ${listNames.map((n) => `“${n}”`).join(", ")}`;
+  }
   const parts = Object.entries(audience.filter)
     .filter(([, v]) => v !== undefined && !(Array.isArray(v) && v.length === 0))
     .map(([k, v]) => {

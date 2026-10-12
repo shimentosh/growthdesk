@@ -1,7 +1,7 @@
-import { Inject, Injectable } from "@nestjs/common";
+import { Injectable } from "@nestjs/common";
 import Stripe from "stripe";
 import type { SubscriptionStatus } from "@growthdesk/shared";
-import { APP_CONFIG, type AppConfig } from "../../config/config.js";
+import { PlatformSettingsService } from "../../core/platform-settings.service.js";
 import { badRequest, unavailable } from "../../common/errors.js";
 import type { NormalizedCharge, NormalizedEvent, NormalizedInvoice, NormalizedSubscription, PaymentProvider, ProviderPrice } from "./payment-provider.js";
 
@@ -158,22 +158,29 @@ export function normalizeStripeCharge(type: string, obj: Record<string, unknown>
 export class StripeProvider implements PaymentProvider {
   readonly id = "stripe";
   readonly label = "Stripe";
-  private client: Stripe | null = null;
+  /** The client and the key it was built with; rebuilt when an admin saves another key. */
+  private client: { key: string; stripe: Stripe } | null = null;
 
-  constructor(@Inject(APP_CONFIG) private readonly config: AppConfig) {}
+  constructor(private readonly settings: PlatformSettingsService) {}
 
-  isConfigured() {
-    return Boolean(this.config.STRIPE_SECRET_KEY && this.config.STRIPE_WEBHOOK_SECRET);
+  async isConfigured() {
+    const keys = await this.settings.stripe();
+    return Boolean(keys.secretKey && keys.webhookSecret);
   }
 
-  private stripe(): Stripe {
-    if (!this.config.STRIPE_SECRET_KEY) throw unavailable("Card payments are not configured on this installation yet.");
-    this.client ??= new Stripe(this.config.STRIPE_SECRET_KEY, { maxNetworkRetries: 2, timeout: 20_000 });
-    return this.client;
+  private async stripe(): Promise<Stripe> {
+    const { secretKey } = await this.settings.stripe();
+    if (!secretKey) throw unavailable("Card payments are not configured on this installation yet.");
+    if (this.client?.key !== secretKey) {
+      this.client = { key: secretKey, stripe: new Stripe(secretKey, { maxNetworkRetries: 2, timeout: 20_000 }) };
+      // A billing portal configuration belongs to the account the old key opened.
+      this.portalConfigId = null;
+    }
+    return this.client.stripe;
   }
 
   async createCheckout(input: Parameters<PaymentProvider["createCheckout"]>[0]) {
-    const session = await this.stripe().checkout.sessions.create({
+    const session = await (await this.stripe()).checkout.sessions.create({
       mode: "subscription",
       client_reference_id: input.billingAccountId,
       ...(input.providerCustomerId ? { customer: input.providerCustomerId } : { customer_email: input.customerEmail || undefined }),
@@ -202,7 +209,7 @@ export class StripeProvider implements PaymentProvider {
   private async portalConfiguration(): Promise<string | undefined> {
     if (this.portalConfigId) return this.portalConfigId;
     try {
-      const config = await this.stripe().billingPortal.configurations.create({
+      const config = await (await this.stripe()).billingPortal.configurations.create({
         features: {
           customer_update: { enabled: true, allowed_updates: ["email", "address", "tax_id", "name"] },
           invoice_history: { enabled: true },
@@ -221,12 +228,12 @@ export class StripeProvider implements PaymentProvider {
 
   async createPortal(input: { providerCustomerId: string; returnUrl: string }) {
     const configuration = await this.portalConfiguration();
-    const portal = await this.stripe().billingPortal.sessions.create({ customer: input.providerCustomerId, return_url: input.returnUrl, ...(configuration ? { configuration } : {}) });
+    const portal = await (await this.stripe()).billingPortal.sessions.create({ customer: input.providerCustomerId, return_url: input.returnUrl, ...(configuration ? { configuration } : {}) });
     return { url: portal.url };
   }
 
-  parseWebhook(rawBody: Buffer, headers: Record<string, string | string[] | undefined>): NormalizedEvent {
-    const secret = this.config.STRIPE_WEBHOOK_SECRET;
+  async parseWebhook(rawBody: Buffer, headers: Record<string, string | string[] | undefined>): Promise<NormalizedEvent> {
+    const secret = (await this.settings.stripe()).webhookSecret;
     if (!secret) throw unavailable("Stripe webhooks are not configured");
     const signature = headers["stripe-signature"];
     if (!signature || Array.isArray(signature)) throw badRequest("Missing Stripe-Signature header");
@@ -291,10 +298,10 @@ export class StripeProvider implements PaymentProvider {
   }
 
   async changePrice(providerSubscriptionId: string, priceId: string) {
-    const sub = await this.stripe().subscriptions.retrieve(providerSubscriptionId);
+    const sub = await (await this.stripe()).subscriptions.retrieve(providerSubscriptionId);
     const item = sub.items.data[0];
     if (!item) throw badRequest("That subscription has no items to change");
-    await this.stripe().subscriptions.update(providerSubscriptionId, {
+    await (await this.stripe()).subscriptions.update(providerSubscriptionId, {
       items: [{ id: item.id, price: priceId }],
       // Invoice the prorated difference now instead of on the next renewal (up to a year away on annual
       // plans), and only switch the price once that invoice is paid (docs/GAP_PLAN.md §0.10). A downgrade
@@ -306,27 +313,27 @@ export class StripeProvider implements PaymentProvider {
   }
 
   async findLiveSubscription(providerCustomerId: string) {
-    const list = await this.stripe().subscriptions.list({ customer: providerCustomerId, status: "all", limit: 20 });
+    const list = await (await this.stripe()).subscriptions.list({ customer: providerCustomerId, status: "all", limit: 20 });
     const live = list.data.find((s) => ["active", "trialing", "past_due", "incomplete", "paused", "unpaid"].includes(s.status));
     return live?.id ?? null;
   }
 
   async setCancelAtPeriodEnd(providerSubscriptionId: string, cancel: boolean) {
-    await this.stripe().subscriptions.update(providerSubscriptionId, { cancel_at_period_end: cancel });
+    await (await this.stripe()).subscriptions.update(providerSubscriptionId, { cancel_at_period_end: cancel });
   }
 
   async fetchSubscription(providerSubscriptionId: string) {
-    const sub = await this.stripe().subscriptions.retrieve(providerSubscriptionId);
+    const sub = await (await this.stripe()).subscriptions.retrieve(providerSubscriptionId);
     return normalizeStripeSubscription(sub as unknown as StripeSubLike);
   }
 
   async customerForCharge(providerChargeId: string) {
-    const charge = await this.stripe().charges.retrieve(providerChargeId);
+    const charge = await (await this.stripe()).charges.retrieve(providerChargeId);
     return idOf(charge.customer);
   }
 
   async fetchPrice(priceId: string): Promise<ProviderPrice> {
-    const price = await this.stripe().prices.retrieve(priceId);
+    const price = await (await this.stripe()).prices.retrieve(priceId);
     return {
       id: price.id,
       active: price.active,

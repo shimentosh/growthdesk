@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { email, requiredText, text } from "./schemas.js";
-import { EmailBlocks } from "./email-design.js";
+import { EmailBlocks, EmailTheme } from "./email-design.js";
 
 /*
  * Email marketing: lists, sending setup, campaigns and the public preference
@@ -96,6 +96,7 @@ export const SendingDomainUpdate = z.object({
 export const EmailDesignInput = z.object({
   name: requiredText(120),
   blocks: EmailBlocks.optional(),
+  theme: EmailTheme.optional(),
 });
 
 export const MarketingAudience = z.object({
@@ -120,9 +121,10 @@ export const MarketingCampaignInput = z.object({
     .or(z.literal("")),
   replyTo: z.union([email, z.literal("")]).optional(),
   sendingDomainId: uuid.nullable().optional(),
-  /** Copies this design's blocks into the campaign. */
+  /** Copies this design's blocks and theme into the campaign. */
   designId: uuid.nullable().optional(),
   blocks: EmailBlocks.optional(),
+  theme: EmailTheme.optional(),
   audience: MarketingAudience.optional(),
   trackOpens: z.boolean().optional(),
   trackClicks: z.boolean().optional(),

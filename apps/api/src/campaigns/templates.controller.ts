@@ -24,6 +24,12 @@ export class TemplatesController {
     return this.templates.variables(ctx);
   }
 
+  @Permission("templates.read")
+  @Get("categories")
+  categories(@Ctx() ctx: RequestContext) {
+    return this.templates.categories(ctx);
+  }
+
   @Permission("templates.write")
   @Post()
   create(@Ctx() ctx: RequestContext, @Body(TemplateInput) body: z.infer<typeof TemplateInput>) {

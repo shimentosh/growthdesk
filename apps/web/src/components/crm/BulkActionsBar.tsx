@@ -2,8 +2,27 @@
 
 import { useState } from "react";
 import type { z } from "zod";
-import { BadgeCheck, ChevronDown, CircleDot, ListChecks, Send, SquareCheckBig, Tag, Tags, Trash2, UserCheck, UserRound, UserX, Users, X } from "lucide-react";
-import { CONTACT_STATUSES, QUALIFICATIONS, labelOf, type BulkContactAction } from "@growthdesk/shared";
+import {
+  Archive,
+  ArchiveRestore,
+  BadgeCheck,
+  ChevronDown,
+  CircleDot,
+  Flag,
+  Handshake,
+  ListChecks,
+  Send,
+  SquareCheckBig,
+  Tag,
+  Tags,
+  Trash2,
+  UserCheck,
+  UserRound,
+  UserX,
+  Users,
+  X,
+} from "lucide-react";
+import { CONTACT_STATUSES, LIFECYCLE_STAGES, QUALIFICATIONS, labelOf, type BulkContactAction } from "@growthdesk/shared";
 import { AddToListModal } from "@/components/marketing/AddToListModal";
 import { MemberPicker } from "@/components/pickers/Pickers";
 import { Button, IconButton } from "@/components/ui/Button";
@@ -15,17 +34,32 @@ import { useApiMutation } from "@/lib/query";
 import { useMe, useWorkspace } from "@/lib/session";
 import type { BulkResult } from "@/lib/types/crm";
 import { AddToCampaignModal } from "./AddToCampaignModal";
+import { ARCHIVE_DESCRIPTION, LIST_WRITE, STAGE_PLURAL, TransferToSalesModal } from "./lifecycle";
 import { TagEditor } from "./Tags";
 
-type BulkAction = Exclude<z.infer<typeof BulkContactAction>, { action: "enroll" }>;
+type BulkAction = Exclude<z.infer<typeof BulkContactAction>, { action: "enroll" | "add_to_list" }>;
 
 const plural = (n: number) => `${formatNumber(n)} contact${n === 1 ? "" : "s"}`;
 
 /**
  * What can be done to the selected rows (POST /contacts/bulk). "Add to
  * campaign" goes through the campaign instead (POST /campaigns/:id/enroll).
+ * `archived` says the rows on screen are archived (Restore instead of
+ * Archive); `leads` puts the lead actions first and offers Transfer to sales.
  */
-export function BulkActionsBar({ ids, onDone, onClear }: { ids: string[]; onDone: () => void; onClear: () => void }) {
+export function BulkActionsBar({
+  ids,
+  onDone,
+  onClear,
+  archived = false,
+  leads = false,
+}: {
+  ids: string[];
+  onDone: () => void;
+  onClear: () => void;
+  archived?: boolean;
+  leads?: boolean;
+}) {
   const ws = useWorkspace();
   const me = useMe();
   const [tagMode, setTagMode] = useState<"tag" | "untag" | null>(null);
@@ -37,11 +71,22 @@ export function BulkActionsBar({ ids, onDone, onClear }: { ids: string[]; onDone
   const [listed, setListed] = useState(false);
   const [enrolling, setEnrolling] = useState(false);
   const [enrolled, setEnrolled] = useState(false);
+  const [transferring, setTransferring] = useState(false);
+  const [archiving, setArchiving] = useState(false);
 
   const bulk = useApiMutation<BulkResult, BulkAction>({
     path: ws.path("/contacts/bulk"),
     invalidate: [ws.key("contacts"), ws.key("tags"), ws.key("companies")],
-    success: (r, v) => (v.action === "delete" ? `${plural(r.affected)} deleted` : `${plural(r.affected)} updated`),
+    success: (r, v) =>
+      v.action === "delete"
+        ? `${plural(r.affected)} deleted`
+        : v.action === "archive"
+          ? `${plural(r.affected)} archived`
+          : v.action === "unarchive"
+            ? `${plural(r.affected)} restored`
+            : v.action === "stage"
+              ? `${plural(r.affected)} moved to ${STAGE_PLURAL[v.stage]}`
+              : `${plural(r.affected)} updated`,
     onSuccess: () => {
       setTagMode(null);
       setTags([]);
@@ -60,6 +105,12 @@ export function BulkActionsBar({ ids, onDone, onClear }: { ids: string[]; onDone
         <SquareCheckBig aria-hidden className="size-4 text-accent-ink" />
         {plural(n)} selected
       </span>
+
+      {leads && !archived && (
+        <Button size="sm" variant="primary" icon={<Handshake />} onClick={() => setTransferring(true)} disabled={bulk.isPending}>
+          Transfer to sales
+        </Button>
+      )}
 
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
@@ -131,7 +182,30 @@ export function BulkActionsBar({ ids, onDone, onClear }: { ids: string[]; onDone
         </DropdownMenuContent>
       </DropdownMenu>
 
-      {ws.can("marketing.write") && (
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button size="sm" icon={<Flag />} iconRight={<ChevronDown />} disabled={bulk.isPending}>
+            Stage
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="start">
+          {!leads && (
+            <>
+              <DropdownMenuItem icon={<Handshake />} onSelect={() => setTransferring(true)}>
+                Transfer to sales…
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+            </>
+          )}
+          {LIFECYCLE_STAGES.map((s) => (
+            <DropdownMenuItem key={s} onSelect={() => bulk.mutate({ action: "stage", ids, stage: s })}>
+              Move to {STAGE_PLURAL[s]}
+            </DropdownMenuItem>
+          ))}
+        </DropdownMenuContent>
+      </DropdownMenu>
+
+      {ws.can(LIST_WRITE) && (
         <Button size="sm" icon={<ListChecks />} onClick={() => setListing(true)} disabled={bulk.isPending}>
           Add to list
         </Button>
@@ -140,6 +214,16 @@ export function BulkActionsBar({ ids, onDone, onClear }: { ids: string[]; onDone
       {ws.can("campaigns.launch") && (
         <Button size="sm" icon={<Send />} onClick={() => setEnrolling(true)} disabled={bulk.isPending}>
           Add to campaign
+        </Button>
+      )}
+
+      {archived ? (
+        <Button size="sm" icon={<ArchiveRestore />} onClick={() => bulk.mutate({ action: "unarchive", ids })} disabled={bulk.isPending}>
+          Restore
+        </Button>
+      ) : (
+        <Button size="sm" icon={<Archive />} onClick={() => setArchiving(true)} disabled={bulk.isPending}>
+          Archive
         </Button>
       )}
 
@@ -207,7 +291,7 @@ export function BulkActionsBar({ ids, onDone, onClear }: { ids: string[]; onDone
         </Field>
       </Modal>
 
-      {ws.can("marketing.write") && (
+      {ws.can(LIST_WRITE) && (
         <AddToListModal
           open={listing}
           onOpenChange={(o) => {
@@ -238,6 +322,18 @@ export function BulkActionsBar({ ids, onDone, onClear }: { ids: string[]; onDone
           onEnrolled={(r) => setEnrolled(r.enrolled > 0)}
         />
       )}
+
+      <TransferToSalesModal open={transferring} onOpenChange={setTransferring} ids={ids} onDone={onDone} />
+
+      <ConfirmDialog
+        open={archiving}
+        onOpenChange={setArchiving}
+        tone="default"
+        title={`Archive ${plural(n)}?`}
+        description={ARCHIVE_DESCRIPTION}
+        confirmLabel="Archive"
+        onConfirm={() => bulk.mutateAsync({ action: "archive", ids })}
+      />
 
       <ConfirmDialog
         open={deleting}

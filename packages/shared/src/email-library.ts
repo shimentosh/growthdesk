@@ -1,0 +1,558 @@
+import type { EmailBlock, EmailTheme } from "./email-design.js";
+
+/*
+ * The built-in marketing email designs every workspace starts with. Each one
+ * is a complete, sendable design (theme + blocks) that people copy and edit.
+ *
+ * `key` is a stable identifier used to seed workspaces exactly once — never
+ * rename or reuse a key. Add new designs with new keys instead.
+ */
+
+export type LibraryDesign = {
+  key: string;
+  name: string;
+  description: string;
+  category: string;
+  theme: EmailTheme;
+  blocks: EmailBlock[];
+};
+
+const SOCIAL = (links: { network: "website" | "linkedin" | "x" | "facebook" | "instagram" | "youtube" | "tiktok" | "github"; path: string }[]) =>
+  links.map((l) => ({ network: l.network, url: `https://example.com/${l.path}` }));
+
+export const EMAIL_DESIGN_LIBRARY: LibraryDesign[] = [
+  // ─── 1. Product launch: dark navy + electric blue ──────────────────────────
+  {
+    key: "design-product-launch",
+    name: "Product launch",
+    description: "Bold dark hero for announcing a new product, with three key benefits and a clear call to action.",
+    category: "Announcement",
+    theme: {
+      background: "#e9eef6",
+      surface: "#ffffff",
+      text: "#22304a",
+      heading: "#0b1f3a",
+      muted: "#64748b",
+      accent: "#2f6bff",
+      accentText: "#ffffff",
+      tint: "#0b1f3a",
+      font: "helvetica",
+      headingFont: "helvetica",
+      radius: 14,
+      buttonRadius: 8,
+    },
+    blocks: [
+      { type: "header", id: "b1", logo: "", brand: "Your Brand", tagline: "", align: "left", background: "#0b1f3a" },
+      {
+        type: "hero",
+        id: "b2",
+        eyebrow: "Introducing",
+        title: "Meet [Product name]: the faster way to [outcome]",
+        text: "Everything your team needs to [do the job] in one place — built from hundreds of conversations with people like you.",
+        image: "https://placehold.co/1200x600/0b1f3a/ffffff?text=Product+Launch",
+        buttonLabel: "See it in action",
+        buttonUrl: "https://example.com/launch",
+        align: "center",
+      },
+      {
+        type: "text",
+        id: "b3",
+        text: "Hi {{first_name|there}},\n\nToday we're launching something we've been working on all year. It takes the busywork out of [process] so your team can focus on the work that actually moves the needle.",
+        align: "left",
+      },
+      {
+        type: "columns",
+        id: "b4",
+        align: "left",
+        items: [
+          { image: "", title: "Set up in minutes", text: "Connect your tools and import your data without a single support ticket.", linkLabel: "", linkUrl: "" },
+          { image: "", title: "Built for teams", text: "Shared views, roles and comments keep everyone on the same page.", linkLabel: "", linkUrl: "" },
+          { image: "", title: "Measurable results", text: "Live reports show exactly what's working and what isn't.", linkLabel: "", linkUrl: "" },
+        ],
+      },
+      { type: "button", id: "b5", label: "Start your free trial", url: "https://example.com/signup", align: "center" },
+      { type: "text", id: "b6", text: "Questions? Just reply to this email — a real person reads every one.\n\n— {{sender_name|The team}}", align: "left" },
+      { type: "divider", id: "b7" },
+      { type: "social", id: "b8", align: "center", links: SOCIAL([{ network: "website", path: "" }, { network: "linkedin", path: "linkedin" }, { network: "x", path: "x" }]) },
+    ],
+  },
+
+  // ─── 2. Monthly newsletter: warm cream + terracotta ────────────────────────
+  {
+    key: "design-monthly-newsletter",
+    name: "Monthly newsletter",
+    description: "Editorial newsletter with a featured story, a three-article roundup and a short tip of the month.",
+    category: "Newsletter",
+    theme: {
+      background: "#f4ede4",
+      surface: "#fffaf3",
+      text: "#3b2f2a",
+      heading: "#2a1f1a",
+      muted: "#8a7a70",
+      accent: "#c2562f",
+      accentText: "#ffffff",
+      tint: "#f3e3d3",
+      font: "georgia",
+      headingFont: "georgia",
+      radius: 6,
+      buttonRadius: 4,
+    },
+    blocks: [
+      { type: "header", id: "b1", logo: "", brand: "Your Brand", tagline: "The Monthly Dispatch", align: "center" },
+      { type: "divider", id: "b2" },
+      { type: "image", id: "b3", src: "https://placehold.co/1200x560/c2562f/fffaf3?text=Featured+Story", alt: "Featured story", href: "https://example.com/blog/featured", width: 100 },
+      { type: "heading", id: "b4", text: "This month: [featured story headline]", level: 1, align: "left" },
+      {
+        type: "text",
+        id: "b5",
+        text: "Hi {{first_name|there}},\n\nA quick roundup of what we learned, shipped and read this month. The headline: [one-sentence summary of the featured story]. [Read the full story](https://example.com/blog/featured).",
+        align: "left",
+      },
+      { type: "heading", id: "b6", text: "Worth your time", level: 2, align: "left" },
+      {
+        type: "columns",
+        id: "b7",
+        align: "left",
+        items: [
+          { image: "https://placehold.co/400x260/f3e3d3/c2562f?text=Guide", title: "[Article one]", text: "A practical guide to [topic] in under ten minutes.", linkLabel: "Read", linkUrl: "https://example.com/blog/one" },
+          { image: "https://placehold.co/400x260/f3e3d3/c2562f?text=Interview", title: "[Article two]", text: "What [expert] wishes they'd known about [topic].", linkLabel: "Read", linkUrl: "https://example.com/blog/two" },
+          { image: "https://placehold.co/400x260/f3e3d3/c2562f?text=Data", title: "[Article three]", text: "Fresh numbers on [trend] from [number] teams.", linkLabel: "Read", linkUrl: "https://example.com/blog/three" },
+        ],
+      },
+      { type: "callout", id: "b8", title: "Tip of the month", text: "[One specific, actionable tip your readers can use today.]", align: "left" },
+      { type: "button", id: "b9", label: "Visit the blog", url: "https://example.com/blog", align: "center" },
+      { type: "text", id: "b10", text: "Until next month,\n*{{sender_name|The team}}*", align: "left" },
+      { type: "social", id: "b11", align: "center", links: SOCIAL([{ network: "website", path: "" }, { network: "linkedin", path: "linkedin" }, { network: "instagram", path: "instagram" }]) },
+    ],
+  },
+
+  // ─── 3. Welcome / onboarding: mint ─────────────────────────────────────────
+  {
+    key: "design-welcome-onboarding",
+    name: "Welcome & onboarding",
+    description: "Friendly welcome with three numbered first steps to help new sign-ups get value fast.",
+    category: "Onboarding",
+    theme: {
+      background: "#eaf7f1",
+      surface: "#ffffff",
+      text: "#1f3b33",
+      heading: "#0f2e25",
+      muted: "#5f7d73",
+      accent: "#0f9d74",
+      accentText: "#ffffff",
+      tint: "#d4f2e5",
+      font: "system",
+      headingFont: "system",
+      radius: 24,
+      buttonRadius: 40,
+    },
+    blocks: [
+      { type: "header", id: "b1", logo: "", brand: "Your Brand", tagline: "", align: "center" },
+      {
+        type: "hero",
+        id: "b2",
+        eyebrow: "Welcome aboard",
+        title: "Great to have you, {{first_name|friend}}",
+        text: "You're all set up. Here's how to get your first win in the next ten minutes.",
+        image: "",
+        buttonLabel: "",
+        buttonUrl: "",
+        align: "center",
+      },
+      { type: "heading", id: "b3", text: "Three steps to get started", level: 2, align: "left" },
+      {
+        type: "list",
+        id: "b4",
+        ordered: true,
+        items: [
+          "**Complete your profile** — add your details so everything is personalised to you.",
+          "**Connect your tools** — bring in your data with one-click integrations.",
+          "**Invite your team** — work is better together, and it's free to add teammates.",
+        ],
+      },
+      { type: "button", id: "b5", label: "Open my dashboard", url: "https://example.com/app", align: "center" },
+      {
+        type: "callout",
+        id: "b6",
+        title: "Prefer a guided tour?",
+        text: "Book a free 20-minute onboarding call and we'll set things up with you. [Pick a time](https://example.com/onboarding-call).",
+        align: "center",
+      },
+      { type: "text", id: "b7", text: "If you get stuck, reply to this email — we usually answer within a few hours.\n\nWelcome again,\n{{sender_name|The team}}", align: "left" },
+      { type: "social", id: "b8", align: "center", links: SOCIAL([{ network: "website", path: "" }, { network: "youtube", path: "youtube" }, { network: "linkedin", path: "linkedin" }]) },
+    ],
+  },
+
+  // ─── 4. Promotional sale: deep purple + gold ───────────────────────────────
+  {
+    key: "design-promo-sale",
+    name: "Limited-time offer",
+    description: "High-energy sale email with a discount code callout, deadline and featured plans.",
+    category: "Promotion",
+    theme: {
+      background: "#1a1033",
+      surface: "#ffffff",
+      text: "#2d2442",
+      heading: "#1a1033",
+      muted: "#776d8a",
+      accent: "#f5b82e",
+      accentText: "#1a1033",
+      tint: "#3d1f7a",
+      font: "trebuchet",
+      headingFont: "trebuchet",
+      radius: 20,
+      buttonRadius: 12,
+    },
+    blocks: [
+      { type: "header", id: "b1", logo: "", brand: "Your Brand", tagline: "", align: "center", background: "#3d1f7a" },
+      {
+        type: "hero",
+        id: "b2",
+        eyebrow: "This week only",
+        title: "Save 30% on annual plans",
+        text: "Lock in our lowest price of the year — the offer ends Friday at midnight.",
+        image: "",
+        buttonLabel: "Claim my discount",
+        buttonUrl: "https://example.com/pricing?code=SAVE30",
+        align: "center",
+      },
+      {
+        type: "text",
+        id: "b3",
+        text: "Hi {{first_name|there}},\n\nIf you've been thinking about upgrading, now's the moment. For the next few days, every annual plan is 30% off — for the whole first year.",
+        align: "center",
+      },
+      { type: "callout", id: "b4", title: "Use code SAVE30", text: "Enter it at checkout. Valid until **Friday, 11:59 pm**.", background: "#fff4d6", align: "center" },
+      {
+        type: "columns",
+        id: "b5",
+        align: "center",
+        items: [
+          { image: "", title: "Starter", text: "**$[price]/mo** billed yearly\nFor individuals getting started.", linkLabel: "Choose Starter", linkUrl: "https://example.com/pricing/starter" },
+          { image: "", title: "Pro", text: "**$[price]/mo** billed yearly\nFor growing teams that need more.", linkLabel: "Choose Pro", linkUrl: "https://example.com/pricing/pro" },
+        ],
+      },
+      { type: "button", id: "b6", label: "See all plans", url: "https://example.com/pricing", align: "center" },
+      { type: "text", id: "b7", text: "Already on an annual plan? Thank you — reply and we'll extend your renewal discount too.", align: "center" },
+      { type: "social", id: "b8", align: "center", links: SOCIAL([{ network: "website", path: "" }, { network: "instagram", path: "instagram" }, { network: "facebook", path: "facebook" }]) },
+    ],
+  },
+
+  // ─── 5. Webinar invitation: teal + coral ───────────────────────────────────
+  {
+    key: "design-webinar-invite",
+    name: "Webinar invitation",
+    description: "Event invite with date and time callout, agenda, speaker spotlight and a registration button.",
+    category: "Event",
+    theme: {
+      background: "#e6f3f4",
+      surface: "#ffffff",
+      text: "#21383b",
+      heading: "#0e3b40",
+      muted: "#5d7a7d",
+      accent: "#e8604c",
+      accentText: "#ffffff",
+      tint: "#0e5e66",
+      font: "verdana",
+      headingFont: "helvetica",
+      radius: 12,
+      buttonRadius: 24,
+    },
+    blocks: [
+      { type: "header", id: "b1", logo: "", brand: "Your Brand", tagline: "Live sessions", align: "left" },
+      {
+        type: "hero",
+        id: "b2",
+        eyebrow: "Free live webinar",
+        title: "[Webinar title]: a practical playbook for [audience]",
+        text: "45 minutes, real examples, and live Q&A with people who've done it.",
+        image: "",
+        buttonLabel: "Save my seat",
+        buttonUrl: "https://example.com/webinar",
+        align: "left",
+      },
+      { type: "callout", id: "b3", title: "[Day], [Month] [Date] · [Time] [Time zone]", text: "Can't make it live? Register anyway and we'll send you the recording.", background: "#fde8e4", align: "center" },
+      { type: "text", id: "b4", text: "Hi {{first_name|there}},\n\nWe're hosting a live session on [topic] and would love for you to join. Here's what we'll cover:", align: "left" },
+      {
+        type: "list",
+        id: "b5",
+        ordered: false,
+        items: ["[Agenda point one — the problem and why it matters now]", "[Agenda point two — a step-by-step framework]", "[Agenda point three — mistakes to avoid]", "Live Q&A — bring your questions"],
+      },
+      { type: "heading", id: "b6", text: "Your hosts", level: 2, align: "left" },
+      {
+        type: "columns",
+        id: "b7",
+        align: "left",
+        items: [
+          { image: "https://placehold.co/300x300/0e5e66/ffffff?text=Speaker", title: "[Speaker name]", text: "[Role] at [Company]", linkLabel: "", linkUrl: "" },
+          { image: "https://placehold.co/300x300/e8604c/ffffff?text=Speaker", title: "[Speaker name]", text: "[Role] at [Company]", linkLabel: "", linkUrl: "" },
+        ],
+      },
+      { type: "button", id: "b8", label: "Register for free", url: "https://example.com/webinar", align: "center" },
+      { type: "text", id: "b9", text: "See you there,\n{{sender_name|The team}}", align: "left" },
+      { type: "social", id: "b10", align: "center", links: SOCIAL([{ network: "linkedin", path: "linkedin" }, { network: "youtube", path: "youtube" }]) },
+    ],
+  },
+
+  // ─── 6. Case study: monochrome black & white ───────────────────────────────
+  {
+    key: "design-customer-story",
+    name: "Customer story",
+    description: "Case study with headline results, a pull quote from the customer and a link to the full story.",
+    category: "Case study",
+    theme: {
+      background: "#f2f2f2",
+      surface: "#ffffff",
+      text: "#2a2a2a",
+      heading: "#000000",
+      muted: "#7a7a7a",
+      accent: "#111111",
+      accentText: "#ffffff",
+      tint: "#111111",
+      font: "helvetica",
+      headingFont: "georgia",
+      radius: 0,
+      buttonRadius: 0,
+    },
+    blocks: [
+      { type: "header", id: "b1", logo: "", brand: "Your Brand", tagline: "Customer stories", align: "left" },
+      {
+        type: "hero",
+        id: "b2",
+        eyebrow: "Case study",
+        title: "How [Customer] grew [metric] by [number]% in [timeframe]",
+        text: "",
+        image: "https://placehold.co/1200x600/111111/ffffff?text=Customer+Story",
+        buttonLabel: "",
+        buttonUrl: "",
+        align: "left",
+      },
+      {
+        type: "text",
+        id: "b3",
+        text: "Hi {{first_name|there}},\n\n[Customer] had a familiar problem: [the challenge in one sentence]. Here's how they solved it — and what any team can borrow from their approach.",
+        align: "left",
+      },
+      {
+        type: "columns",
+        id: "b4",
+        align: "center",
+        items: [
+          { image: "", title: "[3x]", text: "more [result]", linkLabel: "", linkUrl: "" },
+          { image: "", title: "[40%]", text: "less time on [task]", linkLabel: "", linkUrl: "" },
+          { image: "", title: "[6 weeks]", text: "to full rollout", linkLabel: "", linkUrl: "" },
+        ],
+      },
+      { type: "quote", id: "b5", text: "We stopped guessing. Within a month the whole team was working from the same numbers, and it showed in our results.", author: "[Customer name]", role: "[Role], [Company]" },
+      {
+        type: "text",
+        id: "b6",
+        text: "The full story covers how they rolled it out, what they'd do differently and the exact setup they use today.",
+        align: "left",
+      },
+      { type: "button", id: "b7", label: "Read the full story", url: "https://example.com/customers/story", align: "left" },
+      { type: "divider", id: "b8" },
+      { type: "text", id: "b9", text: "Want results like these? [Book a 20-minute walkthrough](https://example.com/demo) and we'll show you how it would work for {{company|your team}}.", align: "left" },
+    ],
+  },
+
+  // ─── 7. Feature update / changelog: slate + violet ─────────────────────────
+  {
+    key: "design-feature-update",
+    name: "Product update",
+    description: "Changelog-style roundup of new features, improvements and fixes, with feature cards.",
+    category: "Product update",
+    theme: {
+      background: "#f1f2f6",
+      surface: "#ffffff",
+      text: "#2b2f3a",
+      heading: "#151823",
+      muted: "#6b7080",
+      accent: "#6d4aff",
+      accentText: "#ffffff",
+      tint: "#eeeaff",
+      font: "system",
+      headingFont: "system",
+      radius: 10,
+      buttonRadius: 6,
+    },
+    blocks: [
+      { type: "header", id: "b1", logo: "", brand: "Your Brand", tagline: "What's new · [Month Year]", align: "left" },
+      { type: "heading", id: "b2", text: "New this month", level: 1, align: "left" },
+      {
+        type: "text",
+        id: "b3",
+        text: "Hi {{first_name|there}}, here's everything we shipped in [Month]. Most of it came straight from customer feedback — thank you for sending it.",
+        align: "left",
+      },
+      {
+        type: "columns",
+        id: "b4",
+        align: "left",
+        items: [
+          { image: "https://placehold.co/520x300/6d4aff/ffffff?text=Feature+One", title: "[Feature one]", text: "[What it does and why it helps, in one sentence.]", linkLabel: "Try it", linkUrl: "https://example.com/changelog/feature-one" },
+          { image: "https://placehold.co/520x300/151823/ffffff?text=Feature+Two", title: "[Feature two]", text: "[What it does and why it helps, in one sentence.]", linkLabel: "Try it", linkUrl: "https://example.com/changelog/feature-two" },
+        ],
+      },
+      { type: "heading", id: "b5", text: "Improvements", level: 2, align: "left" },
+      {
+        type: "list",
+        id: "b6",
+        ordered: false,
+        items: ["**Faster search** — results now load up to [2x] quicker.", "**Bulk edit** — update hundreds of records in one go.", "**New export options** — CSV and Excel, with your filters applied."],
+      },
+      { type: "heading", id: "b7", text: "Fixes", level: 2, align: "left" },
+      { type: "list", id: "b8", ordered: false, items: ["[Fixed an issue where …]", "[Fixed an issue where …]"] },
+      { type: "button", id: "b9", label: "Read the full changelog", url: "https://example.com/changelog", align: "left" },
+      { type: "callout", id: "b10", title: "Got an idea?", text: "Tell us what to build next — [share feedback](https://example.com/feedback).", align: "left" },
+      { type: "social", id: "b11", align: "left", links: SOCIAL([{ network: "x", path: "x" }, { network: "linkedin", path: "linkedin" }, { network: "github", path: "github" }]) },
+    ],
+  },
+
+  // ─── 8. Re-engagement: soft blush + plum ───────────────────────────────────
+  {
+    key: "design-we-miss-you",
+    name: "We miss you",
+    description: "Warm re-engagement email for inactive users, highlighting what's new and an easy way back.",
+    category: "Re-engagement",
+    theme: {
+      background: "#fbeff1",
+      surface: "#ffffff",
+      text: "#3d2a33",
+      heading: "#4a1d3a",
+      muted: "#8c7480",
+      accent: "#a1306f",
+      accentText: "#ffffff",
+      tint: "#f7dbe4",
+      font: "trebuchet",
+      headingFont: "georgia",
+      radius: 18,
+      buttonRadius: 30,
+    },
+    blocks: [
+      { type: "header", id: "b1", logo: "", brand: "Your Brand", tagline: "", align: "center" },
+      {
+        type: "hero",
+        id: "b2",
+        eyebrow: "",
+        title: "It's been a while, {{first_name|friend}}",
+        text: "A lot has changed since you last logged in — and we think you'll like it.",
+        image: "https://placehold.co/1200x500/f7dbe4/a1306f?text=Welcome+Back",
+        buttonLabel: "",
+        buttonUrl: "",
+        align: "center",
+      },
+      { type: "heading", id: "b3", text: "What you've missed", level: 2, align: "center" },
+      {
+        type: "list",
+        id: "b4",
+        ordered: false,
+        items: ["[Big new feature] that saves hours every week", "A redesigned, faster dashboard", "[Integration] support, so your tools finally talk to each other"],
+      },
+      { type: "callout", id: "b5", title: "A little welcome-back gift", text: "Come back this month and get **[one month free]** on any paid plan.", align: "center" },
+      { type: "button", id: "b6", label: "Take another look", url: "https://example.com/login", align: "center" },
+      {
+        type: "text",
+        id: "b7",
+        text: "Not the right fit anymore? No hard feelings — you can [update your email preferences](https://example.com/preferences) any time. And if something put you off, just reply and tell us. We read every message.\n\n{{sender_name|The team}}",
+        align: "center",
+      },
+    ],
+  },
+
+  // ─── 9. Founder letter: minimal serif, no bands ────────────────────────────
+  {
+    key: "design-founder-letter",
+    name: "Founder letter",
+    description: "Minimal, personal plain-letter design in a serif font — no banners or images, just a note from the founder.",
+    category: "Letter",
+    theme: {
+      background: "#ffffff",
+      surface: "#ffffff",
+      text: "#222222",
+      heading: "#111111",
+      muted: "#888888",
+      accent: "#1a4d8f",
+      accentText: "#ffffff",
+      tint: "#f6f6f4",
+      font: "georgia",
+      headingFont: "georgia",
+      radius: 0,
+      buttonRadius: 3,
+    },
+    blocks: [
+      { type: "spacer", id: "b1", height: 16 },
+      {
+        type: "text",
+        id: "b2",
+        text: "Hi {{first_name|there}},\n\nI'm [Founder name], founder of [Company]. I don't send many of these, so I'll keep it short.\n\nWhen we started, we had one goal: [the mission in one sentence]. This year, thanks to customers like you, we [milestone — e.g. helped 2,000 teams do X].\n\nBut I'm writing because I want to hear from you. What's the one thing we could do better? What almost made you leave? What would you build if you were me?\n\nJust hit reply. Every answer comes straight to my inbox, and I read them all.",
+        align: "left",
+      },
+      { type: "text", id: "b3", text: "Thank you for being part of this.\n\n[Founder name]\n*Founder, [Company]*", align: "left" },
+      { type: "spacer", id: "b4", height: 8 },
+      { type: "text", id: "b5", text: "P.S. If you'd rather talk, [grab 15 minutes on my calendar](https://example.com/founder-call).", align: "left" },
+    ],
+  },
+
+  // ─── 10. Thank-you / seasonal: forest green + cream ────────────────────────
+  {
+    key: "design-thank-you-seasonal",
+    name: "Thank you & season's greetings",
+    description: "Warm end-of-year thank-you with highlights from the year, a holiday schedule note and a small gift.",
+    category: "Seasonal",
+    theme: {
+      background: "#f3f0e6",
+      surface: "#fffdf7",
+      text: "#2e3a2f",
+      heading: "#1e3a2a",
+      muted: "#7b8577",
+      accent: "#b33a3a",
+      accentText: "#ffffff",
+      tint: "#1e4d36",
+      font: "georgia",
+      headingFont: "georgia",
+      radius: 16,
+      buttonRadius: 10,
+    },
+    blocks: [
+      {
+        type: "hero",
+        id: "b1",
+        eyebrow: "Your Brand",
+        title: "Thank you for an incredible year",
+        text: "From all of us, warm wishes to you and everyone at {{company|your team}}.",
+        image: "https://placehold.co/1200x560/1e4d36/fffdf7?text=Season%27s+Greetings",
+        buttonLabel: "",
+        buttonUrl: "",
+        align: "center",
+      },
+      {
+        type: "text",
+        id: "b2",
+        text: "Dear {{first_name|friend}},\n\nAs the year winds down, we wanted to pause and say thank you. Your trust, feedback and patience shaped everything we built this year.",
+        align: "left",
+      },
+      {
+        type: "columns",
+        id: "b3",
+        align: "center",
+        items: [
+          { image: "", title: "[12]", text: "new features shipped", linkLabel: "", linkUrl: "" },
+          { image: "", title: "[4,000+]", text: "customers served", linkLabel: "", linkUrl: "" },
+          { image: "", title: "[98%]", text: "support satisfaction", linkLabel: "", linkUrl: "" },
+        ],
+      },
+      { type: "callout", id: "b4", title: "A small gift from us", text: "Use code **THANKYOU** for [a free month / an upgrade] — valid until [date].", background: "#f6e3d9", align: "center" },
+      { type: "button", id: "b5", label: "Redeem your gift", url: "https://example.com/gift", align: "center" },
+      { type: "divider", id: "b6" },
+      {
+        type: "text",
+        id: "b7",
+        text: "**Holiday hours:** our team is taking a short break from [date] to [date]. Support stays open for urgent issues, and we'll be back to full speed on [date].\n\nWith gratitude,\n{{sender_name|The team}}",
+        align: "left",
+      },
+      { type: "social", id: "b8", align: "center", links: SOCIAL([{ network: "website", path: "" }, { network: "linkedin", path: "linkedin" }, { network: "instagram", path: "instagram" }]) },
+    ],
+  },
+];

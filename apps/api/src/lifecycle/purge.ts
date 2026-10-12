@@ -67,6 +67,7 @@ export const PURGE_ORDER = [
   "PipelineStage",
   "Pipeline",
   "WorkspaceExport",
+  "LibrarySeed",
 ] as const;
 
 /** Tenant tables the purge order misses, or lists that are not tenant tables. Empty when they agree. */

@@ -55,8 +55,9 @@ export class BillingService {
   }
 
   /** The checkout provider for this install: the first configured one. */
-  private checkoutProvider(): PaymentProvider | null {
-    return Object.values(this.providers).find((p) => p.isConfigured()) ?? null;
+  private async checkoutProvider(): Promise<PaymentProvider | null> {
+    for (const p of Object.values(this.providers)) if (await p.isConfigured()) return p;
+    return null;
   }
 
   async publicPlans() {
@@ -93,7 +94,7 @@ export class BillingService {
           take: 50,
         })
       : [];
-    const checkout = this.checkoutProvider();
+    const checkout = await this.checkoutProvider();
     const sub = summary.subscription;
     return {
       scope: isOwner ? ("account" as const) : ("workspace" as const),
@@ -163,7 +164,7 @@ export class BillingService {
    */
   async checkout(ctx: RequestContext, planKey: string, interval: BillingInterval) {
     const w = ws(ctx);
-    const provider = this.checkoutProvider();
+    const provider = await this.checkoutProvider();
     if (!provider) throw unavailable("Online payments are not set up on this installation yet. Contact support to change plans.");
     const plan = await this.prisma.db.plan.findUnique({ where: { key: planKey } });
     const account = await this.prisma.db.billingAccount.findUniqueOrThrow({
@@ -255,7 +256,7 @@ export class BillingService {
    */
   async handleWebhook(providerId: string, rawBody: Buffer, headers: Record<string, string | string[] | undefined>) {
     const provider = this.provider(providerId);
-    const event = provider.parseWebhook(rawBody, headers);
+    const event = await provider.parseWebhook(rawBody, headers);
 
     const existing = await this.prisma.db.billingEvent.findUnique({
       where: { provider_providerEventId: { provider: providerId, providerEventId: event.id } },
@@ -658,7 +659,7 @@ export class BillingService {
         out.notices.push(`Price ids for "${providerId}" were saved unchecked: no such payment provider is installed.`);
         continue;
       }
-      if (!provider.isConfigured()) {
+      if (!(await provider.isConfigured())) {
         out.notices.push(`${provider.label} price ids were saved without being checked, because ${provider.label} is not configured on this installation. Customers are shown the amounts entered here.`);
         continue;
       }
@@ -778,7 +779,7 @@ export class BillingService {
     let fixed = 0;
     for (const sub of subs) {
       const provider = this.providers[sub.provider];
-      if (!provider?.isConfigured() || !sub.providerSubscriptionId) continue;
+      if (!provider || !(await provider.isConfigured()) || !sub.providerSubscriptionId) continue;
       try {
         const fresh = await provider.fetchSubscription(sub.providerSubscriptionId);
         await this.applySubscription(sub.provider, { ...fresh, billingAccountId: sub.billingAccountId }, new Date(), false);

@@ -1,6 +1,6 @@
 # Growthdesk — Product Plan
 
-Growthdesk (formerly Outreach OS) is one workspace for the whole revenue journey:
+Growthdesk is one workspace for the whole revenue journey:
 
 - **Outreach.** Cold and warm outbound from connected mailboxes, plus WhatsApp, Telegram and calls.
 - **Marketing.** Klaviyo-style email marketing to opted-in audiences: campaigns, flows, segments and forms.

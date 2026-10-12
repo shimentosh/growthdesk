@@ -17,7 +17,7 @@ import { renderPlatformTemplate } from "./render.js";
  * reads say whether each is set (and whether it comes from the environment).
  */
 
-const SECRET_KEYS = ["resendApiKey", "resendWebhookSecret"] as const;
+const SECRET_KEYS = ["resendApiKey", "resendWebhookSecret", "smtpPassword"] as const;
 
 @Injectable()
 export class PlatformMailAdminService {
@@ -65,7 +65,7 @@ export class PlatformMailAdminService {
         replyTo: env.replyTo ?? null,
       },
       defaults: { mailFrom: this.config.MAIL_FROM, replyTo: this.config.MAIL_REPLY_TO ?? null },
-      smtp: this.mail.smtp.describe(),
+      smtp: await this.mail.smtp.describe(),
     };
   }
 

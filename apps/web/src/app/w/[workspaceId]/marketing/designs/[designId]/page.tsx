@@ -4,7 +4,7 @@ import { useEffect, useState, type FormEvent } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { useQueryClient } from "@tanstack/react-query";
 import { Archive, Copy } from "lucide-react";
-import { EmailBlocks, type EmailBlock } from "@growthdesk/shared";
+import { EmailBlocks, EmailTheme as EmailThemeSchema, type EmailBlock, type EmailTheme } from "@growthdesk/shared";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { Callout } from "@/components/ui/Callout";
@@ -22,15 +22,16 @@ import { toast } from "@/components/ui/Toast";
 import { BlockEditor } from "@/components/marketing/BlockEditor";
 import { useMarketing } from "@/components/marketing/common";
 import { DesignPreview } from "@/components/marketing/designs/DesignPreview";
+import { cleanTheme, ThemePanel } from "@/components/marketing/designs/ThemePanel";
 import { useLeaveGuard } from "@/components/marketing/designs/useLeaveGuard";
 import { messageOf, post } from "@/lib/api";
 import { useApiMutation, useApiQuery } from "@/lib/query";
 import { useFormat, useWorkspace } from "@/lib/session";
 import type { EmailDesign } from "@/lib/types/marketing";
 
-type Draft = { name: string; blocks: EmailBlock[] };
+type Draft = { name: string; blocks: EmailBlock[]; theme: EmailTheme };
 
-const draftOf = (d: EmailDesign): Draft => ({ name: d.name, blocks: d.blocks });
+const draftOf = (d: EmailDesign): Draft => ({ name: d.name, blocks: d.blocks, theme: cleanTheme(d.theme ?? {}) });
 
 export default function DesignEditorPage() {
   const mk = useMarketing();
@@ -101,7 +102,12 @@ function Designer({ design }: { design: EmailDesign }) {
       toast.error("Some blocks need fixing first", { description: "The fields to fix are marked in the blocks." });
       return null;
     }
-    return { name, blocks: parsed.data };
+    const theme = EmailThemeSchema.safeParse(draft.theme);
+    if (!theme.success) {
+      toast.error("The theme needs fixing first", { description: "Use hex colours like #0071e3." });
+      return null;
+    }
+    return { name, blocks: parsed.data, theme: theme.data };
   };
 
   const submit = (e?: FormEvent) => {
@@ -151,7 +157,14 @@ function Designer({ design }: { design: EmailDesign }) {
         back={{ href: mk.href("/designs"), label: "Email designs" }}
         icon={<EntityTile of="designs" />}
         title={draft.name.trim() || design.name}
-        meta={design.archivedAt ? <Badge tone="warn">Archived</Badge> : undefined}
+        meta={
+          design.archivedAt || design.fromLibrary ? (
+            <span className="flex items-center gap-2">
+              {design.fromLibrary && <Badge tone="info">Library</Badge>}
+              {design.archivedAt && <Badge tone="warn">Archived</Badge>}
+            </span>
+          ) : undefined
+        }
         description={`${blockCount} block${blockCount === 1 ? "" : "s"} · updated ${f.relative(design.updatedAt)}`}
         actions={
           canWrite ? (
@@ -189,6 +202,11 @@ function Designer({ design }: { design: EmailDesign }) {
           You can view this design; your role cannot change it.
         </Callout>
       )}
+      {canWrite && design.fromLibrary && !design.archivedAt && (
+        <Callout tone="info" className="mb-4">
+          This design comes from the built-in library. Change it as you like, or duplicate it first to keep the original as a starting point.
+        </Callout>
+      )}
       {design.archivedAt && (
         <Callout tone="warn" className="mb-4">
           This design is archived: it is hidden from the designs list and cannot be picked for new campaigns.
@@ -216,10 +234,11 @@ function Designer({ design }: { design: EmailDesign }) {
               </Field>
             </CardBody>
           </Card>
-          <BlockEditor blocks={draft.blocks} onChange={(blocks) => setDraft((d) => ({ ...d, blocks }))} disabled={!canWrite} />
+          <ThemePanel theme={draft.theme} onChange={(theme) => setDraft((d) => ({ ...d, theme }))} disabled={!canWrite} />
+          <BlockEditor blocks={draft.blocks} theme={draft.theme} onChange={(blocks) => setDraft((d) => ({ ...d, blocks }))} disabled={!canWrite} />
         </form>
 
-        <DesignPreview blocks={draft.blocks} className="h-[min(760px,calc(100dvh-8rem))] min-h-[480px] lg:sticky lg:top-5" />
+        <DesignPreview blocks={draft.blocks} theme={draft.theme} className="h-[min(760px,calc(100dvh-8rem))] min-h-[480px] lg:sticky lg:top-5" />
       </div>
 
       <ConfirmDialog

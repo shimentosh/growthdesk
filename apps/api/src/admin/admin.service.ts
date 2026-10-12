@@ -1,4 +1,5 @@
-import { Injectable } from "@nestjs/common";
+import { Inject, Injectable } from "@nestjs/common";
+import { APP_CONFIG, type AppConfig } from "../config/config.js";
 import {
   FEATURE_KEYS,
   LIMIT_KEYS,
@@ -11,7 +12,7 @@ import type { Prisma } from "../generated/prisma/client.js";
 import { PrismaService } from "../prisma/prisma.service.js";
 import { AuditService, type AuditInput } from "../core/audit.service.js";
 import { CredentialReleaseService } from "../core/credential-release.service.js";
-import { PlatformSettingsService, type PlatformSettings } from "../core/platform-settings.service.js";
+import { PlatformSettingsService, isSecretName, type PlatformSettings, type SecretName } from "../core/platform-settings.service.js";
 import { SessionService } from "../auth/session.service.js";
 import { EntitlementsService } from "../billing/entitlements.service.js";
 import { BillingService } from "../billing/billing.service.js";
@@ -76,6 +77,7 @@ export class AdminService {
     private readonly billing: BillingService,
     private readonly revenue: RevenueService,
     private readonly credentials: CredentialReleaseService,
+    @Inject(APP_CONFIG) private readonly config: AppConfig,
   ) {}
 
   private record(ctx: RequestContext, input: AuditInput) {
@@ -670,10 +672,17 @@ export class AdminService {
       this.platform.publicView(),
       this.prisma.db.plan.findMany({ orderBy: { sortOrder: "asc" }, select: { key: true, name: true, isActive: true } }),
     ]);
-    return { ...view, plans };
+    const base = this.config.PUBLIC_APP_URL.replace(/\/+$/, "");
+    // What to paste into Google Cloud, Microsoft Entra and Stripe.
+    const urls = {
+      googleRedirectUris: [`${base}/api/auth/google/callback`, `${base}/api/mailboxes/oauth/gmail/callback`],
+      microsoftRedirectUri: `${base}/api/mailboxes/oauth/microsoft/callback`,
+      stripeWebhookUrl: `${base}/api/webhooks/billing/stripe`,
+    };
+    return { ...view, plans, urls };
   }
 
-  async updateSettings(ctx: RequestContext, patch: Partial<PlatformSettings> & { aiApiKey?: string; resendApiKey?: string; resendWebhookSecret?: string }) {
+  async updateSettings(ctx: RequestContext, patch: Partial<PlatformSettings> & Partial<Record<SecretName, string>>) {
     for (const key of ["defaultPlanKey", "expiredPlanKey"] as const) {
       const value = patch[key];
       if (value === undefined) continue;
@@ -708,7 +717,7 @@ export class AdminService {
     const changes: Record<string, unknown> = {};
     for (const [k, v] of Object.entries(patch)) {
       // Secrets are never written to the audit trail, only that they changed.
-      if (k === "aiApiKey" || k === "resendApiKey" || k === "resendWebhookSecret") changes[k] = v ? "replaced" : "cleared";
+      if (isSecretName(k)) changes[k] = v ? "replaced" : "cleared";
       else if (JSON.stringify(v) !== JSON.stringify(before[k as keyof PlatformSettings])) changes[k] = v;
     }
     if (Object.keys(changes).length) {

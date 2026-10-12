@@ -170,13 +170,13 @@ model TwoFactorChallenge {
 /// The paying customer. Owns one subscription and one or more workspaces;
 /// plan limits are summed across its workspaces.
 model BillingAccount {
-  id           String   @id @default(uuid(7)) @db.Uuid
-  name         String
-  ownerId      String   @db.Uuid
-  billingEmail String   @default("")
-  country      String   @default("")
-  taxId        String   @default("")
-  address      String   @default("")
+  id             String    @id @default(uuid(7)) @db.Uuid
+  name           String
+  ownerId        String    @db.Uuid
+  billingEmail   String    @default("")
+  country        String    @default("")
+  taxId          String    @default("")
+  address        String    @default("")
   /// The owner's email as a trial-abuse key (lower-case, +tag stripped, Gmail dots removed;
   /// billing/trial-guard.ts). Compared only; login still uses the address as typed.
   trialEmailKey  String?
@@ -184,8 +184,8 @@ model BillingAccount {
   signupIp       String?
   /// When a free trial was granted to this account; null = it started without one.
   trialGrantedAt DateTime?
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
 
   owner        User          @relation(fields: [ownerId], references: [id], onDelete: Restrict)
   workspaces   Workspace[]
@@ -399,6 +399,7 @@ model Workspace {
   espConnection      EspConnection?
   sendingDomains     SendingDomain[]
   emailDesigns       EmailDesign[]
+  librarySeeds       LibrarySeed[]
   marketingCampaigns MarketingCampaign[]
   marketingSends     MarketingSend[]
   pipelines          Pipeline[]
@@ -523,6 +524,16 @@ enum ContactStatus {
   do_not_contact
 }
 
+/// Where a person sits in the funnel. Imports and campaigns work on leads; a
+/// qualified lead is handed to sales (deal, meeting, call); a won deal or a
+/// held meeting makes them a contact. Only moves forward on its own; a person
+/// can move it back by hand ("transfer to sales").
+enum LifecycleStage {
+  lead
+  sales
+  contact
+}
+
 enum ConsentStatus {
   unknown
   granted
@@ -567,46 +578,50 @@ model Company {
 }
 
 model Contact {
-  id              String        @id @default(uuid(7)) @db.Uuid
-  workspaceId     String        @db.Uuid
-  companyId       String?       @db.Uuid
-  firstName       String        @default("")
-  lastName        String        @default("")
-  fullName        String        @default("")
+  id              String         @id @default(uuid(7)) @db.Uuid
+  workspaceId     String         @db.Uuid
+  companyId       String?        @db.Uuid
+  firstName       String         @default("")
+  lastName        String         @default("")
+  fullName        String         @default("")
   /// Primary email, normalised (lower-case, trimmed). Mirrors the primary ContactIdentifier.
   email           String?
   /// Primary phone in E.164 where parseable.
   phone           String?
-  jobTitle        String        @default("")
-  website         String        @default("")
+  jobTitle        String         @default("")
+  website         String         @default("")
   /// Stored as data only — Growthdesk has no LinkedIn functionality.
-  linkedinUrl     String        @default("")
-  city            String        @default("")
-  country         String        @default("")
-  timezone        String        @default("")
-  leadSource      String        @default("")
-  ownerId         String?       @db.Uuid
-  priority        Priority      @default(medium)
-  qualification   Qualification @default(unqualified)
-  status          ContactStatus @default(new)
+  linkedinUrl     String         @default("")
+  city            String         @default("")
+  country         String         @default("")
+  timezone        String         @default("")
+  leadSource      String         @default("")
+  ownerId         String?        @db.Uuid
+  priority        Priority       @default(medium)
+  qualification   Qualification  @default(unqualified)
+  status          ContactStatus  @default(new)
+  lifecycleStage  LifecycleStage @default(lead)
+  stageChangedAt  DateTime?
+  /// Archived people stay on file (history, dedup) but are hidden from lists and never contacted.
+  archivedAt      DateTime?
   score           Int?
-  customFields    Json          @default("{}")
+  customFields    Json           @default("{}")
   lastContactedAt DateTime?
   lastRepliedAt   DateTime?
   nextActionAt    DateTime?
-  nextActionNote  String        @default("")
-  doNotContact    Boolean       @default(false)
+  nextActionNote  String         @default("")
+  doNotContact    Boolean        @default(false)
   unsubscribedAt  DateTime?
   bouncedAt       DateTime?
-  consentStatus   ConsentStatus @default(unknown)
-  consentSource   String        @default("")
+  consentStatus   ConsentStatus  @default(unknown)
+  consentSource   String         @default("")
   consentAt       DateTime?
   /// Set when this record was merged into another; it is then soft-deleted.
-  mergedIntoId    String?       @db.Uuid
-  createdById     String?       @db.Uuid
+  mergedIntoId    String?        @db.Uuid
+  createdById     String?        @db.Uuid
   deletedAt       DateTime?
-  createdAt       DateTime      @default(now())
-  updatedAt       DateTime      @updatedAt
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
 
   workspace       Workspace           @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   company         Company?            @relation(fields: [companyId], references: [id], onDelete: SetNull)
@@ -631,6 +646,7 @@ model Contact {
   @@index([workspaceId, phone])
   @@index([workspaceId, ownerId])
   @@index([workspaceId, status])
+  @@index([workspaceId, lifecycleStage])
   @@index([workspaceId, companyId])
   @@index([workspaceId, nextActionAt])
 }
@@ -1133,49 +1149,49 @@ enum ConnectionStatus {
 }
 
 model Mailbox {
-  id                String           @id @default(uuid(7)) @db.Uuid
-  workspaceId       String           @db.Uuid
-  provider          MailboxProvider
-  email             String
-  displayName       String           @default("")
-  status            ConnectionStatus @default(disconnected)
-  lastError         String           @default("")
-  lastCheckedAt     DateTime?
-  smtpHost          String           @default("")
-  smtpPort          Int              @default(587)
+  id                 String           @id @default(uuid(7)) @db.Uuid
+  workspaceId        String           @db.Uuid
+  provider           MailboxProvider
+  email              String
+  displayName        String           @default("")
+  status             ConnectionStatus @default(disconnected)
+  lastError          String           @default("")
+  lastCheckedAt      DateTime?
+  smtpHost           String           @default("")
+  smtpPort           Int              @default(587)
   /// ssl | starttls | none
-  smtpSecurity      String           @default("starttls")
-  smtpUser          String           @default("")
-  imapEnabled       Boolean          @default(true)
-  imapHost          String           @default("")
-  imapPort          Int              @default(993)
-  imapSecurity      String           @default("ssl")
-  imapUser          String           @default("")
+  smtpSecurity       String           @default("starttls")
+  smtpUser           String           @default("")
+  imapEnabled        Boolean          @default(true)
+  imapHost           String           @default("")
+  imapPort           Int              @default(993)
+  imapSecurity       String           @default("ssl")
+  imapUser           String           @default("")
   /// AES-256-GCM sealed: an app password, or an OAuth refresh token.
-  secretSealed      String?
-  oauthAccessSealed String?
-  oauthExpiresAt    DateTime?
-  oauthScope        String           @default("")
-  dailyLimit        Int              @default(50)
-  minDelaySeconds   Int              @default(90)
+  secretSealed       String?
+  oauthAccessSealed  String?
+  oauthExpiresAt     DateTime?
+  oauthScope         String           @default("")
+  dailyLimit         Int              @default(50)
+  minDelaySeconds    Int              @default(90)
   /// The earliest moment the next campaign send may start (per-mailbox pacing slot, reserved atomically).
-  nextSendAt        DateTime?
+  nextSendAt         DateTime?
   /// Consecutive transient SMTP failures (connection refused, DNS, TLS) since the last success.
-  sendFailures      Int              @default(0)
-  signature         String           @default("")
-  imapUidValidity   String?
-  imapUidNext       Int?
+  sendFailures       Int              @default(0)
+  signature          String           @default("")
+  imapUidValidity    String?
+  imapUidNext        Int?
   /// The INBOX uid the last pass could not file: the pointer is held there until it files or is given up on.
-  imapFailedUid     Int?
-  imapFailedAttempts Int             @default(0)
+  imapFailedUid      Int?
+  imapFailedAttempts Int              @default(0)
   /// The Junk/Spam folder's read position: { path, uidValidity, uidNext, failedUid, failedAttempts }.
-  imapJunkState     Json?
-  lastSyncedAt      DateTime?
-  syncError         String           @default("")
-  createdById       String?          @db.Uuid
-  deletedAt         DateTime?
-  createdAt         DateTime         @default(now())
-  updatedAt         DateTime         @updatedAt
+  imapJunkState      Json?
+  lastSyncedAt       DateTime?
+  syncError          String           @default("")
+  createdById        String?          @db.Uuid
+  deletedAt          DateTime?
+  createdAt          DateTime         @default(now())
+  updatedAt          DateTime         @updatedAt
 
   workspace     Workspace           @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   dailyCounts   MailboxDailyCount[]
@@ -1221,6 +1237,8 @@ model Template {
   /// WhatsApp only: the approved template's name and language at Meta.
   waTemplate  String    @default("")
   waLanguage  String    @default("")
+  /// Set when this template came from the built-in library (packages/shared/src/template-library.ts).
+  libraryKey  String?
   archivedAt  DateTime?
   createdById String?   @db.Uuid
   createdAt   DateTime  @default(now())
@@ -2035,6 +2053,23 @@ model EmailLog {
   @@index([status, createdAt])
 }
 
+/// Which built-in library items (templates, email designs) a workspace has
+/// already been given. Seeding adds only keys missing here, so an item a
+/// team edits or deletes is never overwritten or brought back by a later
+/// deploy, while items added to the library in a new release still arrive.
+model LibrarySeed {
+  id          String   @id @default(uuid(7)) @db.Uuid
+  workspaceId String   @db.Uuid
+  /// "template" or "design".
+  kind        String
+  key         String
+  createdAt   DateTime @default(now())
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, kind, key])
+}
+
 // ─── Marketing (docs/PRODUCT_PLAN.md §2.4) ───────────────────────────────────
 //
 // A second sending engine for opted-in audiences. It never uses a Mailbox:
@@ -2153,6 +2188,10 @@ model EmailDesign {
   name        String
   /// Block list, see packages/shared/src/email-design.ts.
   blocks      Json      @default("[]")
+  /// EmailTheme (colours, fonts, radius); {} renders with the defaults.
+  theme       Json      @default("{}")
+  /// Set when this design came from the built-in library (packages/shared/src/email-library.ts).
+  libraryKey  String?
   archivedAt  DateTime?
   createdById String?   @db.Uuid
   createdAt   DateTime  @default(now())
@@ -2186,6 +2225,7 @@ model MarketingCampaign {
   sendingDomainId  String?                 @db.Uuid
   /// The design's blocks, copied into the campaign (editing the design later does not change a sent campaign).
   blocks           Json                    @default("[]")
+  theme            Json                    @default("{}")
   designId         String?                 @db.Uuid
   /// { listIds: [], excludeListIds: [], viewId?: string }
   audience         Json                    @default("{}")

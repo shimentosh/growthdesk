@@ -1,5 +1,6 @@
 import { Inject, Injectable } from "@nestjs/common";
 import { APP_CONFIG, type AppConfig } from "../config/config.js";
+import { PlatformSettingsService } from "../core/platform-settings.service.js";
 import { PrismaService } from "../prisma/prisma.service.js";
 import { open, seal } from "../common/crypto.js";
 import { ApiError } from "../common/errors.js";
@@ -43,14 +44,14 @@ export class MailboxAuthService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly faults: MailboxFaultService,
+    private readonly platform: PlatformSettingsService,
     @Inject(APP_CONFIG) private readonly config: AppConfig,
   ) {}
 
-  private clientFor(provider: "gmail" | "microsoft") {
-    const id = provider === "gmail" ? this.config.GOOGLE_CLIENT_ID : this.config.MICROSOFT_CLIENT_ID;
-    const secret = provider === "gmail" ? this.config.GOOGLE_CLIENT_SECRET : this.config.MICROSOFT_CLIENT_SECRET;
-    if (!id || !secret) throw new MailboxAuthError(`${provider === "gmail" ? "Google" : "Microsoft"} sign-in is not configured on this installation.`);
-    return { id, secret };
+  private async clientFor(provider: "gmail" | "microsoft") {
+    const client = await this.platform.oauthClient(provider === "gmail" ? "google" : "microsoft");
+    if (!client) throw new MailboxAuthError(`${provider === "gmail" ? "Google" : "Microsoft"} sign-in is not configured on this installation.`);
+    return client;
   }
 
   /** A valid access token, refreshing and persisting it when it has expired. */
@@ -61,8 +62,8 @@ export class MailboxAuthService {
     if (current && mailbox.oauthExpiresAt && mailbox.oauthExpiresAt.getTime() - Date.now() > 60_000) return current;
     const refresh = open(mailbox.secretSealed);
     if (!refresh) throw new MailboxAuthError("The mailbox's sign-in has expired — reconnect it.");
-    const client = this.clientFor(provider);
-    const res = await fetch(OAUTH_PROVIDERS[provider].tokenUrl(this.config.MICROSOFT_TENANT), {
+    const client = await this.clientFor(provider);
+    const res = await fetch(OAUTH_PROVIDERS[provider].tokenUrl(await this.platform.microsoftTenant()), {
       method: "POST",
       headers: { "content-type": "application/x-www-form-urlencoded" },
       body: new URLSearchParams({ client_id: client.id, client_secret: client.secret, refresh_token: refresh, grant_type: "refresh_token" }),

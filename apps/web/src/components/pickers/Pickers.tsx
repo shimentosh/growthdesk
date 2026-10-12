@@ -67,7 +67,8 @@ export function EntityPicker({
   onSearch: (q: string) => void;
   onChange: (id: string | null, item: PickerItem | null) => void;
   emptyText?: string;
-  footer?: ReactNode;
+  /** Shown under the list; a function gets the current search text and a way to close the popover. */
+  footer?: ReactNode | ((ctx: { search: string; close: () => void }) => ReactNode);
   /** A bare glyph for the kind of record, shown at the start of the trigger. */
   icon?: ReactNode;
 }) {
@@ -75,6 +76,7 @@ export function EntityPicker({
   const field = useFieldControl();
   const current = items.find((i) => i.id === value);
   const label = current?.label ?? (value ? (valueLabel ?? "Selected") : null);
+  const footerNode = typeof footer === "function" ? footer({ search, close: () => setOpen(false) }) : footer;
 
   return (
     <Popover open={open} onOpenChange={setOpen}>
@@ -146,7 +148,7 @@ export function EntityPicker({
             ))
           )}
         </ul>
-        {footer && <div className="border-t border-line p-1">{footer}</div>}
+        {footerNode && <div className="border-t border-line p-1">{footerNode}</div>}
       </PopoverContent>
     </Popover>
   );
@@ -155,8 +157,15 @@ export function EntityPicker({
 export const contactLabel = (c: Pick<ContactSummary, "fullName" | "firstName" | "lastName" | "email" | "phone">) =>
   c.fullName || [c.firstName, c.lastName].filter(Boolean).join(" ") || c.email || c.phone || "Unnamed contact";
 
-/** Search contacts by name, email or phone. */
-export function ContactPicker({ onChange, ...props }: BaseProps & { onChange: (id: string | null, contact: ContactSummary | null) => void }) {
+/** Search contacts by name, email or phone. `footer` adds actions under the list (e.g. "create a contact" from the search text). */
+export function ContactPicker({
+  onChange,
+  footer,
+  ...props
+}: BaseProps & {
+  onChange: (id: string | null, contact: ContactSummary | null) => void;
+  footer?: (ctx: { search: string; close: () => void; matches: ContactSummary[] }) => ReactNode;
+}) {
   const ws = useWorkspace();
   const [q, setQ] = useState("");
   const list = useApiQuery<Paged<ContactSummary>>(ws.key("contacts", "picker"), ws.path("/contacts"), {
@@ -175,6 +184,7 @@ export function ContactPicker({ onChange, ...props }: BaseProps & { onChange: (i
       search={q}
       onSearch={setQ}
       emptyText={q ? "No contact matches" : "No contacts yet"}
+      footer={footer && ((ctx) => footer({ ...ctx, matches: rows }))}
       onChange={(id) => onChange(id, rows.find((c) => c.id === id) ?? null)}
     />
   );

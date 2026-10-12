@@ -10,7 +10,8 @@ import type { SequenceStep, StepRow } from "./sequences";
 export type CampaignAudience =
   | { type: "contacts"; contactIds: string[] }
   | { type: "view"; viewId: string }
-  | { type: "filter"; filter: ContactFilterT };
+  | { type: "filter"; filter: ContactFilterT }
+  | { type: "lists"; listIds: string[] };
 
 /** The send window (shared `ScheduleInput`): days are 0 = Sunday … 6 = Saturday, times are HH:MM in `timezone`. */
 export type CampaignSchedule = { timezone: string; days: number[]; from: string; to: string };
@@ -60,6 +61,11 @@ export type Campaign = {
   createdBy: CampaignUser | null;
   mailboxes: CampaignMailbox[];
   stepCount: number;
+  /**
+   * The kinds of the campaign's steps, in order of first use, when the list
+   * answer includes them (older APIs send only stepCount).
+   */
+  stepTypes?: StepType[];
   startAt: string | null;
   startedAt: string | null;
   pausedAt: string | null;

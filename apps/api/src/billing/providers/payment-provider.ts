@@ -90,7 +90,8 @@ export type NormalizedEvent = {
 export interface PaymentProvider {
   readonly id: string;
   readonly label: string;
-  isConfigured(): boolean;
+  /** May read admin-set keys, so callers always await it. */
+  isConfigured(): boolean | Promise<boolean>;
   createCheckout(input: {
     billingAccountId: string;
     priceId: string;
@@ -102,7 +103,7 @@ export interface PaymentProvider {
   }): Promise<{ url: string }>;
   createPortal(input: { providerCustomerId: string; returnUrl: string }): Promise<{ url: string }>;
   /** Verifies the signature and normalises. Throws on a bad signature. */
-  parseWebhook(rawBody: Buffer, headers: Record<string, string | string[] | undefined>): NormalizedEvent;
+  parseWebhook(rawBody: Buffer, headers: Record<string, string | string[] | undefined>): NormalizedEvent | Promise<NormalizedEvent>;
   /**
    * Moves a live subscription to another price. An upgrade must be paid before
    * it takes effect: the provider invoices the difference now and keeps the

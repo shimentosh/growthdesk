@@ -10,7 +10,7 @@ import { execSync, spawn } from "node:child_process";
 // pnpm is a .cmd shim on Windows, which Node only runs through a shell.
 const isWindows = process.platform === "win32";
 
-execSync("docker compose up -d --wait", { stdio: "inherit" });
+execSync("docker compose -f docker-compose.yml up -d --wait", { stdio: "inherit" });
 execSync("pnpm --filter @growthdesk/shared run build", { stdio: "inherit" });
 execSync("pnpm --filter @growthdesk/api exec prisma migrate deploy", { stdio: "inherit" });
 

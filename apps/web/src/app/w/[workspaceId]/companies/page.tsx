@@ -11,6 +11,7 @@ import { Card } from "@/components/ui/Card";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { ErrorState } from "@/components/ui/ErrorState";
 import { ENTITY, EntityTile } from "@/components/ui/icons";
+import { NativeSelect } from "@/components/ui/Input";
 import { Page, PageHeader } from "@/components/ui/PageHeader";
 import { Pagination } from "@/components/ui/Pagination";
 import { RequirePermission } from "@/components/ui/RequirePermission";
@@ -241,15 +242,18 @@ function Companies() {
         <SearchInput value={state.q} onChange={(q) => update({ q }, true)} placeholder="Search name, domain, industry…" className="w-full sm:w-80" />
         <label className="flex items-center gap-1.5 text-xs text-text-3">
           Sort
-          <select
+          <NativeSelect
+            size="sm"
+            className="w-36"
+            aria-label="Sort"
             value={state.sort}
             onChange={(e) => update({ sort: e.target.value as Sort })}
-            className="h-8 rounded-sm border border-line-strong bg-field px-2 text-sm text-text"
-          >
-            <option value="createdAt">Created</option>
-            <option value="updatedAt">Last updated</option>
-            <option value="name">Name</option>
-          </select>
+            options={[
+              { value: "createdAt", label: "Created" },
+              { value: "updatedAt", label: "Last updated" },
+              { value: "name", label: "Name" },
+            ]}
+          />
         </label>
       </div>
 

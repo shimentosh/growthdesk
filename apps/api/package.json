@@ -19,6 +19,7 @@
     "db:generate": "prisma generate",
     "db:seed": "node --enable-source-maps dist/scripts/seed.js",
     "db:seed:demo": "node --enable-source-maps dist/scripts/seed-demo.js",
+    "db:seed:library": "node --enable-source-maps dist/scripts/seed-library.js",
     "admin:create": "node --enable-source-maps dist/scripts/create-admin.js",
     "postinstall": "prisma generate"
   },

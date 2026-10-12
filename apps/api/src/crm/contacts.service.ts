@@ -2,6 +2,7 @@ import { Injectable } from "@nestjs/common";
 import {
   type ContactFilterT,
   type ContactInputT,
+  type LifecycleStage,
   FREE_MAIL_DOMAINS,
   SORTABLE_CONTACT_FIELDS,
   emailDomain,
@@ -19,6 +20,7 @@ import { EventsService } from "../core/events.service.js";
 import { ActivityService } from "./activity.service.js";
 import { SuppressionService } from "./suppression.service.js";
 import { ConsentService } from "./consent.service.js";
+import { advanceStage } from "./lifecycle.js";
 import { ApiError, badRequest, conflict, notFound } from "../common/errors.js";
 import { actorId, ownershipScope, ws, type RequestContext } from "../common/context.js";
 
@@ -76,6 +78,9 @@ export function contactDto(c: ContactRow) {
     priority: c.priority,
     qualification: c.qualification,
     status: c.status,
+    lifecycleStage: c.lifecycleStage,
+    stageChangedAt: c.stageChangedAt,
+    archivedAt: c.archivedAt,
     score: c.score,
     customFields: c.customFields,
     tags: c.tags.map((t) => t.tag),
@@ -95,6 +100,8 @@ export function contactDto(c: ContactRow) {
 }
 
 /** The consent source recorded when the input names none: where the contact came from. */
+const STAGE_LABEL: Record<LifecycleStage, string> = { lead: "Leads", sales: "Sales", contact: "Contacts" };
+
 function consentSourceOf(source: string): string {
   if (source === "manual") return "Added by a team member";
   if (source === "csv") return "CSV import";
@@ -147,6 +154,10 @@ export class ContactsService {
     if (f.createdAfter) and.push({ createdAt: { gte: f.createdAfter } });
     if (f.createdBefore) and.push({ createdAt: { lte: f.createdBefore } });
     if (f.campaignId) and.push({ enrollments: { some: { campaignId: f.campaignId } } });
+    if (f.stage?.length) and.push({ lifecycleStage: { in: f.stage } });
+    if (f.listId) and.push({ listMemberships: { some: { workspaceId: w.id, listId: f.listId, status: { not: "unsubscribed" } } } });
+    if (f.archived === "only") and.push({ archivedAt: { not: null } });
+    else if (f.archived !== "include") and.push({ archivedAt: null });
     const scope = ownershipScope(ctx);
     if (Object.keys(scope).length) and.push(scope as Prisma.ContactWhereInput);
     return { workspaceId: w.id, deletedAt: null, ...(and.length ? { AND: and } : {}) };
@@ -424,6 +435,8 @@ export class ContactsService {
             priority: input.priority ?? "medium",
             qualification: input.qualification ?? "unqualified",
             status: input.doNotContact ? "do_not_contact" : (input.status ?? "new"),
+            lifecycleStage: input.lifecycleStage ?? (input.qualification === "qualified" ? "sales" : "lead"),
+            stageChangedAt: new Date(),
             score: input.score ?? null,
             customFields: (input.customFields ?? {}) as never,
             nextActionAt: input.nextActionAt ?? null,
@@ -568,6 +581,11 @@ export class ContactsService {
       for (const key of ["firstName", "lastName", "jobTitle", "website", "linkedinUrl", "city", "country", "timezone", "leadSource", "priority", "qualification", "status", "score", "nextActionAt", "nextActionNote"] as const) {
         if (input[key] !== undefined) (data as Record<string, unknown>)[key] = input[key];
       }
+      if (input.lifecycleStage !== undefined && input.lifecycleStage !== existing.lifecycleStage) {
+        data.lifecycleStage = input.lifecycleStage;
+        data.stageChangedAt = new Date();
+        await this.activity.log({ workspaceId: w.id, contactId: id, actorId: actorId(ctx), type: "contact.stage_changed", summary: `Moved to ${STAGE_LABEL[input.lifecycleStage]}`, data: { from: existing.lifecycleStage, to: input.lifecycleStage } }, tx);
+      }
       if (input.fullName !== undefined) data.fullName = input.fullName;
       else if (input.firstName !== undefined || input.lastName !== undefined) {
         data.fullName = joinName(input.firstName ?? existing.firstName, input.lastName ?? existing.lastName);
@@ -637,6 +655,8 @@ export class ContactsService {
       if (input.qualification === "qualified" && existing.qualification !== "qualified") {
         await this.events.emitIn(tx, { workspaceId: w.id, type: "contact.qualified", subjectType: "contact", subjectId: id, actorId: actorId(ctx) });
         await this.activity.log({ workspaceId: w.id, contactId: id, actorId: actorId(ctx), type: "contact.qualified", summary: "Marked as qualified" }, tx);
+        // Qualifying a lead hands it to sales, unless the same edit set the stage itself.
+        if (input.lifecycleStage === undefined) await advanceStage(tx, w.id, [id], "sales");
       }
       if (input.ownerId !== undefined && input.ownerId !== existing.ownerId) {
         await this.activity.log({ workspaceId: w.id, contactId: id, actorId: actorId(ctx), type: "contact.assigned", summary: input.ownerId ? "Owner changed" : "Owner removed", data: { ownerId: input.ownerId } }, tx);
@@ -730,6 +750,93 @@ export class ContactsService {
     return this.get(ctx, primaryId);
   }
 
+  /**
+   * Archived people keep their history and identifiers (so a re-import finds
+   * them instead of creating a duplicate) but leave every list view, and their
+   * active sequences stop.
+   */
+  async archive(ctx: RequestContext, ids: string[], archived: boolean) {
+    const w = ws(ctx);
+    return this.prisma.db.$transaction(async (tx) => {
+      const scoped = (
+        await tx.contact.findMany({
+          where: { workspaceId: w.id, id: { in: ids }, deletedAt: null, archivedAt: archived ? null : { not: null }, ...(ownershipScope(ctx) as Prisma.ContactWhereInput) },
+          select: { id: true },
+        })
+      ).map((c) => c.id);
+      if (!scoped.length) return { affected: 0 };
+      await tx.contact.updateMany({ where: { workspaceId: w.id, id: { in: scoped } }, data: { archivedAt: archived ? new Date() : null } });
+      if (archived) {
+        await tx.enrollment.updateMany({ where: { workspaceId: w.id, contactId: { in: scoped }, status: { in: ["active", "paused"] } }, data: { status: "stopped", stopReason: "Contact archived", nextRunAt: null } });
+      }
+      for (const id of scoped) {
+        await this.activity.log({ workspaceId: w.id, contactId: id, actorId: actorId(ctx), type: archived ? "contact.archived" : "contact.restored", summary: archived ? "Archived" : "Restored from archive" }, tx);
+      }
+      return { affected: scoped.length };
+    });
+  }
+
+  /**
+   * Hands people to sales: stage → sales, optionally a new owner, and their
+   * outreach sequences stop so a rep is not talking over an automated step.
+   * Works from any stage, so a contact can be sent back for a new deal.
+   */
+  async transferToSales(ctx: RequestContext, ids: string[], ownerId?: string | null) {
+    const w = ws(ctx);
+    if (ownerId) {
+      const m = await this.prisma.db.membership.findUnique({ where: { workspaceId_userId: { workspaceId: w.id, userId: ownerId } } });
+      if (!m) throw badRequest("The owner must be a member of this workspace");
+    }
+    const moved = await this.prisma.db.$transaction(async (tx) => {
+      const scoped = (
+        await tx.contact.findMany({
+          where: { workspaceId: w.id, id: { in: ids }, deletedAt: null, archivedAt: null, ...(ownershipScope(ctx) as Prisma.ContactWhereInput) },
+          select: { id: true },
+        })
+      ).map((c) => c.id);
+      if (!scoped.length) return scoped;
+      await tx.contact.updateMany({
+        where: { workspaceId: w.id, id: { in: scoped } },
+        data: { lifecycleStage: "sales", stageChangedAt: new Date(), ...(ownerId !== undefined ? { ownerId } : {}) },
+      });
+      // Handing someone to sales is the qualification decision (an SQL); a later "disqualified" stays the rep's call.
+      await tx.contact.updateMany({ where: { workspaceId: w.id, id: { in: scoped }, qualification: { in: ["unqualified", "qualifying"] } }, data: { qualification: "qualified" } });
+      await tx.enrollment.updateMany({ where: { workspaceId: w.id, contactId: { in: scoped }, status: { in: ["active", "paused"] } }, data: { status: "stopped", stopReason: "Handed to sales", nextRunAt: null } });
+      for (const id of scoped) {
+        await this.activity.log({ workspaceId: w.id, contactId: id, actorId: actorId(ctx), type: "contact.stage_changed", summary: "Handed to sales", data: { to: "sales", ownerId: ownerId ?? null } }, tx);
+        await this.events.emitIn(tx, { workspaceId: w.id, type: "contact.updated", subjectType: "contact", subjectId: id, actorId: actorId(ctx), payload: { fields: ["lifecycleStage"] } });
+      }
+      return scoped;
+    });
+    await this.events.kick();
+    return { affected: moved.length };
+  }
+
+  /**
+   * Adds people to a lead list. Lead lists hold anyone, consent or not; the
+   * marketing engine applies its own consent gate at send time. Someone who
+   * unsubscribed from the list is never put back (the row is kept, so the
+   * insert skips it).
+   */
+  async addToList(ctx: RequestContext, ids: string[], listId: string) {
+    const w = ws(ctx);
+    const list = await this.prisma.db.marketingList.findFirst({ where: { id: listId, workspaceId: w.id } });
+    if (!list) throw notFound("That list");
+    if (list.archivedAt) throw conflict("This list is archived. Restore it before adding people.");
+    const scoped = (
+      await this.prisma.db.contact.findMany({
+        where: { workspaceId: w.id, id: { in: ids }, deletedAt: null, ...(ownershipScope(ctx) as Prisma.ContactWhereInput) },
+        select: { id: true },
+      })
+    ).map((c) => c.id);
+    const now = new Date();
+    const res = await this.prisma.db.listMembership.createMany({
+      data: scoped.map((contactId) => ({ workspaceId: w.id, listId, contactId, status: "subscribed" as const, source: "Added by a team member", subscribedAt: now })),
+      skipDuplicates: true,
+    });
+    return { affected: res.count, alreadyMember: scoped.length - res.count };
+  }
+
   async duplicates(ctx: RequestContext) {
     const w = ws(ctx);
     const rows = await this.prisma.db.duplicateCandidate.findMany({ where: { workspaceId: w.id, status: "open" }, orderBy: [{ score: "desc" }, { createdAt: "desc" }], take: 200 });
@@ -747,7 +854,7 @@ export class ContactsService {
     if (!res.count) throw notFound("That duplicate suggestion");
   }
 
-  async bulk(ctx: RequestContext, action: { action: string; ids: string[]; tags?: string[]; ownerId?: string | null; status?: string; qualification?: string }) {
+  async bulk(ctx: RequestContext, action: { action: string; ids: string[]; tags?: string[]; ownerId?: string | null; status?: string; qualification?: string; stage?: LifecycleStage; listId?: string }) {
     const w = ws(ctx);
     const where = { workspaceId: w.id, id: { in: action.ids }, deletedAt: null, ...(ownershipScope(ctx) as Prisma.ContactWhereInput) };
     switch (action.action) {
@@ -774,10 +881,24 @@ export class ContactsService {
         const res = await this.prisma.db.contact.updateMany({ where, data: { status: action.status as never } });
         return { affected: res.count };
       }
-      case "qualification": {
-        const res = await this.prisma.db.contact.updateMany({ where, data: { qualification: action.qualification as never } });
+      case "qualification":
+        return this.prisma.db.$transaction(async (tx) => {
+          const ids = (await tx.contact.findMany({ where, select: { id: true } })).map((c) => c.id);
+          const res = await tx.contact.updateMany({ where: { workspaceId: w.id, id: { in: ids } }, data: { qualification: action.qualification as never } });
+          if (action.qualification === "qualified") await advanceStage(tx, w.id, ids, "sales");
+          return { affected: res.count };
+        });
+      case "archive":
+      case "unarchive":
+        return this.archive(ctx, action.ids, action.action === "archive");
+      case "stage": {
+        const res = await this.prisma.db.contact.updateMany({ where: { ...where, lifecycleStage: { not: action.stage } }, data: { lifecycleStage: action.stage, stageChangedAt: new Date() } });
         return { affected: res.count };
       }
+      case "transfer_to_sales":
+        return this.transferToSales(ctx, action.ids, action.ownerId);
+      case "add_to_list":
+        return this.addToList(ctx, action.ids, action.listId!);
       case "delete":
         return { affected: (await this.remove(ctx, action.ids)).deleted };
       default:

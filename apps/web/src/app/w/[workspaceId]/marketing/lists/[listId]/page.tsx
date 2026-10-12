@@ -3,8 +3,9 @@
 import Link from "next/link";
 import { useParams, usePathname, useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useState, type ReactNode } from "react";
-import { Archive, ArchiveRestore, Clock, Pencil, SearchX, SquareCheckBig, UserCheck, UserMinus, UserPlus, X } from "lucide-react";
+import { Archive, ArchiveRestore, Clock, Pencil, SearchX, SquareCheckBig, Upload, UserCheck, UserMinus, UserPlus, Users, X } from "lucide-react";
 import { LIST_MEMBERSHIP_STATUSES, type ListMembershipStatus } from "@growthdesk/shared";
+import { LIST_READ, LIST_WRITE } from "@/components/crm/lifecycle";
 import { AddToListModal } from "@/components/marketing/AddToListModal";
 import { MembershipBadge, useMarketing } from "@/components/marketing/common";
 import { ListFormModal } from "@/components/marketing/lists/ListFormModal";
@@ -35,7 +36,7 @@ import type { ListMember, MarketingList, Paged, RemoveMembersResult } from "@/li
 export default function MarketingListPage() {
   return (
     <Page>
-      <RequirePermission permission="marketing.read">
+      <RequirePermission permission={LIST_READ}>
         <Suspense fallback={<LoadingBlock />}>
           <ListLoader />
         </Suspense>
@@ -104,7 +105,7 @@ function ListWorkspace({ list }: { list: MarketingList }) {
   const mk = useMarketing();
   const f = useFormat();
   const { state, update, toUrl } = useMemberParams();
-  const canWrite = ws.can("marketing.write");
+  const canWrite = ws.can(LIST_WRITE);
   const archived = Boolean(list.archivedAt);
   const [editing, setEditing] = useState(false);
   const [adding, setAdding] = useState(false);
@@ -173,7 +174,7 @@ function ListWorkspace({ list }: { list: MarketingList }) {
         title="No one on this list yet"
         description={
           canWrite && !archived
-            ? "Add contacts who agreed to receive marketing email. You can also add them from the Contacts table or a contact's page."
+            ? "Import a CSV into this list, or add people here, from the Leads or Contacts table, or from a contact's page."
             : "Nobody has been added to this list."
         }
         action={
@@ -280,7 +281,7 @@ function ListWorkspace({ list }: { list: MarketingList }) {
   return (
     <>
       <PageHeader
-        back={{ href: mk.href("/lists"), label: "Lists" }}
+        back={{ href: mk.href("/lists"), label: "Lead lists" }}
         icon={<EntityTile of="lists" />}
         title={list.name}
         meta={archived ? <Badge>Archived</Badge> : undefined}
@@ -300,6 +301,14 @@ function ListWorkspace({ list }: { list: MarketingList }) {
                   <Button icon={<Archive />} onClick={() => setArchiving(true)}>
                     Archive
                   </Button>
+                  <Button icon={<Users />} href={ws.href(`/leads?list=${list.id}`)}>
+                    View as leads
+                  </Button>
+                  {ws.can("contacts.import") && (
+                    <Button icon={<Upload />} href={ws.href(`/imports?listId=${list.id}`)}>
+                      Import CSV into this list
+                    </Button>
+                  )}
                   <Button variant="primary" icon={<UserPlus />} onClick={() => setAdding(true)}>
                     Add contacts
                   </Button>
@@ -320,7 +329,7 @@ function ListWorkspace({ list }: { list: MarketingList }) {
         <StatCard
           label="Subscribed"
           value={formatNumber(list.counts.subscribed)}
-          hint="Receive campaigns sent to this list"
+          hint="On the list; marketing email needs their consent too"
           icon={<UserCheck />}
           tint="green"
           href={toUrl({ status: "subscribed" })}

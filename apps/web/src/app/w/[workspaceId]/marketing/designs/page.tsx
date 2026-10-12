@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { Archive, Copy, Ellipsis, PencilLine, Plus } from "lucide-react";
+import { Badge } from "@/components/ui/Badge";
 import { Button, IconButton } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
 import { ConfirmDialog } from "@/components/ui/Dialog";
@@ -16,6 +17,7 @@ import { RequirePermission } from "@/components/ui/RequirePermission";
 import { Skeleton } from "@/components/ui/Skeleton";
 import { toast } from "@/components/ui/Toast";
 import { useMarketing } from "@/components/marketing/common";
+import { Choice } from "@/components/marketing/designs/controls";
 import { DesignThumbnail } from "@/components/marketing/designs/DesignThumbnail";
 import { NewDesignModal } from "@/components/marketing/designs/NewDesignModal";
 import { useApiMutation, useApiQuery } from "@/lib/query";
@@ -35,6 +37,8 @@ export default function DesignsPage() {
 const DesignGlyph = ENTITY.designs.icon;
 const GRID = "grid gap-4 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4";
 
+type Show = "all" | "mine" | "library";
+
 function Designs() {
   const ws = useWorkspace();
   const mk = useMarketing();
@@ -42,6 +46,7 @@ function Designs() {
   const list = useApiQuery<EmailDesign[]>(mk.key("designs", "list"), mk.path("/designs"));
   const [creating, setCreating] = useState(false);
   const [archiving, setArchiving] = useState<EmailDesign | null>(null);
+  const [show, setShow] = useState<Show>("all");
 
   const duplicate = useApiMutation<EmailDesign, EmailDesign>({
     path: (d) => mk.path(`/designs/${d.id}/duplicate`),
@@ -105,9 +110,29 @@ function Designs() {
           </Card>
         }
       >
-        {(designs) => (
-          <ul className={GRID}>
-            {designs.map((d) => (
+        {(designs) => {
+          const library = designs.filter((d) => d.fromLibrary).length;
+          const mixed = library > 0 && library < designs.length;
+          const shown = designs.filter((d) => !mixed || show === "all" || (show === "library") === d.fromLibrary);
+          return (
+            <>
+              {mixed && (
+                <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                  <Choice<Show>
+                    aria-label="Show designs"
+                    value={show}
+                    onChange={setShow}
+                    options={[
+                      { value: "all", label: `All (${designs.length})` },
+                      { value: "mine", label: `Yours (${designs.length - library})` },
+                      { value: "library", label: `Library (${library})` },
+                    ]}
+                  />
+                  {canWrite && <p className="text-xs text-text-3">Duplicate a library design to make your own variant.</p>}
+                </div>
+              )}
+              <ul className={GRID}>
+                {shown.map((d) => (
               <DesignCard
                 key={d.id}
                 design={d}
@@ -116,9 +141,11 @@ function Designs() {
                 onDuplicate={() => duplicate.mutate(d)}
                 onArchive={() => setArchiving(d)}
               />
-            ))}
-          </ul>
-        )}
+                ))}
+              </ul>
+            </>
+          );
+        }}
       </QueryState>
 
       {canWrite && <NewDesignModal open={creating} onOpenChange={setCreating} />}
@@ -156,17 +183,29 @@ function DesignCard({
     <li className="min-w-0">
       <Card className="group relative overflow-hidden transition-shadow hover:shadow-lg focus-within:shadow-lg">
         <Link href={href} className="block outline-none" aria-label={`Open ${d.name}`}>
-          <DesignThumbnail blocks={d.blocks} className="aspect-[4/3] border-b border-line" />
+          <DesignThumbnail blocks={d.blocks} theme={d.theme} className="aspect-[4/3] border-b border-line" />
         </Link>
         <div className="flex items-start gap-2 py-2.5 pr-2 pl-3.5">
           <div className="min-w-0 flex-1">
-            <Link href={href} className="block truncate text-sm font-medium text-text hover:text-accent-hi">
-              {d.name}
-            </Link>
+            <span className="flex min-w-0 items-center gap-1.5">
+              <Link href={href} className="block truncate text-sm font-medium text-text hover:text-accent-hi">
+                {d.name}
+              </Link>
+              {d.fromLibrary && (
+                <Badge tone="info" title="From the built-in library">
+                  Library
+                </Badge>
+              )}
+            </span>
             <p className="truncate text-xs text-text-3" title={f.dateTime(d.updatedAt)}>
               Updated {f.relative(d.updatedAt)} · {blocks} block{blocks === 1 ? "" : "s"}
             </p>
           </div>
+          {canWrite && (
+            <Button size="sm" variant="ghost" icon={<Copy />} loading={duplicating} onClick={onDuplicate} aria-label={`Duplicate ${d.name}`} className="mt-0.5 shrink-0">
+              Duplicate
+            </Button>
+          )}
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <IconButton size="sm" label={`Actions for ${d.name}`} icon={<Ellipsis />} className="mt-0.5" />

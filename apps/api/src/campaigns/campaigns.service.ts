@@ -168,15 +168,23 @@ export class CampaignsService {
     const ids = rows.map((r) => r.id);
     const userIds = [...new Set(rows.flatMap((r) => [r.ownerId, r.createdById]).filter((v): v is string => Boolean(v)))];
     const viewIds = [...new Set(rows.map((r) => readAudience(r.audience)).flatMap((a) => (a?.type === "view" ? [a.viewId] : [])))];
-    const [users, views, byStatus, stepCounts] = await Promise.all([
+    const listIds = [...new Set(rows.map((r) => readAudience(r.audience)).flatMap((a) => (a?.type === "lists" ? a.listIds : [])))];
+    const [users, views, lists, byStatus, stepCounts] = await Promise.all([
       userIds.length ? this.prisma.db.user.findMany({ where: { id: { in: userIds } }, select: { id: true, name: true, email: true } }) : Promise.resolve([]),
       viewIds.length ? this.prisma.db.savedView.findMany({ where: { workspaceId, id: { in: viewIds } }, select: { id: true, name: true } }) : Promise.resolve([]),
+      listIds.length ? this.prisma.db.marketingList.findMany({ where: { workspaceId, id: { in: listIds } }, select: { id: true, name: true } }) : Promise.resolve([]),
       this.prisma.db.enrollment.groupBy({ by: ["campaignId", "status"], where: { workspaceId, campaignId: { in: ids } }, _count: { _all: true } }),
-      this.prisma.db.sequenceStep.groupBy({ by: ["sequenceId"], where: { workspaceId, sequenceId: { in: rows.map((r) => r.sequenceId) } }, _count: { _all: true } }),
+      this.prisma.db.sequenceStep.groupBy({ by: ["sequenceId", "type"], where: { workspaceId, sequenceId: { in: rows.map((r) => r.sequenceId) } }, _count: { _all: true } }),
     ]);
     const userById = new Map(users.map((u) => [u.id, u]));
     const viewName = new Map(views.map((v) => [v.id, v.name]));
-    const steps = new Map(stepCounts.map((s) => [s.sequenceId, s._count._all]));
+    const listName = new Map(lists.map((l) => [l.id, l.name]));
+    const steps = new Map<string, number>();
+    const stepTypes = new Map<string, string[]>();
+    for (const g of stepCounts) {
+      steps.set(g.sequenceId, (steps.get(g.sequenceId) ?? 0) + g._count._all);
+      stepTypes.set(g.sequenceId, [...(stepTypes.get(g.sequenceId) ?? []), g.type]);
+    }
     return rows.map((c) => {
       const audience = readAudience(c.audience);
       const enrollments = Object.fromEntries(ENROLLMENT_STATUSES.map((s) => [s, 0])) as Record<(typeof ENROLLMENT_STATUSES)[number], number>;
@@ -188,7 +196,10 @@ export class CampaignsService {
         status: c.status,
         sequenceId: c.sequenceId,
         audience,
-        audienceDescription: describeAudience(audience, audience?.type === "view" ? (viewName.get(audience.viewId) ?? null) : null),
+        audienceDescription: describeAudience(
+          audience,
+          audience?.type === "view" ? (viewName.get(audience.viewId) ?? null) : audience?.type === "lists" ? audience.listIds.flatMap((id) => listName.get(id) ?? []) : null,
+        ),
         schedule: readSchedule(c.schedule),
         settings: readSettings(c.settings),
         owner: c.ownerId ? (userById.get(c.ownerId) ?? null) : null,
@@ -198,6 +209,8 @@ export class CampaignsService {
           .filter((m) => !m.mailbox.deletedAt)
           .map((m) => ({ id: m.mailbox.id, email: m.mailbox.email, displayName: m.mailbox.displayName, status: m.mailbox.status })),
         stepCount: steps.get(c.sequenceId) ?? 0,
+        /** The step kinds the sequence uses, for the channels a list row shows. */
+        stepTypes: stepTypes.get(c.sequenceId) ?? [],
         startAt: c.startAt,
         startedAt: c.startedAt,
         pausedAt: c.pausedAt,
@@ -527,11 +540,17 @@ export class CampaignsService {
     let candidates: string[] = [];
     let eligible: string[] = [];
     let skipped: Skipped = {};
-    let viewName: string | null = null;
+    let viewName: string | string[] | null = null;
     if (!audience) problems.push({ field: "audience", message: "Choose who this campaign is for." });
     else {
       try {
         if (audience.type === "view") viewName = (await this.extras.getView(ctx, audience.viewId)).name;
+        if (audience.type === "lists") {
+          const lists = await this.prisma.db.marketingList.findMany({ where: { workspaceId: w.id, id: { in: audience.listIds } }, select: { name: true, archivedAt: true } });
+          viewName = lists.map((l) => l.name);
+          if (!lists.length) problems.push({ field: "audience", message: "The campaign's lead lists no longer exist." });
+          else if (lists.some((l) => l.archivedAt)) warnings.push("An archived lead list is left out of this campaign.");
+        }
         candidates = await this.enrollment.candidates(ctx, audience);
       } catch {
         problems.push({ field: "audience", message: "The campaign's saved view no longer exists, or you cannot see it." });

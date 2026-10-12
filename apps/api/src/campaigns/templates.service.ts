@@ -3,6 +3,7 @@ import { z } from "zod";
 import {
   CHANNELS,
   STANDARD_VARIABLES,
+  TEMPLATE_LIBRARY_CATEGORIES,
   type TemplateInput,
   missingVariables,
   renderTemplate,
@@ -46,6 +47,7 @@ export const TemplateListQuery = z.object({
   pageSize: z.coerce.number().int().min(1).max(200).default(50),
   channel: z.enum(CHANNELS).optional(),
   q: text(200).optional(),
+  category: text(60).optional(),
   archived: z.enum(["true", "false", "all"]).default("false"),
 });
 
@@ -60,6 +62,7 @@ export function templateDto(t: Template, usage?: number) {
     version: t.version,
     waTemplate: t.waTemplate,
     waLanguage: t.waLanguage,
+    fromLibrary: Boolean(t.libraryKey),
     archivedAt: t.archivedAt,
     createdById: t.createdById,
     createdAt: t.createdAt,
@@ -89,11 +92,21 @@ export class TemplatesService {
     return this.prisma.db.sequenceStep.count({ where: { workspaceId, config: { path: ["templateId"], equals: templateId } } });
   }
 
+  /** Categories in use on active templates, with counts, in the library's order first and then by name. */
+  async categories(ctx: RequestContext) {
+    const rows = await this.prisma.db.template.groupBy({ by: ["category"], where: { workspaceId: ws(ctx).id, archivedAt: null, category: { not: "" } }, _count: { _all: true } });
+    const order = new Map(TEMPLATE_LIBRARY_CATEGORIES.map((c, i) => [c, i]));
+    return rows
+      .map((r) => ({ category: r.category, count: r._count._all }))
+      .sort((a, b) => (order.get(a.category) ?? 999) - (order.get(b.category) ?? 999) || a.category.localeCompare(b.category));
+  }
+
   async list(ctx: RequestContext, q: z.infer<typeof TemplateListQuery>) {
     const w = ws(ctx);
     const where: Prisma.TemplateWhereInput = {
       workspaceId: w.id,
       ...(q.channel ? { channel: q.channel } : {}),
+      ...(q.category ? { category: q.category } : {}),
       ...(q.archived === "false" ? { archivedAt: null } : q.archived === "true" ? { archivedAt: { not: null } } : {}),
       ...(q.q
         ? { OR: [{ name: { contains: q.q, mode: "insensitive" } }, { category: { contains: q.q, mode: "insensitive" } }, { subject: { contains: q.q, mode: "insensitive" } }] }

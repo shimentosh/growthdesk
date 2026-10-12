@@ -7,7 +7,7 @@ import { NotificationsService } from "../notifications/notifications.service.js"
 import { QUEUES, Queues } from "../queues/queues.js";
 import { AudienceService, readAudience } from "./audience.service.js";
 import { MarketingCampaignsService } from "./campaigns.service.js";
-import { readBlocks } from "./designs.service.js";
+import { readBlocks, readTheme } from "./designs.service.js";
 import { MarketingSetupService } from "./setup.service.js";
 import { sendViaEsp } from "./esp.js";
 import { marketingBase, marketingLinks, withMarketingTracking } from "./tokens.js";
@@ -132,6 +132,7 @@ export class MarketingSenderService {
     const audience = readAudience(c.audience);
     const sup = await this.audience.suppressed(workspaceId);
     const blocks = readBlocks(c.blocks);
+    const theme = readTheme(c.theme);
     const base = marketingBase(this.config.PUBLIC_APP_URL);
     const from = `"${c.fromName.replace(/["\r\n]/g, "")}" <${c.fromLocalPart}@${domain.domain}>`;
     let sent = 0;
@@ -175,6 +176,7 @@ export class MarketingSenderService {
       const vars = variablesFor(contact!);
       const rendered = renderEmail(blocks, {
         preheader: c.preheader,
+        theme,
         vars,
         footer: { legalName: ws.legalName, postalAddress: ws.postalAddress, preferencesUrl: links.preferences },
       });

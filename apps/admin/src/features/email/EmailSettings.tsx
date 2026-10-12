@@ -11,6 +11,7 @@ import { EmptyState } from "@/components/ui/EmptyState";
 import { QueryState } from "@/components/ui/ErrorState";
 import { Field, FormError } from "@/components/ui/Field";
 import { Input } from "@/components/ui/Input";
+import { Switch } from "@/components/ui/Switch";
 import { KeyValueList } from "@/components/ui/KeyValue";
 import { Page, PageHeader } from "@/components/ui/PageHeader";
 import { SkeletonText } from "@/components/ui/Skeleton";
@@ -120,7 +121,7 @@ function Delivery({ s }: { s: Settings }) {
           <ProviderOption
             id="smtp"
             title="SMTP"
-            description={`The server in SMTP_HOST (${s.smtp.host}:${s.smtp.port}). No delivery events.`}
+            description={`The server set below (${s.smtp.host}:${s.smtp.port}). No delivery events.`}
             selected={selected === "smtp"}
             disabled={!canChange}
             onSelect={choose}
@@ -500,19 +501,86 @@ function Domains({ s }: { s: Settings }) {
 // ─── SMTP ────────────────────────────────────────────────────────────────────
 
 function Smtp({ s }: { s: Settings }) {
+  const { canChange } = usePlatform();
+  const saved = s.smtp.fromEnv ? null : s.smtp;
+  const initial = { host: saved?.host ?? "", port: String(saved?.port ?? 587), secure: saved?.secure ?? false, user: saved?.user ?? "" };
+  const [form, setForm] = useState(initial);
+  const [password, setPassword] = useState("");
+  const [clearing, setClearing] = useState(false);
+  useEffect(() => setForm({ host: saved?.host ?? "", port: String(saved?.port ?? 587), secure: saved?.secure ?? false, user: saved?.user ?? "" }), [saved?.host, saved?.port, saved?.secure, saved?.user]);
+  const save = useSave("SMTP server saved");
+  const clear = useSave("SMTP server removed");
+  const fields = save.error?.fields ?? {};
+  const dirty = form.host !== initial.host || form.port !== initial.port || form.secure !== initial.secure || form.user !== initial.user || password !== "";
+  const submit = (e: FormEvent) => {
+    e.preventDefault();
+    save.mutate(
+      { smtpHost: form.host.trim(), smtpPort: Number(form.port || "587"), smtpSecure: form.secure, smtpUser: form.user.trim(), ...(password ? { smtpPassword: password } : {}) },
+      { onSuccess: () => setPassword("") },
+    );
+  };
   return (
-    <Card>
-      <CardHeader icon={<Server />} title="SMTP" description="Set in the server's environment (SMTP_HOST, SMTP_PORT, SMTP_SECURE, SMTP_USER). Used when SMTP is selected, and as the fallback described above." />
-      <CardBody>
-        <KeyValueList
-          items={[
-            { label: "Server", value: <code className="font-mono text-xs">{`${s.smtp.host}:${s.smtp.port}`}</code> },
-            { label: "TLS", value: s.smtp.secure ? "Yes (implicit TLS)" : "STARTTLS when offered" },
-            { label: "Sign-in", value: s.smtp.authenticated ? "With SMTP_USER" : "None" },
-          ]}
+    <form onSubmit={submit}>
+      <Card>
+        <CardHeader
+          icon={<Server />}
+          title="SMTP"
+          description="Used when SMTP is selected, and as the fallback described above. Any relay works (Postmark, Mailgun, SES, your own server)."
+          actions={
+            <Badge tone={s.smtp.fromEnv ? "info" : "ok"} dot>
+              {s.smtp.fromEnv ? "Server default" : "Saved here"}
+            </Badge>
+          }
         />
-      </CardBody>
-    </Card>
+        <CardBody className="flex flex-col gap-4">
+          <KeyValueList
+            items={[
+              { label: "Sending through", value: <code className="font-mono text-xs">{`${s.smtp.host}:${s.smtp.port}`}</code> },
+              { label: "TLS", value: s.smtp.secure ? "Yes (implicit TLS)" : "STARTTLS when offered" },
+              { label: "Sign-in", value: s.smtp.authenticated ? s.smtp.user : "None" },
+            ]}
+          />
+          <FormError error={save.error && !Object.keys(fields).length ? save.error.message : (clear.error?.message ?? null)} />
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-[1fr_7rem]">
+            <Field label="Host" error={fields.smtpHost} hint="Empty: the server's SMTP_* environment.">
+              <Input value={form.host} onChange={(e) => setForm({ ...form, host: e.target.value })} placeholder="smtp.postmarkapp.com" disabled={!canChange} className="font-mono" />
+            </Field>
+            <Field label="Port" error={fields.smtpPort}>
+              <Input type="number" min={1} max={65535} value={form.port} onChange={(e) => setForm({ ...form, port: e.target.value })} disabled={!canChange} />
+            </Field>
+          </div>
+          <Switch checked={form.secure} disabled={!canChange} onCheckedChange={(v) => setForm({ ...form, secure: v })} label="Implicit TLS" description="On for port 465. Off for 587 and 25, which upgrade with STARTTLS when the server offers it." />
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <Field label="Username" error={fields.smtpUser} hint="Empty: no sign-in.">
+              <Input value={form.user} onChange={(e) => setForm({ ...form, user: e.target.value })} autoComplete="off" disabled={!canChange} />
+            </Field>
+            <Field label="Password" error={fields.smtpPassword} hint={!s.smtp.fromEnv && s.smtp.passwordSet ? "Saved. Enter a new one to replace it." : "Stored encrypted and never shown again."}>
+              <Input type="password" autoComplete="new-password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder={!s.smtp.fromEnv && s.smtp.passwordSet ? "••••••••" : ""} disabled={!canChange} />
+            </Field>
+          </div>
+        </CardBody>
+        {canChange && (
+          <CardFooter>
+            {!s.smtp.fromEnv && (
+              <Button variant="ghost" onClick={() => setClearing(true)}>
+                Remove
+              </Button>
+            )}
+            <Button type="submit" variant="primary" loading={save.isPending} disabled={!dirty || !form.host.trim()}>
+              Save SMTP server
+            </Button>
+          </CardFooter>
+        )}
+      </Card>
+      <ConfirmDialog
+        open={clearing}
+        onOpenChange={setClearing}
+        title="Remove the SMTP server?"
+        description="SMTP mail then goes through the server's SMTP_* environment."
+        confirmLabel="Remove"
+        onConfirm={() => clear.mutateAsync({ smtpHost: "", smtpUser: "", smtpPassword: "" })}
+      />
+    </form>
   );
 }
 

@@ -13,6 +13,10 @@ export type PlatformRole = (typeof PLATFORM_ROLES)[number];
 export const PRIORITIES = ["low", "medium", "high", "urgent"] as const;
 export type Priority = (typeof PRIORITIES)[number];
 
+/** lead → sales → contact. See the LifecycleStage enum in the Prisma schema. */
+export const LIFECYCLE_STAGES = ["lead", "sales", "contact"] as const;
+export type LifecycleStage = (typeof LIFECYCLE_STAGES)[number];
+
 export const QUALIFICATIONS = ["unqualified", "qualifying", "qualified", "disqualified"] as const;
 export type Qualification = (typeof QUALIFICATIONS)[number];
 

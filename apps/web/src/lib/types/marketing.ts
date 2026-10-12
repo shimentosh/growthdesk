@@ -6,6 +6,7 @@
 import type {
   ConsentStatus,
   EmailBlock,
+  EmailTheme,
   EspProvider,
   ListMembershipStatus,
   MarketingAudienceT,
@@ -101,8 +102,18 @@ export type MarketingSetup = { esp: EspConnection | null; domains: SendingDomain
 
 // ─── Designs ────────────────────────────────────────────────────────────────
 
-/** GET marketing/designs, GET/POST/PATCH marketing/designs/:id. */
-export type EmailDesign = { id: string; name: string; blocks: EmailBlock[]; archivedAt: string | null; createdAt: string; updatedAt: string };
+/** GET marketing/designs, GET/POST/PATCH marketing/designs/:id. `fromLibrary`: seeded from the built-in library (still editable). */
+export type EmailDesign = {
+  id: string;
+  name: string;
+  blocks: EmailBlock[];
+  /** Colours, fonts and corners; {} renders with the defaults. */
+  theme: EmailTheme;
+  fromLibrary: boolean;
+  archivedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
 
 // ─── Campaigns ──────────────────────────────────────────────────────────────
 
@@ -132,6 +143,7 @@ export type MarketingCampaign = {
   replyTo: string;
   sendingDomainId: string | null;
   blocks: EmailBlock[];
+  theme: EmailTheme;
   audience: { listIds: string[]; excludeListIds: string[]; viewId: string | null };
   trackOpens: boolean;
   trackClicks: boolean;
@@ -155,9 +167,10 @@ export type MarketingCampaignPatch = Partial<{
   fromLocalPart: string;
   replyTo: string;
   sendingDomainId: string | null;
-  /** Copies that design's blocks into the campaign. */
+  /** Copies that design's blocks and theme into the campaign. */
   designId: string | null;
   blocks: EmailBlock[];
+  theme: EmailTheme;
   audience: MarketingAudienceT;
   trackOpens: boolean;
   trackClicks: boolean;

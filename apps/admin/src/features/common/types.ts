@@ -211,8 +211,37 @@ export type AdminSettings = {
   aiProvider: "none" | "anthropic" | "openai";
   aiModel: string;
   aiApiKeySet: boolean;
+  aiApiKeyFromEnv: boolean;
+  aiBaseUrl: string;
+  googleClientId: string;
+  googleClientSecretSet: boolean;
+  googleClientSecretFromEnv: boolean;
+  microsoftClientId: string;
+  microsoftClientSecretSet: boolean;
+  microsoftClientSecretFromEnv: boolean;
+  microsoftTenant: string;
+  stripeSecretKeySet: boolean;
+  stripeSecretKeyFromEnv: boolean;
+  stripeWebhookSecretSet: boolean;
+  stripeWebhookSecretFromEnv: boolean;
+  trialsPerIpPerDay: number | null;
+  retentionDays: Partial<Record<RetentionKey, number>>;
+  /** The server environment's values: what applies while a setting above is empty. */
+  env: {
+    googleClientId: string;
+    microsoftClientId: string;
+    microsoftTenant: string;
+    aiBaseUrl: string;
+    trialsPerIpPerDay: number;
+    retentionDays: Record<RetentionKey, number>;
+  };
+  /** What to paste into Google Cloud, Microsoft Entra and Stripe. */
+  urls: { googleRedirectUris: string[]; microsoftRedirectUri: string; stripeWebhookUrl: string };
   plans: { key: string; name: string; isActive: boolean }[];
 };
+
+/** History tables pruned by the worker's daily retention job (apps/api/src/worker/maintenance-policy.ts). */
+export type RetentionKey = "domainEvents" | "messageEvents" | "workflowRuns" | "stepExecutions" | "activityNoise" | "aiUsage" | "billingEvents" | "marketingSends";
 
 /** One row of GET /admin/support/cases */
 export type AdminCaseRow = {

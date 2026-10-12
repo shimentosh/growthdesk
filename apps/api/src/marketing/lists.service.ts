@@ -18,8 +18,10 @@ export type AddResult = {
 };
 
 /*
- * Marketing lists. Membership is the second gate after consent (R2): a
- * contact only receives a campaign sent to a list it is subscribed to.
+ * Lead lists. Imports and the team put people here; outreach campaigns
+ * target them, and so do marketing campaigns. Lists hold anyone, consent or
+ * not: for marketing, membership is the second gate after consent (R2) — the
+ * marketing audience only takes members with granted consent.
  * Removing someone from a list (a team action) deletes the row; someone
  * unsubscribing keeps it, as `unsubscribed`, so a later re-add by the team
  * cannot silently put them back.
@@ -69,7 +71,6 @@ export class ListsService {
 
   async create(ctx: RequestContext, input: z.infer<typeof MarketingListInput>) {
     const w = ws(ctx);
-    await this.entitlements.assertFeature(w.billingAccountId, "marketing");
     const row = await this.prisma.db.marketingList.create({ data: { workspaceId: w.id, name: input.name, description: input.description ?? "", createdById: actorId(ctx) } });
     await this.audit.record(ctx, { action: "marketing.list_created", targetType: "marketing_list", targetId: row.id, metadata: { name: row.name } });
     return this.get(ctx, row.id);
@@ -130,16 +131,16 @@ export class ListsService {
   }
 
   /**
-   * Subscribes contacts. Without `consent`, only contacts that already have
-   * recorded consent are added; with it, the person adding confirms consent
-   * was given (and where), which is recorded for each contact that lacked it.
-   * Never re-adds someone who unsubscribed from this list or withdrew consent.
+   * Adds people to a list. With `consent`, the person adding confirms
+   * marketing consent was given (and where), which is recorded for each
+   * contact that lacked it; without it, people are added as leads and the
+   * marketing engine leaves out anyone without consent. Never re-adds someone
+   * who unsubscribed from this list or refused consent.
    */
   async addMembers(ctx: RequestContext, id: string, input: z.infer<typeof ListMembersAdd>): Promise<AddResult> {
     const w = ws(ctx);
     const list = await this.find(ctx, id);
     if (list.archivedAt) throw conflict("This list is archived. Restore it before adding people.");
-    await this.entitlements.assertFeature(w.billingAccountId, "marketing");
     await this.entitlements.assertFullAccess(w.billingAccountId, "Adding subscribers");
 
     const ids = [...new Set(input.contactIds)];
@@ -157,22 +158,22 @@ export class ListsService {
       const status = memberStatus.get(c.id);
       if (status === "subscribed") result.alreadyMember++;
       else if (status === "unsubscribed") result.skipped.unsubscribed++;
-      else if (!c.email) result.skipped.no_email++;
-      else if (c.doNotContact || c.bouncedAt) result.skipped.do_not_contact++;
-      else if (sup.emails.has(c.email) || sup.domains.has(emailDomain(c.email))) result.skipped.suppressed++;
+      else if (c.doNotContact) result.skipped.do_not_contact++;
+      else if (c.email && (sup.emails.has(c.email) || sup.domains.has(emailDomain(c.email)))) result.skipped.suppressed++;
       else if (c.consentStatus === "denied") result.skipped.consent_denied++;
-      else if (c.consentStatus !== "granted" && !input.consent) result.skipped.no_consent++;
       else toAdd.push(c);
     }
 
-    if (toAdd.length) {
-      // Only contacts new to every list count against the subscriber allowance.
+    // Only people the marketing engine could mail (consent granted, or confirmed now)
+    // and not already on another list count against the subscriber allowance.
+    const mailable = toAdd.filter((c) => c.email && (c.consentStatus === "granted" || input.consent));
+    if (mailable.length) {
       const alreadyCounted = await this.prisma.db.listMembership.findMany({
-        where: { workspaceId: w.id, contactId: { in: toAdd.map((c) => c.id) }, status: "subscribed" },
+        where: { workspaceId: w.id, contactId: { in: mailable.map((c) => c.id) }, status: "subscribed", contact: { consentStatus: "granted" } },
         distinct: ["contactId"],
         select: { contactId: true },
       });
-      const fresh = toAdd.length - alreadyCounted.length;
+      const fresh = mailable.length - alreadyCounted.length;
       if (fresh > 0) await this.entitlements.assertCapacity(w.billingAccountId, "marketingContacts", fresh);
     }
 
@@ -180,7 +181,7 @@ export class ListsService {
     const source = input.consent ? `Added by a team member (${input.consent.source})` : "Added by a team member";
     for (const c of toAdd) {
       await this.prisma.db.$transaction(async (tx) => {
-        if (c.consentStatus !== "granted" && input.consent) {
+        if (c.consentStatus !== "granted" && input.consent && c.email) {
           await this.consent.setIn(tx, {
             workspaceId: w.id,
             contactId: c.id,
@@ -195,7 +196,7 @@ export class ListsService {
         const held = await tx.listMembership.findFirst({ where: { workspaceId: w.id, listId: id, contactId: c.id }, select: { id: true } });
         if (held) await tx.listMembership.update({ where: { id: held.id, workspaceId: w.id }, data: { status: "subscribed", source, subscribedAt: now, unsubscribedAt: null } });
         else await tx.listMembership.create({ data: { workspaceId: w.id, listId: id, contactId: c.id, status: "subscribed", source, subscribedAt: now } });
-        await this.activity.log({ workspaceId: w.id, contactId: c.id, actorId: actorId(ctx), type: "marketing.subscribed", summary: `Subscribed to ${list.name}`, data: { listId: id } }, tx);
+        await this.activity.log({ workspaceId: w.id, contactId: c.id, actorId: actorId(ctx), type: "marketing.subscribed", summary: `Added to the list ${list.name}`, data: { listId: id } }, tx);
       });
       result.added++;
     }

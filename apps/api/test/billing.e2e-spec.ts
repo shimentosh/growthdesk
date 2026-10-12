@@ -504,7 +504,7 @@ describe("Billing correctness (docs/GAP_PLAN.md §3.1.4–3.1.11)", () => {
 
     const provider = t.app.get(StripeProvider);
     const configured = provider.isConfigured;
-    provider.isConfigured = () => false;
+    provider.isConfigured = async () => false;
     try {
       const unchecked = await billing.verifyPlanPrices({ stripe: { month: "price_missing" } }, typed);
       expect(unchecked).toMatchObject(typed);

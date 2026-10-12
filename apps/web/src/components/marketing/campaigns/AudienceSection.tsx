@@ -64,11 +64,11 @@ export function AudienceSection({ value, set, disabled, errors }: SectionProps) 
           <CardHeader
             icon={<ListChecks />}
             title="Send to"
-            description="Subscribed members of any of these lists. Someone on two lists gets one email."
+            description="Members of any of these lead lists who have recorded marketing consent. Lead lists also hold people without consent; they are left out. Someone on two lists gets one email."
             actions={
               ws.can("marketing.write") ? (
                 <Button size="sm" variant="ghost" iconRight={<ArrowUpRight />} href={mk.href("/lists")}>
-                  Manage lists
+                  Manage lead lists
                 </Button>
               ) : undefined
             }
@@ -79,7 +79,7 @@ export function AudienceSection({ value, set, disabled, errors }: SectionProps) 
             ) : lists.isError ? (
               <p className="text-sm text-bad-ink">Lists could not be loaded: {lists.error.message}</p>
             ) : noLists ? (
-              <EmptyState compact icon={<ListChecks />} title="No lists yet" description="Create a list and add the contacts who agreed to hear from you." />
+              <EmptyState compact icon={<ListChecks />} title="No lists yet" description="Create a lead list, or import a CSV into one, then send to the members who agreed to hear from you." />
             ) : (
               <ListPicker lists={shown} chosen={a.listIds} disabled={disabled} onToggle={(id, on) => toggle("listIds", id, on)} />
             )}

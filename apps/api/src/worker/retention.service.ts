@@ -1,8 +1,9 @@
 import { Inject, Injectable, Logger } from "@nestjs/common";
 import { APP_CONFIG, type AppConfig } from "../config/config.js";
 import { PrismaService } from "../prisma/prisma.service.js";
+import { PlatformSettingsService } from "../core/platform-settings.service.js";
 import { Prisma } from "../generated/prisma/client.js";
-import { dataRetentionCutoffs, type DataRetentionKey, KEPT_EVENT_TYPES, NOISE_ACTIVITY_TYPES } from "./maintenance-policy.js";
+import { DATA_RETENTION, dataRetentionCutoffs, type DataRetentionKey, KEPT_EVENT_TYPES, NOISE_ACTIVITY_TYPES } from "./maintenance-policy.js";
 
 /*
  * Batched deletes for the worker's housekeeping (docs/GAP_PLAN.md 6.2, 6.9).
@@ -62,6 +63,7 @@ export class RetentionService {
   constructor(
     private readonly prisma: PrismaService,
     @Inject(APP_CONFIG) private readonly config: AppConfig,
+    private readonly settings: PlatformSettingsService,
   ) {}
 
   /** Deletes rows of `table` (aliased `t` in `where`) in batches; returns how many went. */
@@ -77,7 +79,8 @@ export class RetentionService {
   }
 
   async prune(now = new Date()): Promise<Record<DataRetentionKey, number>> {
-    const c = dataRetentionCutoffs(this.config, now);
+    const days = await this.settings.retentionDays();
+    const c = dataRetentionCutoffs(Object.fromEntries(Object.entries(DATA_RETENTION).map(([k, env]) => [env, days[k as DataRetentionKey]])) as Parameters<typeof dataRetentionCutoffs>[0], now);
     const counts: Record<DataRetentionKey, number> = {
       domainEvents: 0,
       messageEvents: 0,

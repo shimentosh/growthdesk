@@ -47,8 +47,8 @@ export class AuthController {
 
   @Public()
   @Get("providers")
-  providers() {
-    return { google: this.auth.googleEnabled() };
+  async providers() {
+    return { google: await this.auth.googleEnabled() };
   }
 
   /** The register page asks first: open form, invitation needed, waitlist form, or closed. */
@@ -192,8 +192,8 @@ export class AuthController {
   @Public()
   @Raw()
   @Get("google/start")
-  googleStart(@Res() res: Response, @Q("invite") invite?: string, @Q("consent") consent?: string) {
-    if (!this.auth.googleEnabled()) return res.redirect(302, "/login?error=google_unavailable");
+  async googleStart(@Res() res: Response, @Q("invite") invite?: string, @Q("consent") consent?: string) {
+    if (!(await this.auth.googleEnabled())) return res.redirect(302, "/login?error=google_unavailable");
     const nonce = newToken(16);
     const state = `${nonce}.${hmac(derivedKey("oauth-state"), nonce, "base64url")}`;
     const secure = this.sessions.secureCookies;
@@ -205,7 +205,7 @@ export class AuthController {
     } else {
       res.clearCookie(OAUTH_SIGNUP_COOKIE, { path: "/" });
     }
-    return res.redirect(302, this.auth.googleAuthUrl(state));
+    return res.redirect(302, await this.auth.googleAuthUrl(state));
   }
 
   @Public()

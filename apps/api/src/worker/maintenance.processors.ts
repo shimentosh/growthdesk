@@ -151,13 +151,14 @@ export class MaintenanceProcessor extends WorkerHost {
       distinct: ["provider"],
       select: { provider: true },
     });
-    const configured = used.filter((s) => {
+    const configured: typeof used = [];
+    for (const s of used) {
       try {
-        return this.billing.provider(s.provider).isConfigured();
+        if (await this.billing.provider(s.provider).isConfigured()) configured.push(s);
       } catch {
-        return false;
+        // An unknown provider id: nothing to reconcile against.
       }
-    });
+    }
     if (!configured.length) return { skipped: "No payment provider is configured, or no subscription is provider-managed." };
     return { reconciled: await this.billing.reconcile() };
   }

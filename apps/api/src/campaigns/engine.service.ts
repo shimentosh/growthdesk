@@ -504,6 +504,7 @@ export class EngineService {
   private async stopReason(run: Run): Promise<string | null> {
     const { contact, settings, e, workspaceId } = run;
     if (!contact || contact.deletedAt) return "The contact was deleted";
+    if (contact.archivedAt) return "The contact was archived";
     if (contact.doNotContact) return "The contact is marked do-not-contact";
     if (contact.unsubscribedAt) return "The contact unsubscribed";
     if (contact.bouncedAt) return "The contact's email address bounced";

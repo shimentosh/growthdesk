@@ -161,7 +161,8 @@ export function CampaignEditor({ campaign }: { campaign: MarketingCampaign }) {
     success: "Design applied",
     onSuccess: (c) => {
       accept(c);
-      setEdits(({ blocks: _, ...rest }) => rest);
+      // The design's blocks and theme replace the content tab's edits.
+      setEdits(({ blocks: _b, theme: _t, ...rest }) => rest);
     },
   });
 
@@ -174,7 +175,7 @@ export function CampaignEditor({ campaign }: { campaign: MarketingCampaign }) {
   return (
     <>
       <PageHeader
-        back={{ href: mk.href("/campaigns"), label: "Email campaigns" }}
+        back={{ href: ws.href("/campaigns?type=marketing"), label: "Campaigns" }}
         icon={<EntityTile of="marketingCampaigns" />}
         title={value.name.trim() || campaign.name}
         meta={
@@ -196,7 +197,7 @@ export function CampaignEditor({ campaign }: { campaign: MarketingCampaign }) {
                 Review & send
               </Button>
             )}
-            <CampaignMenu campaign={campaign} afterDelete={() => router.push(mk.href("/campaigns"))} />
+            <CampaignMenu campaign={campaign} afterDelete={() => router.push(ws.href("/campaigns?type=marketing"))} />
           </>
         }
       />

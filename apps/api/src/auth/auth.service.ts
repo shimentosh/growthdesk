@@ -110,7 +110,7 @@ export class AuthService {
     const invite = inviteToken ? await this.findUsableInvite(inviteToken) : null;
     return {
       mode,
-      googleEnabled: this.googleEnabled(),
+      googleEnabled: await this.googleEnabled(),
       requiresInvite: mode === "invite_only",
       /** Only when ?invite= was passed: whether that link can still be used, and the address it was sent to. */
       invite: inviteToken ? { valid: Boolean(invite), email: invite?.email ?? null } : null,
@@ -364,15 +364,16 @@ export class AuthService {
     await this.sessions.revoke(id);
   }
 
-  // ─── Google sign-in (optional; enabled by GOOGLE_CLIENT_ID/SECRET) ─────────
+  // ─── Google sign-in (optional; enabled by a Google OAuth client in admin → Settings, or GOOGLE_CLIENT_ID/SECRET) ──
 
-  googleEnabled() {
-    return Boolean(this.config.GOOGLE_CLIENT_ID && this.config.GOOGLE_CLIENT_SECRET);
+  async googleEnabled() {
+    return Boolean(await this.platform.oauthClient("google"));
   }
 
-  googleAuthUrl(state: string) {
+  async googleAuthUrl(state: string) {
+    const client = await this.platform.oauthClient("google");
     const params = new URLSearchParams({
-      client_id: this.config.GOOGLE_CLIENT_ID ?? "",
+      client_id: client?.id ?? "",
       redirect_uri: `${this.config.PUBLIC_APP_URL.replace(/\/$/, "")}/api/auth/google/callback`,
       response_type: "code",
       scope: "openid email profile",
@@ -383,13 +384,15 @@ export class AuthService {
   }
 
   async googleCallback(code: string, ctx: RequestContext, extras: SignupExtras = {}) {
+    const client = await this.platform.oauthClient("google");
+    if (!client) throw badRequest("Google sign-in is not configured on this installation");
     const tokenRes = await fetch("https://oauth2.googleapis.com/token", {
       method: "POST",
       headers: { "content-type": "application/x-www-form-urlencoded" },
       body: new URLSearchParams({
         code,
-        client_id: this.config.GOOGLE_CLIENT_ID ?? "",
-        client_secret: this.config.GOOGLE_CLIENT_SECRET ?? "",
+        client_id: client.id,
+        client_secret: client.secret,
         redirect_uri: `${this.config.PUBLIC_APP_URL.replace(/\/$/, "")}/api/auth/google/callback`,
         grant_type: "authorization_code",
       }),

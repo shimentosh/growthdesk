@@ -9,12 +9,12 @@ import {
   Inbox,
   ListChecks,
   ListOrdered,
-  MailPlus,
   Palette,
   Phone,
   Send,
   Settings,
   Upload,
+  UserPlus,
   Users,
   Workflow,
   type LucideIcon,
@@ -38,6 +38,8 @@ export type NavItem = {
   permission?: string | readonly string[];
   /** Active only on an exact match. */
   exact?: boolean;
+  /** Other paths under /w/:id that also light this link (screens reached from it). */
+  also?: string[];
 };
 
 /**
@@ -59,26 +61,21 @@ export const NAV: NavGroup[] = [
     id: "crm",
     label: "CRM",
     items: [
+      { href: "/leads", label: "Leads", icon: UserPlus, permission: "contacts.read" },
       { href: "/contacts", label: "Contacts", icon: Users, permission: "contacts.read" },
       { href: "/companies", label: "Companies", icon: Building2, permission: "contacts.read" },
       { href: "/imports", label: "Imports", icon: Upload, permission: "contacts.import" },
     ],
   },
   {
-    id: "outreach",
-    label: "Outreach",
+    // Outreach (1:1 sequences) and marketing (one-to-many email) are two engines behind one list.
+    id: "campaigns",
+    label: "Campaigns",
     items: [
-      { href: "/campaigns", label: "Campaigns", icon: Send, permission: "campaigns.read" },
+      { href: "/campaigns", label: "Campaigns", icon: Send, permission: ["campaigns.read", "marketing.read"], also: ["/marketing/campaigns"] },
+      { href: "/marketing/lists", label: "Lead lists", icon: ListChecks, permission: ["marketing.read", "contacts.read"] },
       { href: "/sequences", label: "Sequences", icon: ListOrdered, permission: "campaigns.read" },
       { href: "/templates", label: "Templates", icon: FileText, permission: "templates.read" },
-    ],
-  },
-  {
-    id: "marketing",
-    label: "Marketing",
-    items: [
-      { href: "/marketing/campaigns", label: "Campaigns", icon: MailPlus, permission: "marketing.read" },
-      { href: "/marketing/lists", label: "Lists", icon: ListChecks, permission: "marketing.read" },
       { href: "/marketing/designs", label: "Email designs", icon: Palette, permission: "marketing.read" },
     ],
   },

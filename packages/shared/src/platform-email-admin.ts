@@ -37,6 +37,18 @@ export const PlatformEmailSettingsInput = z.object({
   marketingFrom: sender.optional(),
   replyTo: sender.optional(),
   resendRateLimitPerSec: z.number().int().min(1).max(100).optional(),
+  /** "" = the server's SMTP_* environment. */
+  smtpHost: z
+    .string()
+    .trim()
+    .max(253)
+    .refine((v) => v === "" || /^[A-Za-z0-9.-]+$/.test(v), "Enter a host name, e.g. smtp.example.com")
+    .optional(),
+  smtpPort: z.number().int().min(1).max(65535).optional(),
+  smtpSecure: z.boolean().optional(),
+  smtpUser: z.string().trim().max(320).optional(),
+  /** Write-only. "" clears it. */
+  smtpPassword: z.string().max(500).optional(),
 });
 
 /** A template's content as edited in admin. Tokens are checked against the template's variables by the API. */

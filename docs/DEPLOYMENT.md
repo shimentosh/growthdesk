@@ -426,7 +426,7 @@ pnpm dev         # scripts/dev.mjs
 
 `pnpm bootstrap`: creates `apps/api/.env` from `apps/api/.env.example` with a fresh `ENCRYPTION_KEY` and
 `ALLOW_PRIVATE_MAIL_HOSTS=true`; creates `apps/web/.env.local` from `apps/web/.env.example`; runs
-`pnpm install`, `docker compose up -d --wait`, builds `@growthdesk/shared`, `prisma migrate deploy`,
+`pnpm install`, `docker compose -f docker-compose.yml up -d --wait`, builds `@growthdesk/shared`, `prisma migrate deploy`,
 `prisma generate`, builds the API and runs the seed.
 
 `pnpm dev`: starts the Docker services, builds shared, applies migrations, then runs shared (watch), the API

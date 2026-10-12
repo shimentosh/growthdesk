@@ -1,9 +1,11 @@
 "use client";
 
 import { useState, type FormEvent } from "react";
-import { labelOf } from "@growthdesk/shared";
+import { Mail, UserPlus } from "lucide-react";
+import { labelOf, type ContactInputT } from "@growthdesk/shared";
 import { AiComposeDraftButton } from "@/components/ai/AiComposeDraft";
-import { ContactPicker } from "@/components/pickers/Pickers";
+import { NewContactModal, conflictId } from "@/components/crm/NewContactModal";
+import { ContactPicker, contactLabel } from "@/components/pickers/Pickers";
 import { formLevelError, useOpenKey } from "@/components/pipeline/utils";
 import { Button } from "@/components/ui/Button";
 import { Callout } from "@/components/ui/Callout";
@@ -13,8 +15,22 @@ import { Input, NativeSelect, Textarea } from "@/components/ui/Input";
 import { useApiMutation, useApiQuery } from "@/lib/query";
 import { useWorkspace } from "@/lib/session";
 import type { Paged } from "@/lib/types";
+import type { ContactDetail } from "@/lib/types/crm";
 import type { InboxChannel, InboxMessage } from "@/lib/types/inbox";
 import type { Mailbox } from "@/lib/types/integrations";
+
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+/** What the picker's search text pre-fills in the new-contact form. */
+type Prefill = { firstName?: string; lastName?: string; email?: string; phone?: string };
+
+function prefillFrom(search: string): Prefill {
+  const q = search.trim();
+  if (EMAIL_RE.test(q)) return { email: q };
+  if (/^\+?[\d\s().-]{6,}$/.test(q)) return { phone: q };
+  const [firstName, ...rest] = q.split(/\s+/);
+  return { firstName, lastName: rest.join(" ") };
+}
 
 const FIELDS = ["channel", "contactId", "mailboxId", "subject", "body", "templateId"] as const;
 
@@ -46,6 +62,8 @@ export function ComposeModal(props: Props) {
 function Inner({ open, onOpenChange, onSent }: Props) {
   const ws = useWorkspace();
   const [contactId, setContactId] = useState<string | null>(null);
+  const [contactName, setContactName] = useState<string | null>(null);
+  const [creating, setCreating] = useState<Prefill | null>(null);
   const [channel, setChannel] = useState<InboxChannel>("email");
   const [mailboxId, setMailboxId] = useState("");
   const [subject, setSubject] = useState("");
@@ -61,6 +79,23 @@ function Inner({ open, onOpenChange, onSent }: Props) {
     query: { channel: "whatsapp", pageSize: 200 },
   });
   const approved = (templates.data?.items ?? []).filter((t) => t.waTemplate);
+
+  const pick = (id: string, label: string) => {
+    setContactId(id);
+    setContactName(label);
+  };
+  // "Send to <email>": save the address as a contact (or reuse the one that already has it) and address the message to it.
+  const quickCreate = useApiMutation<ContactDetail, ContactInputT>({
+    path: ws.path("/contacts"),
+    invalidate: [ws.key("contacts")],
+    errorToast: false,
+    onSuccess: (c) => pick(c.id, contactLabel(c)),
+    onError: (error, vars) => {
+      const existing = conflictId(error, "contactId");
+      if (existing) pick(existing, vars.email ?? "Selected");
+    },
+  });
+  const quickError = quickCreate.error && !conflictId(quickCreate.error, "contactId") ? quickCreate.error.message : null;
 
   const send = useApiMutation<InboxMessage, Record<string, unknown>>({
     path: ws.path("/inbox/compose"),
@@ -104,10 +139,57 @@ function Inner({ open, onOpenChange, onSent }: Props) {
       }
     >
       <form id="compose-form" onSubmit={submit} className="flex flex-col gap-4">
-        <FormError error={formError} />
+        <FormError error={formError ?? quickError} />
         <div className="grid gap-4 sm:grid-cols-[minmax(0,1fr)_180px]">
           <Field label="To" required error={fields.contactId}>
-            <ContactPicker value={contactId} onChange={(id) => setContactId(id)} />
+            <ContactPicker
+              value={contactId}
+              valueLabel={quickCreate.isPending ? "Adding contact…" : contactName}
+              disabled={quickCreate.isPending}
+              onChange={(id, c) => {
+                setContactId(id);
+                setContactName(c ? contactLabel(c) : null);
+              }}
+              footer={
+                ws.can("contacts.write")
+                  ? ({ search, close, matches }) => {
+                      const q = search.trim();
+                      const email = EMAIL_RE.test(q) && !matches.some((m) => m.email?.toLowerCase() === q.toLowerCase()) ? q : null;
+                      return (
+                        <>
+                          {email && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                close();
+                                quickCreate.reset();
+                                quickCreate.mutate({ email });
+                              }}
+                              className="flex w-full items-center gap-2 rounded-xs px-2 py-1.5 text-left text-sm text-text hover:bg-hover"
+                            >
+                              <Mail aria-hidden className="size-3.5 shrink-0 text-accent" />
+                              <span className="truncate">
+                                Send to <span className="font-medium">{email}</span>
+                              </span>
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            onClick={() => {
+                              close();
+                              setCreating(q ? prefillFrom(q) : {});
+                            }}
+                            className="flex w-full items-center gap-2 rounded-xs px-2 py-1.5 text-left text-sm text-text hover:bg-hover"
+                          >
+                            <UserPlus aria-hidden className="size-3.5 shrink-0 text-text-3" />
+                            Create a new contact…
+                          </button>
+                        </>
+                      );
+                    }
+                  : undefined
+              }
+            />
           </Field>
           <Field label="Channel" error={fields.channel}>
             <NativeSelect
@@ -189,6 +271,14 @@ function Inner({ open, onOpenChange, onSent }: Props) {
           <Textarea rows={7} value={body} onChange={(e) => setBody(e.target.value)} maxLength={50000} />
         </Field>
       </form>
+      {creating && (
+        <NewContactModal
+          open
+          prefill={creating}
+          onOpenChange={(next) => !next && setCreating(null)}
+          onCreated={(c) => pick(c.id, contactLabel(c))}
+        />
+      )}
     </Modal>
   );
 }

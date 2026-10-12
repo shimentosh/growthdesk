@@ -19,7 +19,7 @@ export type ImportPreview = {
 };
 
 /** POST /imports — `start()` */
-export type ImportStartResult = { id: string; totalRows: number; status: ImportStatus };
+export type ImportStartResult = { id: string; totalRows: number; status: ImportStatus; /** The lead list the rows join (new or existing). */ listId?: string | null };
 
 /** GET /imports — `list()` (newest first, at most 100, not paged) */
 export type ImportSummary = {
@@ -47,6 +47,8 @@ export type ImportOptions = {
   onDuplicate?: "update" | "skip";
   leadSource?: string;
   defaultCountry?: string;
+  /** The lead list everyone in the file joined. */
+  listId?: string;
 };
 
 /** GET /imports/:id — `get()`: the whole row except the parsed rows. */

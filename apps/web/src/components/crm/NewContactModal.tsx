@@ -30,11 +30,13 @@ type Draft = {
   tags: string[];
 };
 
-const empty = (companyId: string | null, companyLabel: string | null): Draft => ({
-  firstName: "",
-  lastName: "",
-  email: "",
-  phone: "",
+type Prefill = Partial<Pick<Draft, "firstName" | "lastName" | "email" | "phone">>;
+
+const empty = (companyId: string | null, companyLabel: string | null, prefill: Prefill = {}): Draft => ({
+  firstName: prefill.firstName ?? "",
+  lastName: prefill.lastName ?? "",
+  email: prefill.email ?? "",
+  phone: prefill.phone ?? "",
   jobTitle: "",
   companyId,
   companyLabel,
@@ -54,20 +56,22 @@ export function conflictId(error: ApiError | null, key: "contactId" | "companyId
   return typeof id === "string" ? id : null;
 }
 
-/** POST /contacts. `company` presets the company (from a company record). */
+/** POST /contacts. `company` presets the company (from a company record); `prefill` the name, email or phone (read once, on mount). */
 export function NewContactModal({
   open,
   onOpenChange,
   company,
+  prefill,
   onCreated,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   company?: { id: string; name: string };
+  prefill?: Prefill;
   onCreated?: (contact: ContactDetail) => void;
 }) {
   const ws = useWorkspace();
-  const [draft, setDraft] = useState<Draft>(() => empty(company?.id ?? null, company?.name ?? null));
+  const [draft, setDraft] = useState<Draft>(() => empty(company?.id ?? null, company?.name ?? null, prefill));
   const [newCompany, setNewCompany] = useState(false);
   const set = <K extends keyof Draft>(key: K, value: Draft[K]) => setDraft((d) => ({ ...d, [key]: value }));
 
@@ -99,6 +103,7 @@ export function NewContactModal({
       jobTitle: draft.jobTitle.trim() || undefined,
       ownerId: draft.ownerId ?? undefined,
       status: draft.status,
+      lifecycleStage: "contact",
       priority: draft.priority,
       tags: draft.tags.length ? draft.tags : undefined,
     };

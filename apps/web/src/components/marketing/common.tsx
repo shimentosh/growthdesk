@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo } from "react";
-import { renderEmail, type EmailBlock, type ListMembershipStatus, type MarketingCampaignStatus, type MarketingSendStatus, type SendingDomainStatus } from "@growthdesk/shared";
+import { renderEmail, type EmailBlock, type EmailTheme, type ListMembershipStatus, type MarketingCampaignStatus, type MarketingSendStatus, type SendingDomainStatus } from "@growthdesk/shared";
 import { Badge, type Tone } from "@/components/ui/Badge";
 import { useApiQuery } from "@/lib/query";
 import { useWorkspace } from "@/lib/session";
@@ -100,20 +100,23 @@ export const PREVIEW_VARS = { first_name: "Alex", last_name: "Rivera", full_name
  */
 export function EmailPreview({
   blocks,
+  theme,
   preheader,
   legalName = "Your company",
   postalAddress = "Your postal address",
   className,
 }: {
   blocks: EmailBlock[];
+  /** The design's or campaign's theme, so the preview matches what is sent. */
+  theme?: EmailTheme | null;
   preheader?: string;
   legalName?: string;
   postalAddress?: string;
   className?: string;
 }) {
   const html = useMemo(
-    () => renderEmail(blocks, { preheader, vars: PREVIEW_VARS, footer: { legalName, postalAddress, preferencesUrl: "#" } }).html,
-    [blocks, preheader, legalName, postalAddress],
+    () => renderEmail(blocks, { preheader, theme, vars: PREVIEW_VARS, footer: { legalName, postalAddress, preferencesUrl: "#" } }).html,
+    [blocks, theme, preheader, legalName, postalAddress],
   );
   return <iframe title="Email preview" sandbox="" srcDoc={html} className={className ?? "h-full min-h-[560px] w-full rounded-lg border border-line bg-white"} />;
 }

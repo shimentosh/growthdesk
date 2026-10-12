@@ -42,6 +42,27 @@ export function contentStrings(content: PlatformTemplateContent): string[] {
       case "image":
         out.push(b.src, b.alt, b.href ?? "");
         break;
+      case "header":
+        out.push(b.logo, b.brand, b.tagline);
+        break;
+      case "hero":
+        out.push(b.eyebrow, b.title, b.text, b.image, b.buttonLabel, b.buttonUrl);
+        break;
+      case "columns":
+        for (const it of b.items) out.push(it.image, it.title, it.text, it.linkLabel, it.linkUrl);
+        break;
+      case "quote":
+        out.push(b.text, b.author, b.role);
+        break;
+      case "callout":
+        out.push(b.title, b.text);
+        break;
+      case "list":
+        out.push(...b.items);
+        break;
+      case "social":
+        for (const l of b.links) out.push(l.url);
+        break;
       default:
         break;
     }

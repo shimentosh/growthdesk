@@ -21,6 +21,7 @@ import { CredentialReleaseService } from "../core/credential-release.service.js"
 import { hashToken, newToken } from "../common/crypto.js";
 import { badRequest, conflict, forbidden, notFound } from "../common/errors.js";
 import { me, ws, type RequestContext } from "../common/context.js";
+import { LibrarySeedService } from "./library-seed.service.js";
 
 export const DEFAULT_STAGES: { name: string; kind: "open" | "won" | "lost"; probability: number; color: string }[] = [
   { name: "New Lead", kind: "open", probability: 5, color: "gray" },
@@ -64,6 +65,7 @@ export class WorkspacesService {
     private readonly audit: AuditService,
     private readonly mail: MailService,
     private readonly credentials: CredentialReleaseService,
+    private readonly library: LibrarySeedService,
     @Inject(APP_CONFIG) private readonly config: AppConfig,
   ) {}
 
@@ -135,6 +137,8 @@ export class WorkspacesService {
       await this.createDefaultPipeline(tx, w.id);
       return w;
     });
+    // Ready-to-use templates and email designs. A failure here must not fail sign-up; the next deploy fills them in.
+    await this.library.seedWorkspace(workspace.id).catch(() => undefined);
     await this.audit.record({ ...ctx, workspace: undefined }, { workspaceId: workspace.id, action: "workspace.created", targetType: "workspace", targetId: workspace.id });
     if (withheld) {
       await this.audit.record(
@@ -153,7 +157,7 @@ export class WorkspacesService {
    */
   private async trialWithheld(emailKey: string, ip: string): Promise<"email" | "ip" | null> {
     if (await this.prisma.db.billingAccount.findFirst({ where: { trialEmailKey: emailKey, trialGrantedAt: { not: null } }, select: { id: true } })) return "email";
-    const perIp = this.config.TRIALS_PER_IP_PER_DAY;
+    const perIp = await this.platform.trialsPerIpPerDay();
     if (perIp > 0 && ip) {
       const recent = await this.prisma.db.billingAccount.count({ where: { signupIp: ip, trialGrantedAt: { gte: new Date(Date.now() - 86_400_000) } } });
       if (recent >= perIp) return "ip";

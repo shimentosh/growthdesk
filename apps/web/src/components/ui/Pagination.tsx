@@ -4,6 +4,7 @@ import { ChevronLeft, ChevronRight } from "lucide-react";
 import { formatNumber } from "@/lib/format";
 import { cn } from "@/lib/cn";
 import { IconButton } from "./Button";
+import { NativeSelect } from "./Input";
 
 export type PaginationProps = {
   /** 1-based, as the API's ListQuery. */
@@ -30,17 +31,14 @@ export function Pagination({ page, pageSize, total, onPageChange, onPageSizeChan
         {onPageSizeChange && (
           <label className="flex items-center gap-1.5">
             <span>Rows</span>
-            <select
+            <NativeSelect
+              size="sm"
+              className="w-16"
+              aria-label="Rows per page"
               value={pageSize}
               onChange={(e) => onPageSizeChange(Number(e.target.value))}
-              className="h-7 rounded-sm border border-line-strong bg-field px-1.5 text-xs text-text"
-            >
-              {pageSizes.map((s) => (
-                <option key={s} value={s}>
-                  {s}
-                </option>
-              ))}
-            </select>
+              options={pageSizes.map((s) => ({ value: String(s), label: String(s) }))}
+            />
           </label>
         )}
         <span className="tabular-nums">

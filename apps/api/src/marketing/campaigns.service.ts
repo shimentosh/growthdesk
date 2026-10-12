@@ -19,7 +19,7 @@ import { AuditService } from "../core/audit.service.js";
 import { badRequest, conflict, notFound, unavailable } from "../common/errors.js";
 import { actorId, me, ws, type RequestContext } from "../common/context.js";
 import { AudienceService, readAudience, type StoredAudience } from "./audience.service.js";
-import { readBlocks } from "./designs.service.js";
+import { readBlocks, readTheme } from "./designs.service.js";
 import { MarketingSetupService } from "./setup.service.js";
 import { sendViaEsp } from "./esp.js";
 
@@ -57,6 +57,7 @@ export class MarketingCampaignsService {
       replyTo: c.replyTo,
       sendingDomainId: c.sendingDomainId,
       blocks: readBlocks(c.blocks),
+      theme: readTheme(c.theme),
       audience: { listIds: a.listIds, excludeListIds: a.excludeListIds, viewId: a.viewId ?? null },
       trackOpens: c.trackOpens,
       trackClicks: c.trackClicks,
@@ -130,8 +131,10 @@ export class MarketingCampaignsService {
       if (!d) throw badRequest("That design does not exist", { designId: "Unknown design" });
       data.designId = d.id;
       data.blocks = d.blocks as never;
+      data.theme = d.theme as never;
     }
     if (input.blocks !== undefined) data.blocks = input.blocks as never;
+    if (input.theme !== undefined) data.theme = input.theme as never;
     if (input.audience !== undefined) {
       await this.checkAudience(ctx, input.audience);
       data.audience = { listIds: input.audience.listIds, excludeListIds: input.audience.excludeListIds, viewId: input.audience.viewId ?? null } as never;
@@ -184,6 +187,7 @@ export class MarketingCampaignsService {
         replyTo: c.replyTo,
         sendingDomainId: c.sendingDomainId,
         blocks: c.blocks as never,
+        theme: c.theme as never,
         designId: c.designId,
         audience: { listIds: a.listIds, excludeListIds: a.excludeListIds, viewId: a.viewId ?? null } as never,
         trackOpens: c.trackOpens,
@@ -255,7 +259,7 @@ export class MarketingCampaignsService {
     const [first, ...rest] = sender.name.split(" ");
     const vars = variablesFor({ firstName: first, lastName: rest.join(" "), fullName: sender.name, email: sender.email });
     const preferencesUrl = `${this.config.PUBLIC_APP_URL.replace(/\/+$/, "")}/preferences/test`;
-    const { html, text } = renderEmail(readBlocks(c.blocks), { preheader: c.preheader, vars, footer: { legalName: profile.legalName, postalAddress: profile.postalAddress, preferencesUrl } });
+    const { html, text } = renderEmail(readBlocks(c.blocks), { preheader: c.preheader, theme: readTheme(c.theme), vars, footer: { legalName: profile.legalName, postalAddress: profile.postalAddress, preferencesUrl } });
     const results: { email: string; sent: boolean; error?: string }[] = [];
     for (const to of emails) {
       const r = await sendViaEsp(smtp, {

@@ -9,8 +9,10 @@
 
 import { useRouter } from "next/navigation";
 import { useId, useMemo, useState, type DragEvent, type KeyboardEvent } from "react";
-import { ArrowLeft, Check, ChevronRight, Columns3, FileSpreadsheet, FileUp, PenLine, Play, Rows3, Settings2, SkipForward, X } from "lucide-react";
+import { ArrowLeft, Check, ChevronRight, Columns3, FileSpreadsheet, FileUp, ListChecks, PenLine, Play, Rows3, Settings2, SkipForward, X } from "lucide-react";
 import { IMPORT_FIELDS } from "@growthdesk/shared";
+import { LIST_READ } from "@/components/crm/lifecycle";
+import { useMarketingLists } from "@/components/marketing/common";
 import { Button, IconButton } from "@/components/ui/Button";
 import { Callout } from "@/components/ui/Callout";
 import { Card, CardBody, CardFooter, CardHeader } from "@/components/ui/Card";
@@ -37,7 +39,12 @@ type StartBody = {
   onDuplicate: "update" | "skip";
   leadSource?: string;
   defaultCountry?: string;
+  listId?: string;
+  newListName?: string;
 };
+
+/** "leads-october.csv" → "leads-october", as the default name of the new lead list. */
+const listNameFrom = (fileName: string) => fileName.replace(/\.[^.]+$/, "").trim().slice(0, 120) || "Imported leads";
 
 const STEPS = ["Choose a file", "Map columns", "Import"] as const;
 /** IMPORT_MAX_CSV_CHARS as people read it (formatBytes would say 14 MB, being binary). */
@@ -69,9 +76,10 @@ function Steps({ current }: { current: 0 | 1 }) {
   );
 }
 
-export function ImportWizard() {
+/** `listId` preselects the lead list the people join (e.g. "Import CSV into this list"). */
+export function ImportWizard({ listId }: { listId?: string }) {
   const [loaded, setLoaded] = useState<Loaded | null>(null);
-  return loaded ? <MapStep loaded={loaded} onBack={() => setLoaded(null)} /> : <FileStep onLoaded={setLoaded} />;
+  return loaded ? <MapStep loaded={loaded} initialListId={listId} onBack={() => setLoaded(null)} /> : <FileStep onLoaded={setLoaded} />;
 }
 
 // ─── Step 1: the file ───────────────────────────────────────────────────────
@@ -170,7 +178,7 @@ function FileStep({ onLoaded }: { onLoaded: (l: Loaded) => void }) {
 
 // ─── Step 2: mapping and options ────────────────────────────────────────────
 
-function MapStep({ loaded, onBack }: { loaded: Loaded; onBack: () => void }) {
+function MapStep({ loaded, initialListId, onBack }: { loaded: Loaded; initialListId?: string; onBack: () => void }) {
   const ws = useWorkspace();
   const router = useRouter();
   const { preview } = loaded;
@@ -191,6 +199,12 @@ function MapStep({ loaded, onBack }: { loaded: Loaded; onBack: () => void }) {
   const [onDuplicate, setOnDuplicate] = useState<"update" | "skip">("update");
   const [leadSource, setLeadSource] = useState("");
   const [defaultCountry, setDefaultCountry] = useState("");
+  // The lead list everyone in the file joins: an existing one, or a new one named after the file.
+  const canLists = ws.can(LIST_READ);
+  const lists = useMarketingLists();
+  const [listMode, setListMode] = useState<"new" | "existing">(initialListId && canLists ? "existing" : "new");
+  const [listId, setListId] = useState(initialListId ?? "");
+  const [newListName, setNewListName] = useState(() => listNameFrom(loaded.fileName));
 
   const start = useApiMutation<ImportStartResult, StartBody>({
     path: ws.path("/imports"),
@@ -235,8 +249,9 @@ function MapStep({ loaded, onBack }: { loaded: Loaded; onBack: () => void }) {
 
   const fields = start.error?.fields ?? {};
   const tagsError = fields.tags ?? Object.entries(fields).find(([k]) => k.startsWith("tags."))?.[1];
-  const shownFieldError = Boolean(fields.leadSource || fields.defaultCountry || tagsError);
-  const blocked = !hasIdentity || tooMany || noRows || countryInvalid;
+  const shownFieldError = Boolean(fields.leadSource || fields.defaultCountry || tagsError || fields.listId || fields.newListName);
+  const listMissing = listMode === "existing" ? !listId : !newListName.trim();
+  const blocked = !hasIdentity || tooMany || noRows || countryInvalid || listMissing;
 
   const submit = () => {
     if (blocked) return;
@@ -249,6 +264,7 @@ function MapStep({ loaded, onBack }: { loaded: Loaded; onBack: () => void }) {
       onDuplicate,
       leadSource: leadSource.trim() || undefined,
       defaultCountry: defaultCountry.trim() ? defaultCountry.trim().toUpperCase() : undefined,
+      ...(listMode === "existing" ? { listId } : { newListName: newListName.trim() }),
     });
   };
 
@@ -396,6 +412,65 @@ function MapStep({ loaded, onBack }: { loaded: Loaded; onBack: () => void }) {
             </div>
           </section>
         )}
+
+        {/* Lead list */}
+        <section className="flex flex-col gap-3">
+          <div>
+            <h3 className="flex items-center gap-1.5 text-sm font-semibold text-text-hi">
+              <ListChecks aria-hidden className="size-4 text-text-3" />
+              Add to lead list
+            </h3>
+            <p className="mt-0.5 text-xs text-text-3">
+              Everyone in the file, new or updated, joins this list as a lead. Enroll the list in an outreach campaign to start working it.
+            </p>
+          </div>
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+            {(
+              [
+                { value: "new", label: "Create a new list", description: "Named after the file; rename it below." },
+                { value: "existing", label: "Add to an existing list", description: canLists ? "Pick one of your lead lists." : "Your role cannot see lead lists." },
+              ] as const
+            ).map((o) => (
+              <label
+                key={o.value}
+                className={cn(
+                  "flex items-start gap-2.5 rounded-md border px-3 py-2.5 transition-colors",
+                  o.value === "existing" && !canLists ? "cursor-not-allowed opacity-60" : "cursor-pointer",
+                  listMode === o.value ? "border-accent bg-tint-pick" : "border-line hover:bg-hover",
+                )}
+              >
+                <input
+                  type="radio"
+                  name={`${dupId}-list`}
+                  value={o.value}
+                  checked={listMode === o.value}
+                  disabled={o.value === "existing" && !canLists}
+                  onChange={() => setListMode(o.value)}
+                  className="mt-0.5 accent-[var(--accent)]"
+                />
+                <span>
+                  <span className="block text-sm font-medium text-text">{o.label}</span>
+                  <span className="block text-xs text-text-3">{o.description}</span>
+                </span>
+              </label>
+            ))}
+          </div>
+          {listMode === "new" ? (
+            <Field label="New list name" required error={fields.newListName ?? (!newListName.trim() ? "Name the list." : undefined)}>
+              <Input value={newListName} maxLength={120} onChange={(e) => setNewListName(e.target.value)} placeholder="October webinar leads" />
+            </Field>
+          ) : (
+            <Field label="Lead list" required error={fields.listId ?? (lists.isError ? `Lists could not be loaded: ${lists.error.message}` : undefined)}>
+              <NativeSelect
+                value={listId}
+                onChange={(e) => setListId(e.target.value)}
+                disabled={lists.isPending}
+                placeholder={lists.isPending ? "Loading lists…" : "Choose a list"}
+                options={(lists.data ?? []).map((l) => ({ value: l.id, label: l.name }))}
+              />
+            </Field>
+          )}
+        </section>
 
         {/* Options */}
         <section className="flex flex-col gap-3">

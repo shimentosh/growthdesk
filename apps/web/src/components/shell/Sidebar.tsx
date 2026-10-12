@@ -121,8 +121,11 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
 
   const visible = (items: NavItem[]) => items.filter((i) => !i.permission || ws.can(i.permission));
   const isActive = (item: NavItem) => {
-    const href = ws.href(item.href);
-    return item.exact ? pathname === href : pathname === href || pathname.startsWith(`${href}/`);
+    const under = (path: string) => {
+      const href = ws.href(path);
+      return pathname === href || pathname.startsWith(`${href}/`);
+    };
+    return item.exact ? pathname === ws.href(item.href) : under(item.href) || (item.also ?? []).some(under);
   };
   const footer = visible(NAV_FOOTER);
 

@@ -1,4 +1,5 @@
-import type { EmailBlock } from "@growthdesk/shared";
+import type { EmailBlock, EmailTheme } from "@growthdesk/shared";
+import { cleanTheme } from "@/components/marketing/designs/ThemePanel";
 import type { MarketingCampaign, MarketingCampaignPatch } from "@/lib/types/marketing";
 
 /*
@@ -17,6 +18,7 @@ export type Draft = {
   replyTo: string;
   audience: MarketingCampaign["audience"];
   blocks: EmailBlock[];
+  theme: EmailTheme;
   trackOpens: boolean;
   trackClicks: boolean;
 };
@@ -29,7 +31,7 @@ export type EditableSection = Exclude<Section, "review">;
 export const SECTION_FIELDS: Record<EditableSection, DraftKey[]> = {
   details: ["name", "subject", "preheader", "fromName", "fromLocalPart", "sendingDomainId", "replyTo"],
   audience: ["audience"],
-  content: ["blocks"],
+  content: ["blocks", "theme"],
   tracking: ["trackOpens", "trackClicks"],
 };
 
@@ -45,6 +47,7 @@ export const draftOf = (c: MarketingCampaign): Draft => ({
   replyTo: c.replyTo,
   audience: c.audience,
   blocks: c.blocks,
+  theme: cleanTheme(c.theme ?? {}),
   trackOpens: c.trackOpens,
   trackClicks: c.trackClicks,
 });
@@ -75,7 +78,7 @@ export function sectionOfField(field: string): EditableSection | null {
 export type ProblemHome = EditableSection | "setup" | "profile" | "plan";
 
 export function problemHome(problem: string): ProblemHome {
-  if (/^(Button|Image) \d+ needs|^Add some text/.test(problem)) return "content";
+  if (/^(Button|Image) \d+ needs|^Add some text|^The hero's button|^Column \d+ in block|^Every social link/.test(problem)) return "content";
   if (/email service/i.test(problem)) return "setup";
   if (/company profile/i.test(problem)) return "profile";
   if (/is not verified|^Sending from .* is paused/i.test(problem)) return "setup";

@@ -3,7 +3,8 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState, type ReactNode } from "react";
-import { Archive, ArchiveRestore, Ellipsis, Pencil, Plus, UserPlus } from "lucide-react";
+import { Archive, ArchiveRestore, Ellipsis, Pencil, Plus, Upload, UserPlus } from "lucide-react";
+import { LIST_READ, LIST_WRITE } from "@/components/crm/lifecycle";
 import { AddToListModal } from "@/components/marketing/AddToListModal";
 import { useMarketing, useMarketingLists } from "@/components/marketing/common";
 import { ListFormModal } from "@/components/marketing/lists/ListFormModal";
@@ -28,7 +29,7 @@ import type { MarketingList } from "@/lib/types/marketing";
 export default function MarketingListsPage() {
   return (
     <Page>
-      <RequirePermission permission="marketing.read">
+      <RequirePermission permission={LIST_READ}>
         <Lists />
       </RequirePermission>
     </Page>
@@ -48,7 +49,7 @@ function Lists() {
   const mk = useMarketing();
   const f = useFormat();
   const router = useRouter();
-  const canWrite = ws.can("marketing.write");
+  const canWrite = ws.can(LIST_WRITE);
   const [showArchived, setShowArchived] = useState(false);
   const [creating, setCreating] = useState(false);
   const [editing, setEditing] = useState<MarketingList | null>(null);
@@ -88,8 +89,8 @@ function Lists() {
           canWrite
             ? archivedCount
               ? "Every list is archived. Turn on Show archived to restore one, or create a new list."
-              : "A list is a group of people who agreed to hear from you, like a newsletter or a product's beta. Campaigns are sent to lists."
-            : "Nobody has created a marketing list yet."
+              : "A lead list groups the people you import or pick, like a trade show or a target segment. Outreach campaigns enroll its leads; marketing email goes to the members who opted in."
+            : "Nobody has created a lead list yet."
         }
         action={create}
       />
@@ -190,9 +191,18 @@ function Lists() {
     <>
       <PageHeader
         icon={<EntityTile of="lists" />}
-        title="Lists"
-        description="Who receives your marketing email. People join with recorded consent, and anyone who unsubscribes stays off the list."
-        actions={create}
+        title="Lead lists"
+        description="Named groups of people, usually from an import. Enroll a list in an outreach campaign, or send it marketing email (only members with recorded consent receive that)."
+        actions={
+          <>
+            {ws.can("contacts.import") && (
+              <Button icon={<Upload />} href={ws.href("/imports")}>
+                Import CSV
+              </Button>
+            )}
+            {create}
+          </>
+        }
       />
       <div className="mb-3 flex items-center justify-between gap-3">
         <p className="text-xs text-text-3 tabular-nums">
