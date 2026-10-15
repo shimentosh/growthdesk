@@ -7,6 +7,7 @@ import {
   CompanyInput,
   ContactFilter,
   ContactInput,
+  ContactResolveInput,
   CustomFieldInput,
   ImportStartInput,
   ListQuery,
@@ -106,6 +107,13 @@ export class CrmController {
   @Post("contacts/merge")
   merge(@Ctx() ctx: RequestContext, @Body(MergeContactsInput) body: z.infer<typeof MergeContactsInput>) {
     return this.contacts.merge(ctx, body.primaryId, body.duplicateIds);
+  }
+
+  @Permission("contacts.read")
+  @HttpCode(200)
+  @Post("contacts/resolve")
+  resolve(@Ctx() ctx: RequestContext, @Body(ContactResolveInput) body: z.infer<typeof ContactResolveInput>) {
+    return this.contacts.resolve(ctx, body);
   }
 
   @Permission("contacts.write")

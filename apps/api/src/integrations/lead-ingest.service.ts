@@ -6,6 +6,7 @@ import { EntitlementsService } from "../billing/entitlements.service.js";
 import { EventsService } from "../core/events.service.js";
 import { ContactsService, type UpsertResult } from "../crm/contacts.service.js";
 import { CampaignsService, type SkipItem } from "../campaigns/campaigns.service.js";
+import { ListsService, type AddResult } from "../marketing/lists.service.js";
 import { conflict, forbidden, isApiError, notFound } from "../common/errors.js";
 import { actorId, holds, ws, type RequestContext } from "../common/context.js";
 
@@ -32,6 +33,15 @@ export type IngestResult = {
     campaignId: string;
     enrolled: number;
     skipped: SkipItem[];
+    error: { code: string; message: string } | null;
+  } | null;
+  list: {
+    listId: string;
+    added: number;
+    /** On a double opt-in list: emailed a link, subscribed once they confirm. */
+    pending: number;
+    alreadyMember: number;
+    skipped: AddResult["skipped"] | null;
     error: { code: string; message: string } | null;
   } | null;
 };
@@ -61,6 +71,7 @@ export class LeadIngestService {
     private readonly events: EventsService,
     private readonly contacts: ContactsService,
     private readonly campaigns: CampaignsService,
+    private readonly lists: ListsService,
   ) {}
 
   async ingest(ctx: RequestContext, input: LeadIngestInputT): Promise<IngestResult> {
@@ -69,6 +80,7 @@ export class LeadIngestService {
     await this.entitlements.assertFeature(w.billingAccountId, "apiAccess");
     await this.entitlements.assertFullAccess(w.billingAccountId, "Importing leads");
     if (input.campaignId) await this.checkCampaign(ctx, input.campaignId);
+    if (input.listId) await this.checkList(ctx, input.listId);
 
     const defaultCountry = await this.contacts.defaultCountry(w.id);
     const keyName = ctx.apiKey?.name;
@@ -82,6 +94,7 @@ export class LeadIngestService {
           onDuplicate: input.onDuplicate,
           tags: input.tags,
           campaignId: input.campaignId ?? null,
+          listId: input.listId ?? null,
           apiKeyId: ctx.apiKey?.id ?? null,
         },
         totalRows: input.leads.length,
@@ -111,6 +124,21 @@ export class LeadIngestService {
             createBlocked: !isUnlimited(remaining) && remaining <= 0 ? "Your plan's contact limit is reached; this lead was not created. Upgrade to add more contacts." : undefined,
           });
           if (res.created) remaining -= 1;
+          // Someone already in the CRM (matched by email or phone, not a re-send of the same external
+          // record) arriving again as a lead — a second form, a new signup — runs the lead workflows
+          // too; `returning` lets a condition tell them apart. Enrollment dedupes per campaign.
+          else if (res.matchedBy === "email" || res.matchedBy === "phone") {
+            await this.prisma.db.$transaction((tx) =>
+              this.events.emitIn(tx, {
+                workspaceId: w.id,
+                type: "lead.imported",
+                subjectType: "contact",
+                subjectId: res.contactId,
+                actorId: actorId(ctx),
+                payload: { source: input.source, importId: imp.id, returning: true, matchedBy: res.matchedBy },
+              }),
+            );
+          }
           const status: LeadStatus = res.created ? "created" : res.updated ? "updated" : res.skipped ? "skipped" : "unchanged";
           results.push({ index, externalId, contactId: res.contactId, status, matchedBy: res.matchedBy, error: null });
         } catch (e) {
@@ -164,7 +192,32 @@ export class LeadIngestService {
       }
     }
 
-    return { importId: imp.id, source: input.source, summary, results, enrollment };
+    let list: IngestResult["list"] = null;
+    if (input.listId) {
+      const ids = [...new Set(results.map((r) => r.contactId).filter((id): id is string => Boolean(id)))];
+      if (!ids.length) {
+        list = { listId: input.listId, added: 0, pending: 0, alreadyMember: 0, skipped: null, error: null };
+      } else {
+        try {
+          const res = await this.lists.addMembers(ctx, input.listId, { contactIds: ids, ...(input.consent ? { consent: input.consent } : {}) });
+          list = { listId: input.listId, added: res.added, pending: res.pending, alreadyMember: res.alreadyMember, skipped: res.skipped, error: null };
+        } catch (e) {
+          // The contacts are saved either way; say why subscribing them did not happen (plan limit, archived list).
+          if (!isApiError(e)) throw e;
+          list = { listId: input.listId, added: 0, pending: 0, alreadyMember: 0, skipped: null, error: { code: e.code, message: e.message } };
+        }
+      }
+    }
+
+    return { importId: imp.id, source: input.source, summary, results, enrollment, list };
+  }
+
+  /** Refuses up front, before any lead is saved, when the list cannot take people. */
+  private async checkList(ctx: RequestContext, listId: string) {
+    if (!ctx.apiKey && !holds(ctx, "marketing.write")) throw forbidden(`Your role (${ws(ctx).role}) cannot add people to lists`);
+    const l = await this.prisma.db.marketingList.findFirst({ where: { id: listId, workspaceId: ws(ctx).id }, select: { archivedAt: true } });
+    if (!l) throw notFound("That list");
+    if (l.archivedAt) throw conflict("This list is archived. Restore it before adding people.");
   }
 
   /** Refuses up front, before any lead is saved, when the campaign cannot take contacts. */

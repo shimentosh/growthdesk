@@ -16,12 +16,14 @@ import type { Sequence } from "@/lib/types/sequences";
  * Name a campaign and start it blank or from a library sequence (POST
  * /campaigns with fromSequenceId copies the sequence's steps into the
  * campaign's own copy). Opens the new campaign on success.
+ * `initialSequenceId` preselects a sequence ("Use in campaign" on the
+ * sequences pages); it is read when the modal mounts and after each close.
  */
-export function NewCampaignModal({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
+export function NewCampaignModal({ open, onOpenChange, initialSequenceId }: { open: boolean; onOpenChange: (open: boolean) => void; initialSequenceId?: string }) {
   const ws = useWorkspace();
   const router = useRouter();
   const [name, setName] = useState("");
-  const [sequenceId, setSequenceId] = useState("");
+  const [sequenceId, setSequenceId] = useState(initialSequenceId ?? "");
   const sequences = useApiQuery<Paged<Sequence>>(ws.key("sequences", "list", "picker"), open ? ws.path("/sequences") : null, { query: { pageSize: 200 } });
   const create = useApiMutation<CampaignDetail, CampaignCreateBody>({
     path: ws.path("/campaigns"),
@@ -36,7 +38,7 @@ export function NewCampaignModal({ open, onOpenChange }: { open: boolean; onOpen
   const change = (next: boolean) => {
     if (!next) {
       setName("");
-      setSequenceId("");
+      setSequenceId(initialSequenceId ?? "");
       create.reset();
     }
     onOpenChange(next);

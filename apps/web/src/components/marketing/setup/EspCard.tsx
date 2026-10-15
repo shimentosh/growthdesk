@@ -1,9 +1,9 @@
 "use client";
 
 import { useState, type FormEvent, type ReactNode } from "react";
-import { CircleAlert, Pencil, Plug, Send, Unplug, Webhook } from "lucide-react";
+import { CircleAlert, ExternalLink, Pencil, Plug, Send, Unplug, Webhook } from "lucide-react";
 import type { z } from "zod";
-import { SES_REGIONS, type EspConnectionInput, type EspProvider } from "@growthdesk/shared";
+import { RESEND_REGIONS, SES_REGIONS, type EspConnectionInput, type EspProvider } from "@growthdesk/shared";
 import { Badge, type Tone } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { Card, CardBody, CardFooter, CardHeader } from "@/components/ui/Card";
@@ -23,7 +23,7 @@ import { formErrorOf } from "./errors";
 type EspInputT = z.input<typeof EspConnectionInput>;
 type Security = EspConnection["security"];
 
-const PROVIDER_LABEL: Record<EspProvider, string> = { ses: "Amazon SES", smtp_relay: "SMTP relay" };
+const PROVIDER_LABEL: Record<EspProvider, string> = { ses: "Amazon SES", smtp_relay: "SMTP relay", resend: "Resend" };
 
 const SECURITY: { value: Security; label: string }[] = [
   { value: "starttls", label: "STARTTLS" },
@@ -41,8 +41,10 @@ const STATUS: Record<EspConnection["status"], { tone: Tone; label: string }> = {
 };
 
 const formOf = (esp: EspConnection | null) => ({
-  provider: (esp?.provider ?? "ses") as EspProvider,
-  region: esp?.region ?? "us-east-1",
+  provider: (esp?.provider ?? "resend") as EspProvider,
+  region: esp?.provider === "ses" ? (esp.region ?? "us-east-1") : "us-east-1",
+  resendRegion: esp?.provider === "resend" ? (esp.region ?? "us-east-1") : "us-east-1",
+  apiKey: "",
   host: esp?.provider === "smtp_relay" ? esp.host : "",
   port: esp?.provider === "smtp_relay" ? String(esp.port) : "587",
   security: (esp?.provider === "smtp_relay" ? esp.security : "starttls") as Security,
@@ -51,11 +53,11 @@ const formOf = (esp: EspConnection | null) => ({
 });
 type Form = ReturnType<typeof formOf>;
 
-/** Amazon SES or a plain SMTP relay, as a two-way switch. */
+/** Resend, Amazon SES or a plain SMTP relay. */
 function ProviderSwitch({ value, onChange }: { value: EspProvider; onChange: (v: EspProvider) => void }) {
   return (
     <div role="radiogroup" aria-label="Email service" className="inline-flex self-start rounded-sm border border-line-strong bg-well p-0.5">
-      {(["ses", "smtp_relay"] as const).map((p) => (
+      {(["resend", "ses", "smtp_relay"] as const).map((p) => (
         <button
           key={p}
           type="button"
@@ -100,6 +102,10 @@ function EspForm({ esp, onDone, onCancel }: { esp: EspConnection | null; onDone:
   const submit = (e: FormEvent) => {
     e.preventDefault();
     const password = v.password || undefined;
+    if (v.provider === "resend") {
+      connect.mutate({ provider: "resend", region: v.resendRegion as (typeof RESEND_REGIONS)[number], apiKey: v.apiKey.trim() || undefined });
+      return;
+    }
     connect.mutate(
       v.provider === "ses"
         ? { provider: "ses", region: v.region as (typeof SES_REGIONS)[number], username: v.username.trim(), password }
@@ -127,7 +133,30 @@ function EspForm({ esp, onDone, onCancel }: { esp: EspConnection | null; onDone:
           }}
         />
         <FormError error={formError} />
-        {v.provider === "ses" ? (
+        {v.provider === "resend" ? (
+          <div className="grid gap-4 sm:grid-cols-2">
+            <Field
+              label="API key"
+              required={!keepsPassword}
+              error={fields.apiKey}
+              hint={keepsPassword ? "Key saved. Leave empty to keep it." : "A Full access key — domains are created in your Resend account with it."}
+              labelAction={
+                <a href="https://resend.com/api-keys" target="_blank" rel="noreferrer noopener" className="inline-flex items-center gap-1 text-xs text-accent-hi hover:underline">
+                  Create a key
+                  <ExternalLink aria-hidden className="size-3" />
+                </a>
+              }
+            >
+              <Input type="password" autoComplete="new-password" value={v.apiKey} onChange={(e) => set("apiKey", e.target.value)} placeholder="re_…" className="font-mono" />
+            </Field>
+            <Field label="Region" error={fields.region} hint="Where domains added from here send from.">
+              <NativeSelect value={v.resendRegion} options={RESEND_REGIONS.map((r) => ({ value: r, label: r }))} onChange={(e) => set("resendRegion", e.target.value)} />
+            </Field>
+            <p className="text-xs text-text-3 sm:col-span-2">
+              Resend is for marketing to people who opted in; its terms forbid cold outreach, which goes through your mailboxes instead.
+            </p>
+          </div>
+        ) : v.provider === "ses" ? (
           <div className="grid gap-4 sm:grid-cols-2">
             <Field label="Region" required error={fields.region} hint="Where your SES account sends from." className="sm:col-span-2">
               <NativeSelect value={v.region} options={SES_REGIONS.map((r) => ({ value: r, label: r }))} onChange={(e) => set("region", e.target.value)} className="sm:w-60" />
@@ -183,7 +212,14 @@ function EspForm({ esp, onDone, onCancel }: { esp: EspConnection | null; onDone:
 /** Where bounces and complaints go, with what to set up on the service's side. */
 function WebhookBlock({ esp }: { esp: EspConnection }) {
   let how: ReactNode;
-  if (esp.provider === "ses")
+  if (esp.provider === "resend")
+    how = (
+      <>
+        In Resend → <span className="font-medium text-text">Webhooks</span>, add an endpoint with this URL and the <span className="font-mono text-2xs">email.bounced</span> and{" "}
+        <span className="font-mono text-2xs">email.complained</span> events.
+      </>
+    );
+  else if (esp.provider === "ses")
     how = (
       <>
         In Amazon SNS, create a topic with an <span className="font-medium text-text">HTTPS</span> subscription to this URL (we confirm it automatically). Then, in SES, send the
@@ -193,7 +229,10 @@ function WebhookBlock({ esp }: { esp: EspConnection }) {
   else
     how = (
       <>
-        If your relay can report bounces and complaints, have it POST JSON here: <code className="font-mono text-2xs">{`{ "type": "bounce" | "complaint", "email": "…" }`}</code>.
+        Add this URL as a webhook on your relay. <span className="font-medium text-text">Postmark</span> (Bounce, Spam complaint and Subscription change),{" "}
+        <span className="font-medium text-text">SendGrid</span> (Event Webhook: Bounced, Spam reports, Unsubscribes) and <span className="font-medium text-text">Mailgun</span>{" "}
+        (Permanent failure, Spam complaints, Unsubscribes) are read as they are, unsubscribes included. Any other relay can POST JSON:{" "}
+        <code className="font-mono text-2xs">{`{ "type": "bounce" | "complaint", "email": "…" }`}</code>.
       </>
     );
   return (
@@ -249,7 +288,7 @@ export function EspCard({ esp, canManage }: { esp: EspConnection | null; canMana
           compact
           icon={<Send />}
           title="No email service connected"
-          description="Marketing campaigns can't send until a workspace admin connects Amazon SES or an SMTP relay."
+          description="Marketing campaigns can't send until a workspace admin connects Resend, Amazon SES or an SMTP relay."
         />
       ) : (
         <>
@@ -264,10 +303,17 @@ export function EspCard({ esp, canManage }: { esp: EspConnection | null; canMana
               columns={2}
               items={[
                 { label: "Service", value: PROVIDER_LABEL[esp.provider] },
-                esp.provider === "ses" ? { label: "Region", value: esp.region } : { label: "Security", value: SECURITY_LABEL[esp.security] },
-                { label: "Server", value: <span className="font-mono text-xs">{`${esp.host}:${esp.port}`}</span> },
-                { label: "Username", value: esp.username ? <span className="font-mono text-xs">{esp.username}</span> : <span className="text-text-3">None</span> },
-                { label: "Password", value: esp.hasPassword ? "Password saved" : <span className="text-text-3">None</span> },
+                ...(esp.provider === "resend"
+                  ? [
+                      { label: "Region", value: esp.region },
+                      { label: "API key", value: esp.hasPassword ? "Key saved" : <span className="text-text-3">None</span> },
+                    ]
+                  : [
+                      esp.provider === "ses" ? { label: "Region", value: esp.region } : { label: "Security", value: SECURITY_LABEL[esp.security] },
+                      { label: "Server", value: <span className="font-mono text-xs">{`${esp.host}:${esp.port}`}</span> },
+                      { label: "Username", value: esp.username ? <span className="font-mono text-xs">{esp.username}</span> : <span className="text-text-3">None</span> },
+                      { label: "Password", value: esp.hasPassword ? "Password saved" : <span className="text-text-3">None</span> },
+                    ]),
                 { label: "Last checked", value: esp.lastCheckedAt ? f.relative(esp.lastCheckedAt) : "Never" },
               ]}
             />

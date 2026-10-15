@@ -1,6 +1,7 @@
 import { Injectable, Logger } from "@nestjs/common";
 import { normalizeEmail, type PreferencesDetails, type PreferencesUpdate } from "@growthdesk/shared";
 import type { z } from "zod";
+import type { Prisma } from "../generated/prisma/client.js";
 import { PrismaService, type Tx } from "../prisma/prisma.service.js";
 import { ConsentService } from "../crm/consent.service.js";
 import { ActivityService } from "../crm/activity.service.js";
@@ -9,6 +10,7 @@ import { badRequest, notFound } from "../common/errors.js";
 import { isAutomatedFetch, redirectTarget } from "../tracking/tracking-rules.js";
 import { readMarketingToken } from "./tokens.js";
 import { MarketingSenderService } from "./sender.service.js";
+import { EventsService } from "../core/events.service.js";
 
 export type Fetcher = { method: string; userAgent: string };
 
@@ -31,11 +33,37 @@ export class MarketingPublicService {
     private readonly activity: ActivityService,
     private readonly suppression: SuppressionService,
     private readonly sender: MarketingSenderService,
+    private readonly events: EventsService,
   ) {}
 
   /** The send a token names. Unscoped by design: the signed token is how we learn the workspace. */
   private send(id: string) {
     return this.prisma.unscoped.marketingSend.findUnique({ where: { id } });
+  }
+
+  /**
+   * Counts a recipient's first open or click on the campaign straight away.
+   * The worker only recomputes counters while a campaign is sending, and most
+   * opens arrive after it finished; one increment per first event is cheap.
+   */
+  private bump(s: { workspaceId: string; campaignId: string }, data: Prisma.MarketingCampaignUpdateManyMutationInput) {
+    return this.prisma.db.marketingCampaign.updateMany({ where: { id: s.campaignId, workspaceId: s.workspaceId }, data });
+  }
+
+  /**
+   * Tells workflows about a person's first open or click on a send (the
+   * marketing.opened / marketing.clicked triggers). Counted once per send, as
+   * the campaign's own counters are.
+   */
+  private async engaged(s: { id: string; workspaceId: string; contactId: string; campaignId: string }, type: "marketing.opened" | "marketing.clicked", extra: Record<string, unknown> = {}) {
+    const campaign = await this.prisma.db.marketingCampaign.findFirst({ where: { id: s.campaignId, workspaceId: s.workspaceId }, select: { name: true } });
+    await this.events.emit({
+      workspaceId: s.workspaceId,
+      type,
+      subjectType: "contact",
+      subjectId: s.contactId,
+      payload: { contactId: s.contactId, campaignId: s.campaignId, campaignName: campaign?.name ?? "", sendId: s.id, ...extra },
+    });
   }
 
   async open(token: string, who: Fetcher) {
@@ -44,7 +72,11 @@ export class MarketingPublicService {
       if (!t) return;
       const s = await this.send(t.sendId);
       if (!s || isAutomatedFetch({ ...who, sentAt: s.sentAt, now: new Date() })) return;
-      await this.prisma.db.marketingSend.updateMany({ where: { id: s.id, workspaceId: s.workspaceId, openedAt: null }, data: { openedAt: new Date() } });
+      const first = await this.prisma.db.marketingSend.updateMany({ where: { id: s.id, workspaceId: s.workspaceId, openedAt: null }, data: { openedAt: new Date() } });
+      if (first.count) {
+        await this.bump(s, { uniqueOpenCount: { increment: 1 } });
+        await this.engaged(s, "marketing.opened");
+      }
     } catch (e) {
       this.log.warn(`could not record an open: ${e instanceof Error ? e.message : String(e)}`);
     }
@@ -59,9 +91,14 @@ export class MarketingPublicService {
       const s = await this.send(t.sendId);
       if (s && !isAutomatedFetch({ ...who, sentAt: s.sentAt, now: new Date() })) {
         const now = new Date();
-        await this.prisma.db.marketingSend.updateMany({ where: { id: s.id, workspaceId: s.workspaceId, clickedAt: null }, data: { clickedAt: now } });
+        const clicked = await this.prisma.db.marketingSend.updateMany({ where: { id: s.id, workspaceId: s.workspaceId, clickedAt: null }, data: { clickedAt: now } });
         // A click proves the email was opened, even with images blocked.
-        await this.prisma.db.marketingSend.updateMany({ where: { id: s.id, workspaceId: s.workspaceId, openedAt: null }, data: { openedAt: now } });
+        const opened = await this.prisma.db.marketingSend.updateMany({ where: { id: s.id, workspaceId: s.workspaceId, openedAt: null }, data: { openedAt: now } });
+        if (clicked.count || opened.count) {
+          await this.bump(s, { ...(clicked.count ? { uniqueClickCount: { increment: 1 } } : {}), ...(opened.count ? { uniqueOpenCount: { increment: 1 } } : {}) });
+        }
+        if (opened.count) await this.engaged(s, "marketing.opened");
+        if (clicked.count) await this.engaged(s, "marketing.clicked", { url: target });
       }
     } catch (e) {
       this.log.warn(`could not record a click: ${e instanceof Error ? e.message : String(e)}`);
@@ -100,22 +137,38 @@ export class MarketingPublicService {
   }
 
   /** Leaves every list, withdraws consent and adds a marketing-only suppression (R3). Returns true the first time. */
-  private async unsubscribeAllIn(tx: Tx, s: { id: string; workspaceId: string; contactId: string; email: string; campaignId: string }, via: string, ip: string, userAgent: string) {
+  private async unsubscribeAllIn(tx: Tx, s: { id: string; workspaceId: string; contactId: string; email: string; campaignId: string }, via: string, ip: string, userAgent: string, source?: string) {
     const { workspaceId, contactId } = s;
     const now = new Date();
     const left = await tx.listMembership.updateMany({ where: { workspaceId, contactId, status: { not: "unsubscribed" } }, data: { status: "unsubscribed", unsubscribedAt: now } });
     const consentChanged = await this.consent.setIn(tx, { workspaceId, contactId, status: "denied", source: via, ip, userAgent, detail: { via: "preferences", sendId: s.id, campaignId: s.campaignId } });
-    await this.suppression.add(workspaceId, "email", s.email, "unsubscribed", via === "One-click unsubscribe" ? "one_click" : "preference_page", null, tx, "marketing");
+    await this.suppression.add(workspaceId, "email", s.email, "unsubscribed", source ?? (via === "One-click unsubscribe" ? "one_click" : "preference_page"), null, tx, "marketing");
     await tx.marketingSend.updateMany({ where: { id: s.id, workspaceId, unsubscribedAt: null }, data: { unsubscribedAt: now } });
     const first = left.count > 0 || consentChanged;
-    if (first) await this.activity.log({ workspaceId, contactId, type: "marketing.unsubscribed", summary: `Unsubscribed from all marketing email (${via})`, data: { sendId: s.id, campaignId: s.campaignId } }, tx);
+    if (first) {
+      await this.activity.log({ workspaceId, contactId, type: "marketing.unsubscribed", summary: `Unsubscribed from all marketing email (${via})`, data: { sendId: s.id, campaignId: s.campaignId } }, tx);
+      await this.emitUnsubscribed(tx, s, { scope: "all", via });
+    }
     return first;
+  }
+
+  /** The marketing.unsubscribed trigger: from everything (scope "all") or from one list. */
+  private async emitUnsubscribed(tx: Tx, s: { id: string; workspaceId: string; contactId: string; campaignId: string }, extra: Record<string, unknown>) {
+    const campaign = await tx.marketingCampaign.findFirst({ where: { id: s.campaignId, workspaceId: s.workspaceId }, select: { name: true } });
+    await this.events.emitIn(tx, {
+      workspaceId: s.workspaceId,
+      type: "marketing.unsubscribed",
+      subjectType: "contact",
+      subjectId: s.contactId,
+      payload: { contactId: s.contactId, campaignId: s.campaignId, campaignName: campaign?.name ?? "", sendId: s.id, ...extra },
+    });
   }
 
   /** RFC 8058 one-click: the mail app's own unsubscribe button POSTs here. */
   async oneClick(token: string, ip: string, userAgent: string) {
     const s = await this.target(token);
     await this.prisma.db.$transaction((tx) => this.unsubscribeAllIn(tx, s, "One-click unsubscribe", ip, userAgent));
+    await this.events.kick();
     await this.sender.refresh(s.workspaceId, s.campaignId).catch(() => undefined);
     return { unsubscribed: true };
   }
@@ -139,13 +192,22 @@ export class MarketingPublicService {
           await tx.suppression.deleteMany({ where: { workspaceId, kind: "email", value: s.email, scope: "marketing", reason: "unsubscribed" } });
           await tx.listMembership.update({ where: { id: m.id, workspaceId }, data: { status: "subscribed", subscribedAt: now, unsubscribedAt: null, source: "Preference page" } });
           await this.activity.log({ workspaceId, contactId, type: "marketing.subscribed", summary: `Re-subscribed to ${m.list.name} (Preference page)`, data: { listId: change.listId } }, tx);
+          await this.events.emitIn(tx, {
+            workspaceId,
+            type: "list.subscribed",
+            subjectType: "contact",
+            subjectId: contactId,
+            payload: { contactId, listId: change.listId, listName: m.list.name, source: "preference_page" },
+          });
         } else if (!change.subscribed && m.status === "subscribed") {
           await tx.listMembership.update({ where: { id: m.id, workspaceId }, data: { status: "unsubscribed", unsubscribedAt: now } });
           await tx.marketingSend.updateMany({ where: { id: s.id, workspaceId, unsubscribedAt: null }, data: { unsubscribedAt: now } });
           await this.activity.log({ workspaceId, contactId, type: "marketing.unsubscribed", summary: `Unsubscribed from ${m.list.name} (Preference page)`, data: { listId: change.listId } }, tx);
+          await this.emitUnsubscribed(tx, s, { scope: "list", listId: change.listId, listName: m.list.name, via: "Preference page" });
         }
       }
     });
+    await this.events.kick();
     await this.sender.refresh(workspaceId, s.campaignId).catch(() => undefined);
     return this.details(token);
   }
@@ -163,14 +225,25 @@ export class MarketingPublicService {
    * A permanent bounce or a spam complaint for one recipient. Matches the send
    * by our id, then the provider's id; suppresses for every engine (bounces
    * and complaints are R3's `all`), and a complaint also withdraws consent.
+   * An unsubscribe the email service took (its own link or suppression list)
+   * is handled like our one-click unsubscribe: marketing only.
    */
-  async espEvent(workspaceId: string, e: { type: "bounce" | "complaint"; permanent: boolean; email: string; providerMessageId?: string | null; sendId?: string | null }) {
+  async espEvent(workspaceId: string, e: { type: "bounce" | "complaint" | "unsubscribe"; permanent: boolean; email: string; providerMessageId?: string | null; sendId?: string | null }) {
     const email = normalizeEmail(e.email);
     if (!email || (e.type === "bounce" && !e.permanent)) return { matched: false };
     const s =
       (e.sendId ? await this.prisma.db.marketingSend.findFirst({ where: { id: e.sendId, workspaceId } }) : null) ??
       (e.providerMessageId ? await this.prisma.db.marketingSend.findFirst({ where: { workspaceId, providerMessageId: e.providerMessageId } }) : null) ??
       (await this.prisma.db.marketingSend.findFirst({ where: { workspaceId, email, status: { in: ["sent", "bounced", "complained"] } }, orderBy: { sentAt: "desc" } }));
+    if (e.type === "unsubscribe") {
+      await this.prisma.db.$transaction(async (tx) => {
+        if (s) await this.unsubscribeAllIn(tx, s, "Email service unsubscribe", "", "", "email_service");
+        else await this.suppression.add(workspaceId, "email", email, "unsubscribed", "email_service", null, tx, "marketing");
+      });
+      await this.events.kick();
+      if (s) await this.sender.refresh(workspaceId, s.campaignId);
+      return { matched: Boolean(s) };
+    }
     const now = new Date();
     await this.prisma.db.$transaction(async (tx) => {
       await this.suppression.add(workspaceId, "email", email, e.type === "bounce" ? "bounced" : "complained", "email_service", null, tx, "all");

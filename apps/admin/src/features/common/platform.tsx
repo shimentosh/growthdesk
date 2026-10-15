@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { createContext, useContext, type ReactNode } from "react";
-import { Building2, LayoutDashboard, MailCheck, Package, Users, type LucideIcon } from "lucide-react";
+import { Building2, LayoutDashboard, MailCheck, Package, Palette, Users, type LucideIcon } from "lucide-react";
 import { labelOf, type PlatformRole } from "@growthdesk/shared";
 import { describeAction, table } from "./labels";
 import { Badge, type Tone } from "@/components/ui/Badge";
@@ -36,6 +36,7 @@ export const PLATFORM = {
   support: ENTITY.supportAccess,
   audit: ENTITY.audit,
   email: { icon: MailCheck, tint: "cyan" },
+  library: { icon: Palette, tint: "purple" },
   settings: ENTITY.settings,
 } as const satisfies Record<string, { icon: LucideIcon; tint: Tint }>;
 

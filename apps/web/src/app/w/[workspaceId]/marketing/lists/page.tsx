@@ -61,6 +61,8 @@ function Lists() {
   const all = lists.data ?? [];
   const archivedCount = all.filter((l) => l.archivedAt).length;
   const rows = showArchived ? all : all.filter((l) => !l.archivedAt);
+  // Nothing sets "pending" yet (there is no double opt-in), so the column only shows when a list has some.
+  const showPending = rows.some((l) => l.counts.pending > 0);
 
   const create = canWrite ? (
     <Button variant="primary" icon={<Plus />} onClick={() => setCreating(true)}>
@@ -110,9 +112,11 @@ function Lists() {
               <th scope="col" className={cn(TH, "text-right")}>
                 Unsubscribed
               </th>
-              <th scope="col" className={cn(TH, "text-right")}>
-                Pending
-              </th>
+              {showPending && (
+                <th scope="col" className={cn(TH, "text-right")}>
+                  Pending
+                </th>
+              )}
               <th scope="col" className={TH}>
                 Created
               </th>
@@ -144,9 +148,11 @@ function Lists() {
                 <td className={cn(TD, "text-right")}>
                   <Num n={l.counts.unsubscribed} />
                 </td>
-                <td className={cn(TD, "text-right")}>
-                  <Num n={l.counts.pending} tone="warn" />
-                </td>
+                {showPending && (
+                  <td className={cn(TD, "text-right")}>
+                    <Num n={l.counts.pending} tone="warn" />
+                  </td>
+                )}
                 <td className={cn(TD, "whitespace-nowrap text-text-3")} title={f.dateTime(l.createdAt)}>
                   {f.date(l.createdAt)}
                 </td>

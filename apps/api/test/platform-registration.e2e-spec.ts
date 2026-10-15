@@ -1,6 +1,6 @@
 import request from "supertest";
 import type { App } from "supertest/types.js";
-import { bootApp, createWorkspace, signUp, type Agent, type TestApp } from "./helpers.js";
+import { bootApp, createWorkspace, enableGoogleSignIn, signUp, type Agent, type TestApp } from "./helpers.js";
 import { PlatformSettingsService, type PlatformSettings } from "../src/core/platform-settings.service.js";
 import { csvCell } from "../src/admin/admin-users.service.js";
 import { parseAttributionCookie } from "../src/auth/signup-profile.js";
@@ -225,6 +225,10 @@ describe("Platform registration and user management", () => {
 
   describe("Google sign-up", () => {
     const realFetch = globalThis.fetch;
+    beforeEach(async () => {
+      // After the outer beforeEach, which puts the settings (and so the Google client) back to their defaults.
+      await enableGoogleSignIn(t);
+    });
     afterEach(() => {
       globalThis.fetch = realFetch;
     });

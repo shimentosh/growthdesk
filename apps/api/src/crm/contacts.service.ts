@@ -1,6 +1,8 @@
 import { Injectable } from "@nestjs/common";
+import { ModuleRef } from "@nestjs/core";
 import {
   type ContactFilterT,
+  type ContactResolveInputT,
   type ContactInputT,
   type LifecycleStage,
   FREE_MAIL_DOMAINS,
@@ -116,6 +118,7 @@ export class ContactsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly entitlements: EntitlementsService,
+    private readonly moduleRef: ModuleRef,
     private readonly events: EventsService,
     private readonly activity: ActivityService,
     private readonly suppression: SuppressionService,
@@ -184,6 +187,39 @@ export class ContactsService {
   async idsFor(ctx: RequestContext, filter: ContactFilterT, limit = 100_000): Promise<string[]> {
     const rows = await this.prisma.db.contact.findMany({ where: this.where(ctx, filter), select: { id: true }, take: limit, orderBy: { createdAt: "asc" } });
     return rows.map((r) => r.id);
+  }
+
+  /**
+   * Contacts for pasted email addresses (matched on any address a contact has)
+   * or for a filter, at most 5000. Says which addresses matched nobody and
+   * which were not addresses at all.
+   */
+  async resolve(ctx: RequestContext, input: ContactResolveInputT) {
+    const LIMIT = 5000;
+    const select = { id: true, fullName: true, firstName: true, lastName: true, email: true, phone: true, identifiers: { where: { kind: "email" as const }, select: { value: true } } };
+    const invalid: string[] = [];
+    const emails = new Set<string>();
+    for (const raw of input.emails ?? []) {
+      if (!raw.trim()) continue;
+      const e = normalizeEmail(raw);
+      if (e) emails.add(e);
+      else invalid.push(raw.trim());
+    }
+    const and: Prisma.ContactWhereInput[] = [];
+    if (input.emails?.length) and.push({ OR: [{ email: { in: [...emails] } }, { identifiers: { some: { kind: "email", value: { in: [...emails] } } } }] });
+    const rows = await this.prisma.db.contact.findMany({
+      where: { AND: [this.where(ctx, input.filter ?? {}), ...and] },
+      select,
+      take: LIMIT + 1,
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+    });
+    const found = new Set(rows.flatMap((r) => [r.email, ...r.identifiers.map((i) => i.value)]));
+    return {
+      contacts: rows.slice(0, LIMIT).map(({ identifiers: _i, ...c }) => c),
+      capped: rows.length > LIMIT,
+      unknownEmails: [...emails].filter((e) => !found.has(e)),
+      invalid: [...new Set(invalid)],
+    };
   }
 
   async get(ctx: RequestContext, id: string) {
@@ -829,12 +865,15 @@ export class ContactsService {
         select: { id: true },
       })
     ).map((c) => c.id);
-    const now = new Date();
-    const res = await this.prisma.db.listMembership.createMany({
-      data: scoped.map((contactId) => ({ workspaceId: w.id, listId, contactId, status: "subscribed" as const, source: "Added by a team member", subscribedAt: now })),
-      skipDuplicates: true,
-    });
-    return { affected: res.count, alreadyMember: scoped.length - res.count };
+    if (!scoped.length) return { affected: 0, alreadyMember: 0, pending: 0, skipped: ids.length };
+    // The same rules as the list's own "Add contacts": opt-outs, suppression, the subscriber allowance,
+    // double opt-in and the list.subscribed event all live in ListsService. Resolved lazily: the
+    // marketing module depends on this (global) one, so it cannot be injected here.
+    const { ListsService } = await import("../marketing/lists.service.js");
+    const lists = this.moduleRef.get(ListsService, { strict: false });
+    const res = await lists.addMembers(ctx, listId, { contactIds: scoped });
+    const skipped = Object.values(res.skipped).reduce((n, v) => n + (v ?? 0), 0) + (ids.length - scoped.length);
+    return { affected: res.added + res.pending, alreadyMember: res.alreadyMember, pending: res.pending, skipped };
   }
 
   async duplicates(ctx: RequestContext) {

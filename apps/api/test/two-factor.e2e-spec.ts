@@ -1,6 +1,6 @@
 import request from "supertest";
 import type { App } from "supertest/types.js";
-import { addMember, bootApp, createWorkspace, signUp, type Agent, type TestApp } from "./helpers.js";
+import { addMember, bootApp, createWorkspace, enableGoogleSignIn, signUp, type Agent, type TestApp } from "./helpers.js";
 import { AuthService } from "../src/auth/auth.service.js";
 import { currentStep, totpCode } from "../src/auth/totp.js";
 
@@ -144,6 +144,7 @@ describe("Two-factor authentication", () => {
     });
 
     it("Google sign-in for a two-factor account also stops at the challenge", async () => {
+      await enableGoogleSignIn(t);
       const realFetch = globalThis.fetch;
       globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
         const url = String(input instanceof Request ? input.url : input);

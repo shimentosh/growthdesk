@@ -1,19 +1,23 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useState, type ReactNode } from "react";
-import { ArrowDown, ArrowUp, ChevronsUpDown, FileQuestion, SearchX } from "lucide-react";
+import { Archive, ArchiveRestore, ArrowDown, ArrowUp, ArrowUpRight, ChevronsUpDown, Ellipsis, FileQuestion, ListChecks, Pencil, SearchX } from "lucide-react";
 import { BulkActionsBar } from "@/components/crm/BulkActionsBar";
 import { FilterChips, FilterPopover, SavedViewsMenu } from "@/components/crm/ContactFilters";
-import { StageBadge } from "@/components/crm/lifecycle";
+import { LIST_WRITE, StageBadge } from "@/components/crm/lifecycle";
+import { EditContactModal } from "@/components/crm/NewContactModal";
+import { AddToListModal } from "@/components/marketing/AddToListModal";
 import { TagList } from "@/components/crm/Tags";
 import { PAGE_SIZES, activeFilterCount, toFilter, type ContactListState, type SortField } from "@/components/crm/contactListState";
 import { contactLabel } from "@/components/pickers/Pickers";
 import { Avatar } from "@/components/ui/Avatar";
 import { Badge, StatusBadge } from "@/components/ui/Badge";
-import { Button } from "@/components/ui/Button";
+import { Button, IconButton } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
 import { Checkbox } from "@/components/ui/Checkbox";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/DropdownMenu";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { ErrorState } from "@/components/ui/ErrorState";
 import { Pagination } from "@/components/ui/Pagination";
@@ -21,10 +25,10 @@ import { SearchInput } from "@/components/ui/SearchInput";
 import { Skeleton } from "@/components/ui/Skeleton";
 import { cn } from "@/lib/cn";
 import type { ContactFilterT } from "@growthdesk/shared";
-import { useApiQuery } from "@/lib/query";
+import { useApiMutation, useApiQuery } from "@/lib/query";
 import { useFormat, useWorkspace } from "@/lib/session";
 import type { Paged } from "@/lib/types";
-import type { Contact } from "@/lib/types/crm";
+import type { BulkResult, Contact } from "@/lib/types/crm";
 
 type Update = (patch: Partial<ContactListState>, opts?: { replace?: boolean }) => void;
 
@@ -113,6 +117,7 @@ export function ContactListView({
 }) {
   const ws = useWorkspace();
   const f = useFormat();
+  const router = useRouter();
 
   // Selection belongs to one page of one query; a new query starts empty.
   const scope = JSON.stringify(query);
@@ -124,8 +129,18 @@ export function ContactListView({
   const allOnPage = rows.length > 0 && rows.every((r) => selected.has(r.id));
   const someOnPage = rows.some((r) => selected.has(r.id));
   const canWrite = ws.can("contacts.write");
+  const canList = ws.can(LIST_WRITE);
   const narrowed = activeFilterCount(state) > 0 || Boolean(state.q) || Boolean(state.view) || Boolean(state.listId) || state.archived === "only";
   const onSort = (field: SortField, dir: "asc" | "desc") => update({ sort: field, dir });
+
+  // Row actions: one dialog of each kind for the whole table, opened for the row's contact.
+  const [editing, setEditing] = useState<Contact | null>(null);
+  const [listing, setListing] = useState<Contact | null>(null);
+  const archive = useApiMutation<BulkResult, { action: "archive" | "unarchive"; ids: string[] }>({
+    path: ws.path("/contacts/bulk"),
+    invalidate: [ws.key("contacts"), ws.key("companies")],
+    success: (_r, v) => (v.action === "archive" ? "Archived" : "Restored"),
+  });
 
   let body: ReactNode;
   if (contacts.isPending) {
@@ -210,6 +225,9 @@ export function ContactListView({
               <SortHeader field="lastContactedAt" label="Last contacted" sort={state.sort} dir={state.dir} onSort={onSort} />
               <SortHeader field="nextActionAt" label="Next action" sort={state.sort} dir={state.dir} onSort={onSort} />
               <SortHeader field="createdAt" label="Created" sort={state.sort} dir={state.dir} onSort={onSort} />
+              <th scope="col" className="w-10 px-2">
+                <span className="sr-only">Actions</span>
+              </th>
             </tr>
           </thead>
           <tbody className="divide-y divide-line">
@@ -281,6 +299,42 @@ export function ContactListView({
                   <td className={cn(TD, "whitespace-nowrap text-text-3")} title={f.dateTime(c.createdAt)}>
                     {f.smart(c.createdAt)}
                   </td>
+                  <td className="w-10 px-2 text-right">
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <IconButton size="sm" label={`Actions for ${contactLabel(c)}`} icon={<Ellipsis />} />
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end">
+                        {canWrite && (
+                          <DropdownMenuItem icon={<Pencil />} onSelect={() => setEditing(c)}>
+                            Edit…
+                          </DropdownMenuItem>
+                        )}
+                        {canList && !c.archivedAt && (
+                          <DropdownMenuItem icon={<ListChecks />} onSelect={() => setListing(c)}>
+                            Add to list…
+                          </DropdownMenuItem>
+                        )}
+                        <DropdownMenuItem icon={<ArrowUpRight />} onSelect={() => router.push(ws.href(`/contacts/${c.id}`))}>
+                          Open record
+                        </DropdownMenuItem>
+                        {canWrite && (
+                          <>
+                            <DropdownMenuSeparator />
+                            {c.archivedAt ? (
+                              <DropdownMenuItem icon={<ArchiveRestore />} onSelect={() => archive.mutate({ action: "unarchive", ids: [c.id] })}>
+                                Restore
+                              </DropdownMenuItem>
+                            ) : (
+                              <DropdownMenuItem icon={<Archive />} onSelect={() => archive.mutate({ action: "archive", ids: [c.id] })}>
+                                Archive
+                              </DropdownMenuItem>
+                            )}
+                          </>
+                        )}
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                  </td>
                 </tr>
               );
             })}
@@ -320,6 +374,17 @@ export function ContactListView({
       )}
 
       <Card className="overflow-hidden">{body}</Card>
+
+      {editing && <EditContactModal key={editing.id} open onOpenChange={(o) => !o && setEditing(null)} contact={editing} />}
+      {canList && (
+        <AddToListModal
+          key={listing?.id ?? "none"}
+          open={listing !== null}
+          onOpenChange={(o) => !o && setListing(null)}
+          contactIds={listing ? [listing.id] : []}
+          contactsLabel={listing ? contactLabel(listing) : undefined}
+        />
+      )}
 
       {contacts.data && contacts.data.total > 0 && (
         <Pagination

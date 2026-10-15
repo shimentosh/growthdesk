@@ -32,9 +32,10 @@ function CampaignLoader() {
   const qc = useQueryClient();
   const { campaignId } = useParams<{ campaignId: string }>();
   const key = mk.key("campaigns", campaignId);
-  // The report polls while the campaign is sending (the worker moves the numbers).
-  const sending = qc.getQueryData<MarketingCampaign>(key)?.status === "sending";
-  const query = useApiQuery<MarketingCampaign>(key, mk.path(`/campaigns/${campaignId}`), { refetchInterval: sending ? 5_000 : false });
+  // The report polls while the campaign is sending (the worker moves the numbers),
+  // and, more slowly, while it is scheduled so it flips to sending when due.
+  const status = qc.getQueryData<MarketingCampaign>(key)?.status;
+  const query = useApiQuery<MarketingCampaign>(key, mk.path(`/campaigns/${campaignId}`), { refetchInterval: status === "sending" ? 5_000 : status === "scheduled" ? 15_000 : false });
   return (
     <QueryState
       query={query}

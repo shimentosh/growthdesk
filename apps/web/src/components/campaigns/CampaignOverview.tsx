@@ -14,7 +14,7 @@ import { cn } from "@/lib/cn";
 import { formatNumber } from "@/lib/format";
 import { useApiQuery } from "@/lib/query";
 import { useFormat, useWorkspace } from "@/lib/session";
-import type { CampaignDetail, CampaignReadiness, StepStats } from "@/lib/types/campaigns";
+import type { CampaignDetail, CampaignHealth, CampaignReadiness, StepStats } from "@/lib/types/campaigns";
 import { FixLink, SkippedList, plural } from "./common";
 
 const DAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -36,7 +36,9 @@ export function CampaignOverview({ campaign }: { campaign: CampaignDetail }) {
   const s = campaign.stats;
   const e = campaign.enrollments;
   const isDraft = campaign.status === "draft";
+  const isLive = campaign.status === "scheduled" || campaign.status === "running" || campaign.status === "paused";
   const readiness = useApiQuery<CampaignReadiness>(ws.key("campaigns", campaign.id, "readiness"), isDraft ? ws.path(`/campaigns/${campaign.id}/readiness`) : null);
+  const health = useApiQuery<CampaignHealth>(ws.key("campaigns", campaign.id, "health"), isLive ? ws.path(`/campaigns/${campaign.id}/health`) : null);
   const stepStats = useApiQuery<StepStats[]>(ws.key("campaigns", campaign.id, "step-stats"), isDraft ? null : ws.path(`/campaigns/${campaign.id}/step-stats`));
   const enrollmentsHref = (status?: string) => ws.href(`/campaigns/${campaign.id}?tab=enrollments${status ? `&status=${status}` : ""}`);
   const tracking = campaign.settings.trackOpens || campaign.settings.trackClicks;
@@ -44,6 +46,7 @@ export function CampaignOverview({ campaign }: { campaign: CampaignDetail }) {
   return (
     <div className="flex flex-col gap-4">
       {isDraft && <Readiness query={readiness} />}
+      {isLive && health.data && health.data.issues.length > 0 && <HealthCallout issues={health.data.issues} />}
 
       {!isDraft && (
         <>
@@ -59,7 +62,7 @@ export function CampaignOverview({ campaign }: { campaign: CampaignDetail }) {
             />
             <StatCard label="Completed" icon={<CircleCheck />} tint="teal" value={formatNumber(e.completed)} href={enrollmentsHref("completed")} />
             <StatCard label="Messages sent" icon={<Send />} tint="blue" value={formatNumber(s.sent)} />
-            <StatCard label="Replied" icon={<Reply />} tint="green" value={formatNumber(s.replied)} tone={s.replied ? "ok" : undefined} />
+            <StatCard label="Replied" icon={<Reply />} tint="green" value={formatNumber(s.replied)} tone={s.replied ? "ok" : undefined} href={enrollmentsHref("replied")} />
             <StatCard label="Bounced" icon={<MailX />} tint="orange" value={formatNumber(s.bounced)} tone={s.bounced ? "warn" : undefined} />
             <StatCard label="Unsubscribed" icon={<UserMinus />} tint="gray" value={formatNumber(s.unsubscribed)} />
             <StatCard label="Failed" icon={<CircleAlert />} tint="red" value={formatNumber(s.failed)} tone={s.failed ? "bad" : undefined} href={enrollmentsHref("failed")} />
@@ -172,6 +175,22 @@ export function CampaignOverview({ campaign }: { campaign: CampaignDetail }) {
         </Card>
       )}
     </div>
+  );
+}
+
+/** What holds a launched campaign back (GET /health): mailboxes that cannot send, stuck or failed enrollments. */
+function HealthCallout({ issues }: { issues: CampaignHealth["issues"] }) {
+  return (
+    <Callout tone="warn" title="Needs attention">
+      <ul className="flex flex-col gap-1.5">
+        {issues.map((p, i) => (
+          <li key={i} className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-0.5">
+            <span className="min-w-0">{p.message}</span>
+            {p.fix && <FixLink fix={p.fix} />}
+          </li>
+        ))}
+      </ul>
+    </Callout>
   );
 }
 

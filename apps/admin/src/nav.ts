@@ -16,6 +16,7 @@ import {
   LifeBuoy,
   MailCheck,
   Package,
+  Palette,
   ScrollText,
   Settings,
   TrendingUp,
@@ -99,6 +100,18 @@ export const NAV: NavGroup[] = [
     ],
   },
   {
+    id: "library",
+    label: "Library",
+    items: [
+      {
+        href: "/library/email-templates",
+        label: "Email templates",
+        icon: Palette,
+        keywords: ["design templates", "marketing email", "newsletter", "gallery", "email designs", "start from template"],
+      },
+    ],
+  },
+  {
     id: "email",
     label: "Email",
     items: [
@@ -156,6 +169,7 @@ const DETAIL_LABELS: Record<string, string> = {
   "/billing": "Billing account",
   "/support": "Case",
   "/email/templates": "Template",
+  "/library/email-templates": "Template",
   "/growth/broadcasts": "Broadcast",
   "/growth/sequences": "Sequence",
 };

@@ -20,7 +20,11 @@ import { Prisma, PrismaClient } from "../generated/prisma/client.js";
  * Refuses to run twice on the same workspace.
  */
 
-const { values } = parseArgs({ options: { workspace: { type: "string" }, "keep-plan": { type: "boolean", default: false } } });
+const { values } = parseArgs({
+  // pnpm 12 forwards a literal "--" from `pnpm run x -- …`; drop it rather than failing.
+  args: process.argv.slice(2).filter((a) => a !== "--"),
+  options: { workspace: { type: "string" }, "keep-plan": { type: "boolean", default: false } },
+});
 if (process.env.NODE_ENV === "production") throw new Error("seed-demo is for development databases only.");
 if (!values.workspace) throw new Error("Usage: pnpm db:seed:demo -- --workspace <id or slug>");
 
@@ -269,6 +273,9 @@ for (let i = 0; i < statuses.length; i++) {
   const qualification =
     status === "customer" || status === "interested" ? "qualified" : status === "replied" ? "qualifying" : status === "not_interested" || status === "do_not_contact" ? "disqualified" : "unqualified";
   const priority = status === "interested" ? pick(["high", "urgent"] as const) : pick(["low", "medium", "medium", "high"] as const);
+  // lead → sales → contact: customers are contacts, interested people (and every other reply) are with sales.
+  // Decided without rand() so the rest of the seeded data stays the same.
+  const lifecycleStage = status === "customer" ? "contact" : status === "interested" || (status === "replied" && i % 2 === 0) ? "sales" : "lead";
   contacts.push({ id, first, last, full: `${first} ${last}`, email, phone, title: pick(titles), company, ownerId, status, createdAt, leadSource });
   contactRows.push({
     id,
@@ -290,6 +297,8 @@ for (let i = 0; i < statuses.length; i++) {
     priority,
     qualification,
     status,
+    lifecycleStage,
+    stageChangedAt: lifecycleStage === "lead" ? null : (lastContactedAt ?? createdAt),
     score: int(12, 96),
     customFields: chance(0.5) ? { budget: int(5, 120) * 500, ...(chance(0.4) ? { renewal_date: ahead(int(30, 200)).toISOString().slice(0, 10) } : {}) } : {},
     lastContactedAt,
@@ -355,6 +364,28 @@ for (const c of contacts) {
   if (chance(0.12)) tagRows.push({ workspaceId: W, contactId: c.id, tagId: tags["Follow up Q4"]! });
 }
 await prisma.contactTag.createMany({ data: tagRows, skipDuplicates: true });
+
+// Lead lists, grouped by where people came from, so the list filters and list pages have something to show.
+const listDefs = [
+  { name: "Conference leads — Sept", description: "Met at the September trade show or imported from its attendee CSV.", sources: ["Conference", "CSV import"] },
+  { name: "Webinar attendees", description: "Registered for or attended one of our webinars.", sources: ["Webinar"] },
+  { name: "Website signups", description: "Came in through a form on the website.", sources: ["Website", "Business OS"] },
+  { name: "Referrals & outbound", description: "Introduced by a partner or customer, or prospected cold.", sources: ["Referral", "Cold outbound"] },
+];
+let listCount = 0;
+for (const def of listDefs) {
+  const createdAt = ago(int(35, 60));
+  const list = await prisma.marketingList.create({ data: { workspaceId: W, name: def.name, description: def.description, createdById: me.id, createdAt } });
+  listCount++;
+  const members = contacts.filter((c) => def.sources.includes(c.leadSource) && c.status !== "do_not_contact");
+  await prisma.listMembership.createMany({
+    data: members.map((c) => ({
+      workspaceId: W, listId: list.id, contactId: c.id, status: "subscribed" as const, source: "Added by a team member",
+      subscribedAt: c.createdAt, createdAt: c.createdAt,
+    })),
+    skipDuplicates: true,
+  });
+}
 
 const dnc = contacts.find((c) => c.status === "do_not_contact")!;
 await prisma.suppression.createMany({
@@ -1011,7 +1042,7 @@ await prisma.$executeRaw`
   WHERE c."workspaceId" = ${W}::uuid`;
 
 const counts = {
-  teammates: teammates.length, companies: companies.length, contacts: contacts.length, deals: deals.length, campaigns: 4,
+  teammates: teammates.length, companies: companies.length, contacts: contacts.length, lists: listCount, deals: deals.length, campaigns: 4,
   conversations: convRows.length, messages: messageRows.length, calls: callRows.length, meetings: meetingRows.length, tasks: taskRows.length, workflows: workflowDefs.length,
 };
 console.log(`Demo data added to "${ws.name}":`, counts);

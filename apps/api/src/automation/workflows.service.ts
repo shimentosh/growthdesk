@@ -78,6 +78,8 @@ export class WorkflowsService {
     }
     const userIds = new Set<string>();
     const campaignIds = new Set<string>();
+    const enrollIds = new Set<string>();
+    const listIds = new Set<string>();
     for (const raw of input.actions ?? []) {
       const parsed = parseAction(raw);
       if ("error" in parsed) throw badRequest(parsed.error, { actions: parsed.error });
@@ -88,8 +90,12 @@ export class WorkflowsService {
       }
       if (a.type === "create_task" && a.config.assignTo !== "owner") userIds.add(a.config.assignTo);
       if (a.type === "notify") for (const u of a.config.userIds ?? []) userIds.add(u);
-      if (a.type === "enroll_campaign") campaignIds.add(a.config.campaignId);
+      if (a.type === "enroll_campaign") {
+        campaignIds.add(a.config.campaignId);
+        enrollIds.add(a.config.campaignId);
+      }
       if (a.type === "stop_campaigns" && a.config.campaignId) campaignIds.add(a.config.campaignId);
+      if (a.type === "add_to_list" || a.type === "remove_from_list") listIds.add(a.config.listId);
     }
     if (userIds.size) {
       const members = await this.prisma.db.membership.count({ where: { workspaceId, userId: { in: [...userIds] } } });
@@ -98,6 +104,16 @@ export class WorkflowsService {
     if (campaignIds.size) {
       const found = await this.prisma.db.campaign.count({ where: { workspaceId, id: { in: [...campaignIds] }, deletedAt: null } });
       if (found !== campaignIds.size) throw badRequest("A workflow can only name campaigns in this workspace", { actions: "Unknown campaign" });
+    }
+    if (listIds.size) {
+      const found = await this.prisma.db.marketingList.count({ where: { workspaceId, id: { in: [...listIds] }, archivedAt: null } });
+      if (found !== listIds.size) throw badRequest("A workflow can only use active lists in this workspace", { actions: "Unknown or archived list" });
+    }
+    if (enrollIds.size) {
+      const closed = await this.prisma.db.campaign.findFirst({ where: { workspaceId, id: { in: [...enrollIds] }, status: { in: ["completed", "canceled"] } }, select: { name: true, status: true } });
+      if (closed) {
+        throw badRequest(`The campaign "${closed.name}" is ${closed.status} and takes no new contacts. Choose another, or duplicate it and turn on "Always on".`, { actions: "Closed campaign" });
+      }
     }
   }
 

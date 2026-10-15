@@ -157,7 +157,7 @@ export class ResendProvider implements PlatformMailProvider {
     return Promise.all(
       rows.map(async (d) => {
         const detail = await this.request<Record<string, unknown>>("GET", `/domains/${encodeURIComponent(String(d.id))}`).catch(() => d);
-        return domainDto({ ...d, ...detail });
+        return parseResendDomain({ ...d, ...detail });
       }),
     );
   }
@@ -170,7 +170,7 @@ export class ResendProvider implements PlatformMailProvider {
 
 const s = (v: unknown) => (typeof v === "string" ? v : v === undefined || v === null ? "" : String(v));
 
-function domainDto(d: Record<string, unknown>): ResendDomain {
+export function parseResendDomain(d: Record<string, unknown>): ResendDomain {
   const records = Array.isArray(d.records) ? (d.records as Record<string, unknown>[]) : [];
   return {
     id: s(d.id),

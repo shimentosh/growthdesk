@@ -2,7 +2,7 @@
 
 import type { ReactNode } from "react";
 import { ArrowDown, ArrowUp, Plus, Trash2 } from "lucide-react";
-import { CONTACT_STATUSES, PRIORITIES, QUALIFICATIONS, TASK_TYPES, WORKFLOW_ACTIONS, WORKSPACE_ROLES, labelOf } from "@growthdesk/shared";
+import { CONTACT_STATUSES, KIND_ACTIONS, PRIORITIES, QUALIFICATIONS, TASK_TYPES, WORKFLOW_ACTIONS, WORKSPACE_ROLES, labelOf, type WorkflowKind } from "@growthdesk/shared";
 import { Button, IconButton } from "@/components/ui/Button";
 import { Checkbox } from "@/components/ui/Checkbox";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/DropdownMenu";
@@ -10,6 +10,7 @@ import { Field } from "@/components/ui/Field";
 import { Input, NativeSelect, Textarea } from "@/components/ui/Input";
 import { CampaignPicker, MemberPicker } from "@/components/pickers/Pickers";
 import { ACTION_LABELS, type WorkflowAction, type WorkflowActionType } from "@/lib/types/automation";
+import { useMarketingLists } from "@/components/marketing/common";
 import { selectOptions, useContactCustomFields } from "./ConditionEditor";
 import { DurationInput, MemberChecklist, TagListInput } from "./fields";
 import { ActionGlyph, ActionTile } from "./glyphs";
@@ -45,6 +46,11 @@ export function defaultConfig(type: WorkflowActionType): Config {
       return {};
     case "add_tag":
       return { tags: [] };
+    case "add_to_list":
+    case "remove_from_list":
+      return { listId: "" };
+    case "hand_to_sales":
+      return { createTask: true, taskTitle: "Follow up: handed over from marketing", dueInMinutes: 24 * 60 };
   }
 }
 
@@ -221,6 +227,9 @@ function NotifyForm({ config, set, disabled }: FormProps) {
   );
 }
 
+/** Campaigns a workflow can enroll into, now or once launched (completed and canceled ones never take anyone). */
+const ENROLL_STATUSES = ["draft", "scheduled", "running", "paused"] as const;
+
 function CampaignForm({ config, set, disabled, optional }: FormProps & { optional?: boolean }) {
   return (
     <Field
@@ -229,17 +238,61 @@ function CampaignForm({ config, set, disabled, optional }: FormProps & { optiona
       hint={
         optional
           ? "Empty: stop every active or paused campaign the contact is in."
-          : "Only a running or paused campaign takes new contacts; the run is skipped otherwise."
+          : "A running, paused or scheduled campaign takes new contacts. Launch a draft first, and turn on “Always on” in its settings so it stays open for leads that arrive later."
       }
     >
       <CampaignPicker
         value={str(config.campaignId) || null}
+        statuses={optional ? undefined : ENROLL_STATUSES}
         disabled={disabled}
         placeholder={optional ? "Every campaign" : "Choose a campaign"}
         clearable={optional}
         onChange={(id) => set({ campaignId: id ?? (optional ? undefined : "") })}
       />
     </Field>
+  );
+}
+
+function ListForm({ config, set, disabled, remove = false }: FormProps & { remove?: boolean }) {
+  const lists = useMarketingLists();
+  return (
+    <Field
+      label="List"
+      required
+      hint={
+        remove
+          ? "An unsubscribe from the list is kept, so they are not mailed again if someone adds them back."
+          : "Someone who unsubscribed from the list, refused consent or is suppressed is not re-added. Only people with marketing consent receive its campaigns."
+      }
+    >
+      <NativeSelect
+        value={str(config.listId)}
+        disabled={disabled || lists.isPending}
+        placeholder={lists.isPending ? "Loading lists…" : "Choose a list"}
+        onChange={(e) => set({ listId: e.target.value })}
+        options={(lists.data ?? []).map((l) => ({ value: l.id, label: l.name }))}
+      />
+    </Field>
+  );
+}
+
+function HandToSalesForm({ config, set, disabled }: FormProps) {
+  const withTask = config.createTask !== false;
+  return (
+    <div className="flex flex-col gap-3">
+      <p className="text-xs text-text-3">Moves the contact to In sales (never back from Contact), marks a lead qualified and stops their outreach sequences.</p>
+      <Checkbox checked={withTask} disabled={disabled} onCheckedChange={(c) => set({ createTask: c })} label="Give the owner a task" description="High priority, assigned to the contact's owner." />
+      {withTask && (
+        <div className="grid gap-3 sm:grid-cols-2">
+          <Field label="Task title" required>
+            <Input value={str(config.taskTitle)} disabled={disabled} maxLength={300} onChange={(e) => set({ taskTitle: e.target.value })} />
+          </Field>
+          <Field label="Due in">
+            <DurationInput value={typeof config.dueInMinutes === "number" ? config.dueInMinutes : 24 * 60} max={60 * 24 * 365} aria-label="Due in" onChange={(m) => set({ dueInMinutes: m ?? 0 })} />
+          </Field>
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -270,6 +323,12 @@ function ConfigForm({ action, set, disabled }: { action: WorkflowAction; set: (p
       return <CampaignForm {...props} optional />;
     case "add_tag":
       return <TagForm {...props} />;
+    case "add_to_list":
+      return <ListForm {...props} />;
+    case "remove_from_list":
+      return <ListForm {...props} remove />;
+    case "hand_to_sales":
+      return <HandToSalesForm {...props} />;
   }
 }
 
@@ -326,7 +385,9 @@ function ActionCard({
 }
 
 /** "Then do this": actions run in order, each after its own wait. */
-export function ActionList({ value, onChange, disabled }: { value: WorkflowAction[]; onChange: (a: WorkflowAction[]) => void; disabled?: boolean }) {
+export function ActionList({ value, onChange, disabled, kind }: { value: WorkflowAction[]; onChange: (a: WorkflowAction[]) => void; disabled?: boolean; kind?: WorkflowKind }) {
+  // Each kind offers its own actions first; the menu never hides one the workflow already uses.
+  const offered = kind ? KIND_ACTIONS[kind] : WORKFLOW_ACTIONS;
   const add = (type: WorkflowActionType) => onChange([...value, { type, delayMinutes: 0, config: defaultConfig(type) }]);
   const move = (from: number, to: number) => {
     const next = [...value];
@@ -342,7 +403,7 @@ export function ActionList({ value, onChange, disabled }: { value: WorkflowActio
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="start" className="w-72">
-        {WORKFLOW_ACTIONS.map((t) => (
+        {offered.map((t) => (
           <DropdownMenuItem key={t} icon={<ActionGlyph type={t} className="mt-0.5" />} onSelect={() => add(t)} className="!h-auto !items-start py-1.5">
             <span className="flex flex-col">
               <span>{ACTION_LABELS[t].label}</span>

@@ -193,6 +193,15 @@ export const ContactFilter = z.object({
 });
 export type ContactFilterT = z.infer<typeof ContactFilter>;
 
+/** Turn pasted email addresses or a filter into contacts (e.g. to pick many at once). */
+export const ContactResolveInput = z
+  .object({
+    emails: z.array(z.string().max(320)).max(5000).optional(),
+    filter: ContactFilter.optional(),
+  })
+  .refine((v) => v.emails?.length || v.filter, { message: "Give emails or a filter" });
+export type ContactResolveInputT = z.infer<typeof ContactResolveInput>;
+
 export const SORTABLE_CONTACT_FIELDS = ["createdAt", "updatedAt", "fullName", "lastContactedAt", "nextActionAt", "priority", "score"] as const;
 
 export const ListQuery = z.object({
@@ -482,6 +491,12 @@ export const CampaignSettingsInput = z.object({
   trackClicks: z.boolean().default(false),
   unsubscribeLink: z.boolean().default(true),
   gapSeconds: z.number().int().min(0).max(3600).default(120),
+  /**
+   * Always on: the campaign stays running when everyone enrolled has finished,
+   * waiting for people a workflow (or someone) enrolls later, and it may
+   * launch with an empty audience.
+   */
+  keepOpen: z.boolean().default(false),
 });
 
 export const AudienceInput = z.discriminatedUnion("type", [
@@ -643,6 +658,10 @@ export const WORKFLOW_TRIGGERS = [
   "meeting.booked",
   "deal.stage_changed",
   "task.overdue",
+  "list.subscribed",
+  "marketing.opened",
+  "marketing.clicked",
+  "marketing.unsubscribed",
 ] as const;
 export type WorkflowTrigger = (typeof WORKFLOW_TRIGGERS)[number];
 
@@ -654,6 +673,9 @@ export const WORKFLOW_ACTIONS = [
   "enroll_campaign",
   "stop_campaigns",
   "add_tag",
+  "add_to_list",
+  "remove_from_list",
+  "hand_to_sales",
 ] as const;
 
 export const WorkflowActionInput = z.object({

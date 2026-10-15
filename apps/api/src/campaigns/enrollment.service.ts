@@ -232,8 +232,17 @@ export class EnrollmentService {
    * paused, before it resumes: starts whose day passed during the pause
    * would otherwise all come due at once, and a changed limit, gap or
    * window applies to the queue from here on. Returns how many moved.
+   *
+   * `floor` (a campaign that has not started yet) plans the whole queue
+   * from that instant instead, so moving the start earlier brings the
+   * starts forward too.
    */
-  async replanWaiting(workspaceId: string, campaign: Pick<Campaign, "id" | "schedule" | "settings">, now: Date = new Date()): Promise<number> {
+  async replanWaiting(
+    workspaceId: string,
+    campaign: Pick<Campaign, "id" | "schedule" | "settings">,
+    now: Date = new Date(),
+    opts: { floor?: Date } = {},
+  ): Promise<number> {
     const rows = await this.prisma.db.enrollment.findMany({
       where: { workspaceId, campaignId: campaign.id, status: "active", stepRun: 0, nextRunAt: { not: null } },
       select: { id: true, nextRunAt: true },
@@ -243,7 +252,7 @@ export class EnrollmentService {
     const settings = readSettings(campaign.settings);
     const starts = planStarts(
       readSchedule(campaign.schedule),
-      rows.map((r) => new Date(Math.max(r.nextRunAt!.getTime(), now.getTime()))),
+      rows.map((r) => (opts.floor ? new Date(Math.max(opts.floor.getTime(), now.getTime())) : new Date(Math.max(r.nextRunAt!.getTime(), now.getTime())))),
       { limit: settings.dailyNewLimit, gapMs: settings.gapSeconds * 1000, taken: await this.dayLoads(workspaceId, campaign, now, { waiting: false }) },
     );
     const moved = rows.flatMap((r, i) => (starts[i]!.getTime() !== r.nextRunAt!.getTime() ? [{ id: r.id, at: starts[i]! }] : []));

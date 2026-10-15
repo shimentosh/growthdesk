@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
-import { Archive, Copy, Ellipsis, PencilLine, Plus } from "lucide-react";
+import { Archive, BookUp, Copy, Ellipsis, LayoutTemplate, PencilLine, Plus } from "lucide-react";
 import { Badge } from "@/components/ui/Badge";
 import { Button, IconButton } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
@@ -20,6 +20,8 @@ import { useMarketing } from "@/components/marketing/common";
 import { Choice } from "@/components/marketing/designs/controls";
 import { DesignThumbnail } from "@/components/marketing/designs/DesignThumbnail";
 import { NewDesignModal } from "@/components/marketing/designs/NewDesignModal";
+import { TemplateGalleryModal } from "@/components/marketing/designs/TemplateGalleryModal";
+import { usePublishToLibrary } from "@/components/marketing/designs/usePublishToLibrary";
 import { useApiMutation, useApiQuery } from "@/lib/query";
 import { useFormat, useWorkspace } from "@/lib/session";
 import type { EmailDesign } from "@/lib/types/marketing";
@@ -45,8 +47,10 @@ function Designs() {
   const canWrite = ws.can("marketing.write");
   const list = useApiQuery<EmailDesign[]>(mk.key("designs", "list"), mk.path("/designs"));
   const [creating, setCreating] = useState(false);
+  const [browsing, setBrowsing] = useState(false);
   const [archiving, setArchiving] = useState<EmailDesign | null>(null);
   const [show, setShow] = useState<Show>("all");
+  const toLibrary = usePublishToLibrary();
 
   const duplicate = useApiMutation<EmailDesign, EmailDesign>({
     path: (d) => mk.path(`/designs/${d.id}/duplicate`),
@@ -65,9 +69,14 @@ function Designs() {
   });
 
   const create = canWrite ? (
-    <Button variant="primary" icon={<Plus />} onClick={() => setCreating(true)}>
-      New design
-    </Button>
+    <>
+      <Button icon={<LayoutTemplate />} onClick={() => setBrowsing(true)}>
+        Start from template
+      </Button>
+      <Button variant="primary" icon={<Plus />} onClick={() => setCreating(true)}>
+        New design
+      </Button>
+    </>
   ) : undefined;
 
   return (
@@ -140,6 +149,8 @@ function Designs() {
                 duplicating={duplicate.isPending && duplicate.variables?.id === d.id}
                 onDuplicate={() => duplicate.mutate(d)}
                 onArchive={() => setArchiving(d)}
+                onPublish={toLibrary.allowed ? () => toLibrary.mutation.mutate({ designId: d.id }) : undefined}
+                publishing={toLibrary.mutation.isPending && toLibrary.mutation.variables?.designId === d.id}
               />
                 ))}
               </ul>
@@ -149,6 +160,7 @@ function Designs() {
       </QueryState>
 
       {canWrite && <NewDesignModal open={creating} onOpenChange={setCreating} />}
+      {canWrite && <TemplateGalleryModal open={browsing} onOpenChange={setBrowsing} />}
       <ConfirmDialog
         open={archiving !== null}
         onOpenChange={(o) => !o && setArchiving(null)}
@@ -167,12 +179,17 @@ function DesignCard({
   duplicating,
   onDuplicate,
   onArchive,
+  onPublish,
+  publishing,
 }: {
   design: EmailDesign;
   canWrite: boolean;
   duplicating: boolean;
   onDuplicate: () => void;
   onArchive: () => void;
+  /** Platform admins only: copy it into the email template library as a draft. */
+  onPublish?: () => void;
+  publishing: boolean;
 }) {
   const mk = useMarketing();
   const f = useFormat();
@@ -222,6 +239,14 @@ function DesignCard({
                   <DropdownMenuSeparator />
                   <DropdownMenuItem danger icon={<Archive />} onSelect={onArchive}>
                     Archive
+                  </DropdownMenuItem>
+                </>
+              )}
+              {onPublish && (
+                <>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem icon={<BookUp />} onSelect={onPublish} disabled={publishing}>
+                    Publish to template library
                   </DropdownMenuItem>
                 </>
               )}

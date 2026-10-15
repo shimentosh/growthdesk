@@ -3,7 +3,7 @@
 import { useState, type FormEvent } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { useQueryClient } from "@tanstack/react-query";
-import { Copy, ListOrdered, Trash2 } from "lucide-react";
+import { Copy, ListOrdered, Megaphone, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { Callout } from "@/components/ui/Callout";
 import { Card, CardBody, CardHeader } from "@/components/ui/Card";
@@ -17,6 +17,7 @@ import { RequirePermission } from "@/components/ui/RequirePermission";
 import { SkeletonText } from "@/components/ui/Skeleton";
 import { toast } from "@/components/ui/Toast";
 import { StepsEditor } from "@/components/sequences/StepsEditor";
+import { NewCampaignModal } from "@/components/campaigns/NewCampaignModal";
 import { useUnsavedChanges } from "@/lib/unsaved";
 import { useApiMutation, useApiQuery } from "@/lib/query";
 import { useFormat, useWorkspace } from "@/lib/session";
@@ -37,6 +38,7 @@ function Builder({ sequence }: { sequence: SequenceDetail | null }) {
   const [baseline, setBaseline] = useState<Draft>(() => (sequence ? draftOf(sequence) : BLANK));
   const [draft, setDraft] = useState<Draft>(baseline);
   const [confirm, setConfirm] = useState(false);
+  const [using, setUsing] = useState(false);
   const dirty = JSON.stringify(baseline) !== JSON.stringify(draft);
   const set = <K extends keyof Draft>(k: K, v: Draft[K]) => setDraft((d) => ({ ...d, [k]: v }));
 
@@ -111,6 +113,15 @@ function Builder({ sequence }: { sequence: SequenceDetail | null }) {
                   >
                     Duplicate
                   </Button>
+                  <Button
+                    variant="ghost"
+                    icon={<Megaphone />}
+                    disabled={dirty}
+                    title={dirty ? "Save or discard your changes first: the campaign copies the saved steps." : "Start a new campaign from these steps"}
+                    onClick={() => setUsing(true)}
+                  >
+                    Use in campaign
+                  </Button>
                 </>
               )}
               {dirty && sequence && (
@@ -165,6 +176,7 @@ function Builder({ sequence }: { sequence: SequenceDetail | null }) {
         </Card>
       </form>
 
+      {sequence && using && <NewCampaignModal open initialSequenceId={sequence.id} onOpenChange={setUsing} />}
       {sequence && (
         <ConfirmDialog
           open={confirm}

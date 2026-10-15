@@ -9,6 +9,7 @@ import { derivedKey } from "../common/crypto.js";
  *
  *   o  open pixel          c  click (with URL)
  *   p  preference page     u  one-click unsubscribe (RFC 8058 POST target)
+ *   s  double opt-in confirmation — names a pending ListMembership, not a send
  *
  * Public URLs: ${PUBLIC_APP_URL}/api/m/... through the web app's proxy.
  */
@@ -60,6 +61,25 @@ export function readMarketingToken(token: string, expect?: MarketingToken["kind"
   }
   return out && (!expect || out.kind === expect) ? out : null;
 }
+
+/** The link in a double opt-in email. It names the membership, so removing someone from the list voids it. */
+export function confirmToken(membershipId: string): string {
+  const body = `s.${packId(membershipId)}`;
+  return `${body}.${sign(body)}`;
+}
+
+export function readConfirmToken(token: string): string | null {
+  const parts = (token ?? "").split(".");
+  if (parts.length !== 3 || parts[0] !== "s") return null;
+  const body = `${parts[0]}.${parts[1]}`;
+  const want = Buffer.from(sign(body), "utf8");
+  const got = Buffer.from(parts[2]!, "utf8");
+  if (want.length !== got.length || !timingSafeEqual(want, got)) return null;
+  return unpackId(parts[1] ?? "");
+}
+
+/** The page a double opt-in email links to: it shows the list and confirms only on a button press. */
+export const confirmUrl = (publicAppUrl: string, membershipId: string) => `${publicAppUrl.replace(/\/+$/, "")}/confirm/${confirmToken(membershipId)}`;
 
 export const marketingBase = (publicAppUrl: string) => `${publicAppUrl.replace(/\/+$/, "")}/api/m`;
 

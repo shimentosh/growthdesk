@@ -75,6 +75,11 @@ export const openUrl = (base: string, messageId: string) => `${base}/o/${trackin
 export const clickUrl = (base: string, messageId: string, url: string) => `${base}/c/${trackingToken({ kind: "click", messageId, url })}`;
 /** One-click (RFC 8058) POST target and the link a person clicks. */
 export const unsubscribeUrl = (base: string, messageId: string) => `${base}/u/${trackingToken({ kind: "unsubscribe", messageId })}`;
+/**
+ * The unsubscribe link of a test send: the web page itself, with "test" in place of a token. No token
+ * means nothing to opt out — the page says it is a test, and the API refuses "test" as a broken link.
+ */
+export const testUnsubscribeUrl = (publicAppUrl: string) => `${publicAppUrl.replace(/\/+$/, "")}/unsubscribe/test`;
 
 const ENTITIES: Record<string, string> = { "&amp;": "&", "&lt;": "<", "&gt;": ">", "&quot;": '"', "&#39;": "'" };
 const unescapeHtml = (s: string) => s.replace(/&(?:amp|lt|gt|quot|#39);/g, (m) => ENTITIES[m] ?? m);

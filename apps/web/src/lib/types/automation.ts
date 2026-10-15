@@ -71,13 +71,26 @@ export type WorkflowRun = {
 
 export const TRIGGER_LABELS: Record<WorkflowTrigger, { label: string; description: string }> = {
   "contact.created": { label: "Contact created", description: "A contact is added any way other than an import." },
-  "lead.imported": { label: "Lead imported", description: "A contact arrives through an import." },
+  "lead.imported": {
+    label: "Lead imported",
+    description: "A lead arrives through a CSV import, a form or the API. A known contact sent again through a form or the API fires it too, with event.returning = true.",
+  },
   "contact.qualified": { label: "Contact qualified", description: "A contact is marked as qualified." },
   "reply.received": { label: "Reply received", description: "A contact replies by email, WhatsApp or Telegram." },
   "call.completed": { label: "Call completed", description: "A call finishes. Nothing records calls in this installation yet, so it does not fire today." },
   "meeting.booked": { label: "Meeting booked", description: "A meeting is scheduled with a contact." },
   "deal.stage_changed": { label: "Deal stage changed", description: "A deal moves to another pipeline stage." },
   "task.overdue": { label: "Task overdue", description: "An open task passes its due date." },
+  "list.subscribed": {
+    label: "Joined a list",
+    description: "A contact is added to a lead list (by hand, import, the API or a workflow). Add a condition on event.listName or event.listId for one list.",
+  },
+  "marketing.opened": { label: "Opened a marketing email", description: "A person opens a marketing campaign for the first time (once per email). Filter by event.campaignName." },
+  "marketing.clicked": { label: "Clicked a link", description: "A person clicks a link in a marketing email (first click per email). Filter by event.url, e.g. contains “pricing”." },
+  "marketing.unsubscribed": {
+    label: "Unsubscribed",
+    description: "A person unsubscribes from marketing email — from everything (event.scope = all) or one list (event.scope = list, event.listName).",
+  },
 };
 
 export const triggerLabel = (t: string) => TRIGGER_LABELS[t as WorkflowTrigger]?.label ?? t;
@@ -90,6 +103,9 @@ export const ACTION_LABELS: Record<WorkflowActionType, { label: string; descript
   enroll_campaign: { label: "Enroll in campaign", description: "Add the contact to a campaign." },
   stop_campaigns: { label: "Stop campaigns", description: "Stop the contact's active or paused campaign enrollments." },
   add_tag: { label: "Add tags", description: "Tag the contact." },
+  add_to_list: { label: "Add to list", description: "Subscribe the contact to a lead list for marketing email." },
+  remove_from_list: { label: "Remove from list", description: "Take the contact off a lead list (an unsubscribe is kept)." },
+  hand_to_sales: { label: "Hand to sales", description: "Move the contact to In sales, stop outreach sequences and give the owner a task." },
 };
 
 export const OP_LABELS: Record<ConditionOp, string> = {

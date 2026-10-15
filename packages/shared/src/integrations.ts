@@ -105,6 +105,13 @@ export const LeadIngestInput = z.object({
   tags: z.array(requiredText(50)).max(20).default([]),
   /** Enroll every lead that resolves to a contact in this (launched) campaign. */
   campaignId: z.string().uuid().optional(),
+  /** Subscribe every lead that resolves to a contact to this lead list (e.g. a newsletter signup form). */
+  listId: z.string().uuid().optional(),
+  /**
+   * The leads agreed to marketing email (a ticked opt-in box): recorded on
+   * each contact with where they agreed, so list campaigns reach them.
+   */
+  consent: z.object({ confirmed: z.literal(true), source: requiredText(200) }).optional(),
 });
 export type LeadIngestInputT = z.infer<typeof LeadIngestInput>;
 

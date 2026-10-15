@@ -791,6 +791,7 @@ function StepCard({
   onInsertAfter,
   custom,
   customKnown,
+  actions,
 }: {
   index: number;
   steps: SequenceStep[];
@@ -807,6 +808,7 @@ function StepCard({
   onInsertAfter: (type: StepType) => void;
   custom: CustomFieldDef[];
   customKnown: boolean;
+  actions?: ReactNode;
 }) {
   const ws = useWorkspace();
   const config = step.config ?? {};
@@ -891,6 +893,7 @@ function StepCard({
             <span className="block truncate text-xs text-text-3">{stepSummary(step)}</span>
           </span>
         </button>
+        {actions && <div className="flex shrink-0 items-center">{actions}</div>}
         {!readOnly && (
           <div className="flex shrink-0 items-center">
             <IconButton size="sm" label="Move up" icon={<ArrowUp />} disabled={index === 0} onClick={() => onMove(index - 1)} />
@@ -944,7 +947,7 @@ const newKey = () => `step-${++keySeq}`;
  *
  *   <StepsEditor steps={draft.steps} onChange={(steps) => setDraft({ ...draft, steps })} errors={save.error?.fields} />
  */
-export function StepsEditor({ steps, onChange, readOnly, errors = {}, errorPrefix = "steps" }: StepsEditorProps) {
+export function StepsEditor({ steps, onChange, readOnly, errors = {}, errorPrefix = "steps", stepActions }: StepsEditorProps) {
   const custom = useContactCustomFields();
   const ws = useWorkspace();
   // Stable React keys that follow a step when it moves (the steps themselves carry no id).
@@ -1027,6 +1030,7 @@ export function StepsEditor({ steps, onChange, readOnly, errors = {}, errorPrefi
                     onInsertAfter={(type) => insert(i + 1, type)}
                     custom={custom.data ?? []}
                     customKnown={Boolean(custom.data) && ws.can("contacts.read")}
+                    actions={stepActions?.(s, i)}
                   />
                 </li>
               );

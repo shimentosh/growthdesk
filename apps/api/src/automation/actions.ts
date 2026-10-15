@@ -57,6 +57,14 @@ export const ACTION_CONFIG = {
   add_tag: z
     .object({ tag: z.string().trim().min(1).max(50).optional(), tags: z.array(z.string().trim().min(1).max(50)).max(20).optional() })
     .refine((c) => Boolean(c.tag || c.tags?.length), { message: "Name at least one tag" }),
+  add_to_list: z.object({ listId: z.string().uuid("Choose a list") }),
+  remove_from_list: z.object({ listId: z.string().uuid("Choose a list") }),
+  /** Marketing → sales: stage In sales, outreach stops, and (by default) a task for the owner. */
+  hand_to_sales: z.object({
+    createTask: z.boolean().default(true),
+    taskTitle: z.string().trim().min(1).max(300).default("Follow up: handed over from marketing"),
+    dueInMinutes: z.number().int().min(0).max(60 * 24 * 365).default(24 * 60),
+  }),
 } as const;
 
 export type ActionType = keyof typeof ACTION_CONFIG;
@@ -69,7 +77,10 @@ export type ParsedAction =
   | { type: "notify"; delayMinutes: number; config: z.infer<(typeof ACTION_CONFIG)["notify"]> }
   | { type: "enroll_campaign"; delayMinutes: number; config: z.infer<(typeof ACTION_CONFIG)["enroll_campaign"]> }
   | { type: "stop_campaigns"; delayMinutes: number; config: z.infer<(typeof ACTION_CONFIG)["stop_campaigns"]> }
-  | { type: "add_tag"; delayMinutes: number; config: z.infer<(typeof ACTION_CONFIG)["add_tag"]> };
+  | { type: "add_tag"; delayMinutes: number; config: z.infer<(typeof ACTION_CONFIG)["add_tag"]> }
+  | { type: "add_to_list"; delayMinutes: number; config: z.infer<(typeof ACTION_CONFIG)["add_to_list"]> }
+  | { type: "remove_from_list"; delayMinutes: number; config: z.infer<(typeof ACTION_CONFIG)["remove_from_list"]> }
+  | { type: "hand_to_sales"; delayMinutes: number; config: z.infer<(typeof ACTION_CONFIG)["hand_to_sales"]> };
 
 /** Parses one stored or submitted action. Returns the problem as text instead of throwing. */
 export function parseAction(raw: unknown): { action: ParsedAction } | { error: string } {

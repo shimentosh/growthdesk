@@ -1,15 +1,14 @@
 "use client";
 
 import { useState } from "react";
-import { ChevronDown, Mail, Plus, Server } from "lucide-react";
+import { Plus } from "lucide-react";
 import { ApiError, get } from "@/lib/api";
 import { useWorkspace } from "@/lib/session";
 import { Button } from "@/components/ui/Button";
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/DropdownMenu";
 import { toast } from "@/components/ui/Toast";
 import { showUpgrade } from "@/lib/upgrade";
 import type { OAuthStart } from "@/lib/types/integrations";
-import { SmtpConnectModal } from "./SmtpConnectModal";
+import { MailboxConnectWizard } from "./MailboxConnectWizard";
 
 export type OAuthMailboxProvider = "gmail" | "microsoft";
 
@@ -41,33 +40,15 @@ export function useOAuthStart() {
   return { start, pending };
 }
 
-/** The "Connect mailbox" menu: Google, Microsoft 365, or SMTP/IMAP (which opens the form). */
+/** "Connect mailbox": opens the guided dialog (address → provider and password → domain records). */
 export function ConnectMailboxMenu({ variant = "primary" }: { variant?: "primary" | "secondary" }) {
-  const { start, pending } = useOAuthStart();
-  const [smtp, setSmtp] = useState(false);
+  const [open, setOpen] = useState(false);
   return (
     <>
-      <DropdownMenu>
-        <DropdownMenuTrigger asChild>
-          <Button variant={variant} icon={<Plus />} iconRight={<ChevronDown />} loading={pending !== null}>
-            {pending ? "Opening sign-in…" : "Connect mailbox"}
-          </Button>
-        </DropdownMenuTrigger>
-        <DropdownMenuContent align="end" className="min-w-60">
-          <DropdownMenuLabel>Sign in with</DropdownMenuLabel>
-          <DropdownMenuItem icon={<Mail />} onSelect={() => void start("gmail")}>
-            Google (Gmail, Workspace)
-          </DropdownMenuItem>
-          <DropdownMenuItem icon={<Mail />} onSelect={() => void start("microsoft")}>
-            Microsoft 365 / Outlook
-          </DropdownMenuItem>
-          <DropdownMenuSeparator />
-          <DropdownMenuItem icon={<Server />} onSelect={() => setSmtp(true)}>
-            Any provider (SMTP / IMAP)
-          </DropdownMenuItem>
-        </DropdownMenuContent>
-      </DropdownMenu>
-      <SmtpConnectModal open={smtp} onOpenChange={setSmtp} />
+      <Button variant={variant} icon={<Plus />} onClick={() => setOpen(true)}>
+        Connect mailbox
+      </Button>
+      <MailboxConnectWizard open={open} onOpenChange={setOpen} />
     </>
   );
 }

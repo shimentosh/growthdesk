@@ -9,6 +9,7 @@ import { MailService } from "../src/core/mail.service.js";
 import { seedPlans } from "../src/scripts/seed.js";
 import { Queues } from "../src/queues/queues.js";
 import { Redis } from "ioredis";
+import { PlatformSettingsService } from "../src/core/platform-settings.service.js";
 
 export type TestApp = {
   app: NestExpressApplication;
@@ -92,6 +93,13 @@ export async function setPlan(t: TestApp, workspaceId: string, planKey: string, 
     where: { billingAccountId: ws.billingAccountId },
     data: { planId: plan.id, status, trialEndsAt: null, graceUntil: status === "past_due" ? new Date(Date.now() - 1000) : null },
   });
+}
+
+export const GOOGLE_TEST_CLIENT = { id: "test-google-client.apps.googleusercontent.com", secret: "test-google-secret" };
+
+/** Turns Google sign-in on the way a platform admin does: a Google OAuth client in platform settings. */
+export async function enableGoogleSignIn(t: TestApp) {
+  await t.app.get(PlatformSettingsService).update({ googleClientId: GOOGLE_TEST_CLIENT.id, googleClientSecret: GOOGLE_TEST_CLIENT.secret }, null);
 }
 
 export const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));

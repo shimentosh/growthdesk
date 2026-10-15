@@ -27,6 +27,8 @@ export type CampaignSettings = {
   trackClicks: boolean;
   unsubscribeLink: boolean;
   gapSeconds: number;
+  /** Always on: stays running for people enrolled later (workflows); may launch empty. */
+  keepOpen: boolean;
 };
 
 export type CampaignUser = { id: string; name: string; email: string };
@@ -122,13 +124,26 @@ export type CampaignReadiness = {
   personalization: { sampled: number; affected: number; variables: string[] } | null;
 };
 
+/** GET /campaigns/:id/health — what holds a launched (scheduled, running or paused) campaign back; empty when nothing does. */
+export type CampaignHealth = { issues: CampaignProblem[] };
+
+/** POST /campaigns/:id/enrollments/retry-failed */
+export type RetryFailedResult = { retried: number; skipped: number };
+
+/** GET /campaigns/lead-counts?listIds= — leads (who a lead-list audience enrolls) per list id. */
+export type LeadCounts = Record<string, number>;
+
+/** POST /campaigns/:id/steps/:position/test */
+export type StepTestBody = { to: string; contactId?: string | null; mailboxId?: string | null };
+export type StepTestResult = { sent: boolean; status: string; to: string; from: string; reason: string; missing: string[] };
+
 /** POST /campaigns/:id/launch */
 export type LaunchResult = { campaign: CampaignDetail; enrolled: number; skipped: SkipItem[]; warnings: string[] };
 
 /** POST /campaigns/:id/enroll */
 export type EnrollResult = { enrolled: number; skipped: SkipItem[] };
 
-/** GET /campaigns/:id/enrollments rows, POST /campaigns/:id/enrollments/:eid/stop. */
+/** GET /campaigns/:id/enrollments rows (filters: status, replied=true, q), POST /campaigns/:id/enrollments/:eid/stop|retry|pause|resume. */
 export type Enrollment = {
   id: string;
   status: EnrollmentStatus;

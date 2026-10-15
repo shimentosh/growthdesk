@@ -7,6 +7,7 @@ import {
   ListMembersAdd,
   ListMembersQuery,
   ListMembersRemove,
+  MarketingAssetUpload,
   MarketingAudience,
   MarketingCampaignInput,
   MarketingListInput,
@@ -23,6 +24,7 @@ import { ListsService } from "./lists.service.js";
 import { MarketingSetupService } from "./setup.service.js";
 import { DesignsService } from "./designs.service.js";
 import { MarketingCampaignsService } from "./campaigns.service.js";
+import { MarketingAssetsService } from "./assets.service.js";
 
 const Archive = z.object({ archived: z.boolean() });
 const IncludeArchived = z.object({ archived: z.enum(["true", "false"]).optional() });
@@ -40,6 +42,7 @@ export class MarketingController {
     private readonly setupService: MarketingSetupService,
     private readonly designs: DesignsService,
     private readonly campaigns: MarketingCampaignsService,
+    private readonly assets: MarketingAssetsService,
   ) {}
 
   // ─── Lists (lead lists: shared with outreach, so contact permissions also reach them) ────────────────────────────────────────────────────────────────
@@ -184,6 +187,26 @@ export class MarketingController {
     return this.designs.archive(ctx, id);
   }
 
+  // ─── Email images (uploaded for image blocks; served publicly at /m/assets/:id) ──────────
+
+  @Permission("marketing.read")
+  @Get("assets")
+  listAssets(@Ctx() ctx: RequestContext) {
+    return this.assets.list(ctx);
+  }
+
+  @Permission("marketing.write")
+  @Post("assets")
+  uploadAsset(@Ctx() ctx: RequestContext, @Body(MarketingAssetUpload) body: z.infer<typeof MarketingAssetUpload>) {
+    return this.assets.upload(ctx, body);
+  }
+
+  @Permission("marketing.write")
+  @Delete("assets/:id")
+  removeAsset(@Ctx() ctx: RequestContext, @Param("id") id: string) {
+    return this.assets.remove(ctx, id);
+  }
+
   // ─── Campaigns ────────────────────────────────────────────────────────────
 
   @Permission("marketing.read")
@@ -254,6 +277,13 @@ export class MarketingController {
   @Post("campaigns/:id/pause")
   pause(@Ctx() ctx: RequestContext, @Param("id") id: string) {
     return this.campaigns.pause(ctx, id);
+  }
+
+  @Permission("marketing.send")
+  @HttpCode(200)
+  @Post("campaigns/:id/unschedule")
+  unschedule(@Ctx() ctx: RequestContext, @Param("id") id: string) {
+    return this.campaigns.unschedule(ctx, id);
   }
 
   @Permission("marketing.send")

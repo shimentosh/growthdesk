@@ -5,7 +5,7 @@ import { APP_CONFIG, type AppConfig } from "../config/config.js";
 import { EntitlementsService } from "../billing/entitlements.service.js";
 import { NotificationsService } from "../notifications/notifications.service.js";
 import { QUEUES, Queues } from "../queues/queues.js";
-import { AudienceService, readAudience } from "./audience.service.js";
+import { AudienceService, readAudience, readGuardrailSince } from "./audience.service.js";
 import { MarketingCampaignsService } from "./campaigns.service.js";
 import { readBlocks, readTheme } from "./designs.service.js";
 import { MarketingSetupService } from "./setup.service.js";
@@ -16,6 +16,23 @@ import { marketingBase, marketingLinks, withMarketingTracking } from "./tokens.j
 const BATCH = 50;
 /** A row written ahead of a send whose outcome never came back within this time is settled as uncertain, never resent. */
 const STALE_MS = 10 * 60_000;
+/** A recipient the email service keeps deferring (4xx) is retried this often, behind the rows not tried yet... */
+const RETRY_MS = 5 * 60_000;
+/** ...and failed once it has been deferred for this long. */
+const GIVE_UP_MS = 24 * 60 * 60_000;
+
+/*
+ * A deferred row stays `queued` with its sentAt cleared; its error records
+ * the deferrals so far and when the first one happened, so the retry pace and
+ * the give-up time survive between batches without a column of their own.
+ */
+const DEFERRED = /^Deferred (\d+)× since (\S+): /;
+export function readDeferral(error: string): { tries: number; since: Date } | null {
+  const m = DEFERRED.exec(error);
+  const since = m ? new Date(m[2]!) : null;
+  return m && since && !Number.isNaN(since.getTime()) ? { tries: Number(m[1]), since } : null;
+}
+export const deferralError = (tries: number, since: Date, error: string) => `Deferred ${tries}× since ${since.toISOString()}: ${error}`.slice(0, 500);
 
 /*
  * The marketing send loop (worker only). `tick` runs every 10 s: it starts
@@ -128,7 +145,7 @@ export class MarketingSenderService {
     const smtp = this.setup.smtpFor(esp);
     if (!smtp) return this.pauseCampaign(workspaceId, campaignId, "The email service's password can no longer be read. Reconnect it.").then(() => ({ sent: 0 }));
 
-    const rows = await db.marketingSend.findMany({ where: { workspaceId, campaignId, status: "queued", sentAt: null }, orderBy: { id: "asc" }, take: BATCH });
+    const rows = await this.nextRows(workspaceId, campaignId);
     const audience = readAudience(c.audience);
     const sup = await this.audience.suppressed(workspaceId);
     const blocks = readBlocks(c.blocks);
@@ -198,7 +215,7 @@ export class MarketingSenderService {
       });
 
       if (result.sent) {
-        await db.marketingSend.update({ where: { id: row.id, workspaceId }, data: { status: "sent", providerMessageId: result.providerMessageId } });
+        await db.marketingSend.update({ where: { id: row.id, workspaceId }, data: { status: "sent", providerMessageId: result.providerMessageId, error: "" } });
         sent++;
         continue;
       }
@@ -206,8 +223,16 @@ export class MarketingSenderService {
       // Nothing went out (unless the outcome is unknown): give the allowance back.
       if (f.outcome !== "unknown") await this.refund(workspaceId, period);
       if (f.outcome === "deferred") {
-        // Try again on a later tick.
-        await db.marketingSend.update({ where: { id: row.id, workspaceId }, data: { sentAt: null, error: f.error.slice(0, 500) } });
+        // Try again later, behind the rows not tried yet, so one recipient cannot hold up the rest;
+        // after a day of deferrals it is failed. The batch stops either way: a 4xx is usually the
+        // service throttling us, which the next tick's pace respects.
+        const prev = readDeferral(row.error);
+        const since = prev?.since ?? new Date();
+        const expired = Date.now() - since.getTime() >= GIVE_UP_MS;
+        await db.marketingSend.update({
+          where: { id: row.id, workspaceId },
+          data: expired ? { status: "failed", error: `Deferred for over a day, gave up: ${f.error}`.slice(0, 500) } : { sentAt: null, error: deferralError((prev?.tries ?? 0) + 1, since, f.error) },
+        });
         if (f.mailboxAtFault) {
           await db.espConnection.update({ where: { workspaceId }, data: { status: "error", lastError: f.error.slice(0, 500), lastCheckedAt: new Date() } });
           await this.pauseCampaign(workspaceId, campaignId, `The email service refused the connection: ${f.error.slice(0, 200)}`);
@@ -230,17 +255,56 @@ export class MarketingSenderService {
     return { sent, processed: rows.length };
   }
 
+  /**
+   * The next rows to try: those never tried first (error is empty until a
+   * deferral), then deferred ones whose retry is due.
+   */
+  private async nextRows(workspaceId: string, campaignId: string) {
+    const db = this.prisma.db;
+    const where = { workspaceId, campaignId, status: "queued" as const, sentAt: null };
+    const fresh = await db.marketingSend.findMany({ where: { ...where, error: "" }, orderBy: { id: "asc" }, take: BATCH });
+    if (fresh.length >= BATCH) return fresh;
+    const deferred = await db.marketingSend.findMany({ where: { ...where, error: { not: "" } }, orderBy: { id: "asc" }, take: 500 });
+    const now = Date.now();
+    const due = deferred.filter((r) => {
+      const d = readDeferral(r.error);
+      return !d || now >= d.since.getTime() + d.tries * RETRY_MS;
+    });
+    return [...fresh, ...due.slice(0, BATCH - fresh.length)];
+  }
+
   /** Gives back one marketing email of the month it was taken from. */
   private async refund(workspaceId: string, period: string) {
     await this.prisma.db.usageCounter.updateMany({ where: { workspaceId, metric: "marketing_emails", period, value: { gt: 0 } }, data: { value: { decrement: 1 } } });
   }
 
-  /** R5: pause the campaign and its sending domain when bounces or complaints run high. */
+  /**
+   * R5: pause the campaign and its sending domain when bounces or complaints
+   * run high. After a guardrail pause is resumed, only emails sent since the
+   * resume are judged (see readGuardrailSince), so the old totals do not
+   * pause it again at once.
+   */
   async guardrail(workspaceId: string, campaignId: string) {
     const c = await this.prisma.db.marketingCampaign.findFirst({ where: { id: campaignId, workspaceId } });
-    if (!c || c.sentCount < GUARDRAIL.minSample) return;
-    const bounceRate = c.bounceCount / c.sentCount;
-    const complaintRate = c.complaintCount / c.sentCount;
+    if (!c) return;
+    const since = readGuardrailSince(c.audience);
+    let sent = c.sentCount;
+    let bounces = c.bounceCount;
+    let complaints = c.complaintCount;
+    if (since) {
+      const byStatus = await this.prisma.db.marketingSend.groupBy({
+        by: ["status"],
+        where: { workspaceId, campaignId, sentAt: { gte: since }, status: { in: ["sent", "bounced", "complained"] } },
+        _count: { _all: true },
+      });
+      const n = (st: string) => byStatus.find((r) => r.status === st)?._count._all ?? 0;
+      bounces = n("bounced");
+      complaints = n("complained");
+      sent = n("sent") + bounces + complaints;
+    }
+    if (sent < GUARDRAIL.minSample) return;
+    const bounceRate = bounces / sent;
+    const complaintRate = complaints / sent;
     const reason =
       bounceRate > GUARDRAIL.maxBounceRate ? `Bounce rate ${(bounceRate * 100).toFixed(1)}% is above ${(GUARDRAIL.maxBounceRate * 100).toFixed(0)}%. Clean the list before sending more.`
       : complaintRate > GUARDRAIL.maxComplaintRate ? `Spam complaint rate ${(complaintRate * 100).toFixed(2)}% is above ${(GUARDRAIL.maxComplaintRate * 100).toFixed(1)}%. Check who is on the list and how they joined.`

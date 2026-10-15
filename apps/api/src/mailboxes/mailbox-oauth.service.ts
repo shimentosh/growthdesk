@@ -60,6 +60,12 @@ export class MailboxOAuthService {
     return `${this.base()}/api/mailboxes/oauth/${provider}/callback`;
   }
 
+  /** Which sign-in routes this installation offers (an OAuth client is configured for them). */
+  async available(): Promise<Record<OAuthProvider, boolean>> {
+    const [google, microsoft] = await Promise.all([this.platform.oauthClient("google"), this.platform.oauthClient("microsoft")]);
+    return { gmail: Boolean(google), microsoft: Boolean(microsoft) };
+  }
+
   /** The OAuth client, or a clear 503 when this installation has none. */
   async client(provider: OAuthProvider) {
     const client = await this.platform.oauthClient(provider === "gmail" ? "google" : "microsoft");

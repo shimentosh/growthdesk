@@ -3,7 +3,7 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { useQueryClient } from "@tanstack/react-query";
-import { Archive, Copy } from "lucide-react";
+import { Archive, BookUp, Copy } from "lucide-react";
 import { EmailBlocks, EmailTheme as EmailThemeSchema, type EmailBlock, type EmailTheme } from "@growthdesk/shared";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
@@ -24,6 +24,7 @@ import { useMarketing } from "@/components/marketing/common";
 import { DesignPreview } from "@/components/marketing/designs/DesignPreview";
 import { cleanTheme, ThemePanel } from "@/components/marketing/designs/ThemePanel";
 import { useLeaveGuard } from "@/components/marketing/designs/useLeaveGuard";
+import { usePublishToLibrary } from "@/components/marketing/designs/usePublishToLibrary";
 import { messageOf, post } from "@/lib/api";
 import { useApiMutation, useApiQuery } from "@/lib/query";
 import { useFormat, useWorkspace } from "@/lib/session";
@@ -149,6 +150,22 @@ function Designer({ design }: { design: EmailDesign }) {
     }
   };
 
+  const toLibrary = usePublishToLibrary();
+  /** Platform admins: copies what is on screen into the template library (unsaved changes are saved first). */
+  const publishToLibrary = async () => {
+    if (dirty) {
+      const body = payload();
+      if (!body) return;
+      try {
+        await save.mutateAsync(body);
+      } catch (e) {
+        toast.error(messageOf(e));
+        return;
+      }
+    }
+    toLibrary.mutation.mutate({ designId: design.id });
+  };
+
   const blockCount = draft.blocks.length;
 
   return (
@@ -167,31 +184,46 @@ function Designer({ design }: { design: EmailDesign }) {
         }
         description={`${blockCount} block${blockCount === 1 ? "" : "s"} · updated ${f.relative(design.updatedAt)}`}
         actions={
-          canWrite ? (
+          canWrite || toLibrary.allowed ? (
             <>
-              {dirty && <span className="text-xs text-text-3">Unsaved changes</span>}
-              <Button variant="ghost" icon={<Copy />} loading={duplicating} onClick={() => void duplicate()} title={dirty ? "Saves your changes, then makes a copy" : undefined}>
-                Duplicate
-              </Button>
-              {!design.archivedAt && (
-                <Button variant="ghost" icon={<Archive />} onClick={() => setConfirmArchive(true)}>
-                  Archive
-                </Button>
-              )}
-              {dirty && (
+              {toLibrary.allowed && (
                 <Button
-                  onClick={() => {
-                    setDraft(baseline);
-                    save.reset();
-                  }}
-                  disabled={save.isPending}
+                  variant="ghost"
+                  icon={<BookUp />}
+                  loading={toLibrary.mutation.isPending}
+                  onClick={() => void publishToLibrary()}
+                  title="Platform staff: add a copy to the email template library as a draft"
                 >
-                  Discard
+                  Publish to template library
                 </Button>
               )}
-              <Button variant="primary" type="submit" form="design-form" loading={save.isPending && !duplicating} disabled={!dirty} title="Save (⌘S)">
-                Save
-              </Button>
+              {canWrite && (
+                <>
+                  {dirty && <span className="text-xs text-text-3">Unsaved changes</span>}
+                  <Button variant="ghost" icon={<Copy />} loading={duplicating} onClick={() => void duplicate()} title={dirty ? "Saves your changes, then makes a copy" : undefined}>
+                    Duplicate
+                  </Button>
+                  {!design.archivedAt && (
+                    <Button variant="ghost" icon={<Archive />} onClick={() => setConfirmArchive(true)}>
+                      Archive
+                    </Button>
+                  )}
+                  {dirty && (
+                    <Button
+                      onClick={() => {
+                        setDraft(baseline);
+                        save.reset();
+                      }}
+                      disabled={save.isPending}
+                    >
+                      Discard
+                    </Button>
+                  )}
+                  <Button variant="primary" type="submit" form="design-form" loading={save.isPending && !duplicating} disabled={!dirty} title="Save (⌘S)">
+                    Save
+                  </Button>
+                </>
+              )}
             </>
           ) : undefined
         }
@@ -204,7 +236,7 @@ function Designer({ design }: { design: EmailDesign }) {
       )}
       {canWrite && design.fromLibrary && !design.archivedAt && (
         <Callout tone="info" className="mb-4">
-          This design comes from the built-in library. Change it as you like, or duplicate it first to keep the original as a starting point.
+          This design comes from the template library. Change it as you like, or duplicate it first to keep the original as a starting point.
         </Callout>
       )}
       {design.archivedAt && (

@@ -252,15 +252,15 @@ export class MarketingCampaignsService {
     const smtp = this.setup.smtpFor(esp);
     if (!smtp) throw unavailable("The email service's password can no longer be read. Reconnect it in Settings.");
     const profile = await this.prisma.db.workspace.findUniqueOrThrow({ where: { id: w.id }, select: { legalName: true, postalAddress: true } });
-    if (!(await this.entitlements.consume(w.id, w.billingAccountId, "monthlyMarketingEmails", emails.length))) {
-      throw badRequest("This month's marketing email allowance is used up.");
-    }
+    const period = await this.entitlements.consume(w.id, w.billingAccountId, "monthlyMarketingEmails", emails.length);
+    if (!period) throw badRequest("This month's marketing email allowance is used up.");
     const sender = me(ctx);
     const [first, ...rest] = sender.name.split(" ");
     const vars = variablesFor({ firstName: first, lastName: rest.join(" "), fullName: sender.name, email: sender.email });
     const preferencesUrl = `${this.config.PUBLIC_APP_URL.replace(/\/+$/, "")}/preferences/test`;
     const { html, text } = renderEmail(readBlocks(c.blocks), { preheader: c.preheader, theme: readTheme(c.theme), vars, footer: { legalName: profile.legalName, postalAddress: profile.postalAddress, preferencesUrl } });
     const results: { email: string; sent: boolean; error?: string }[] = [];
+    let notSent = 0;
     for (const to of emails) {
       const r = await sendViaEsp(smtp, {
         from: `"${c.fromName.replace(/"/g, "")}" <${c.fromLocalPart}@${domain.domain}>`,
@@ -273,6 +273,11 @@ export class MarketingCampaignsService {
         headers: { "X-Growthdesk-Test": "1" },
       });
       results.push(r.sent ? { email: to, sent: true } : { email: to, sent: false, error: r.failure.error });
+      if (!r.sent && r.failure.outcome !== "unknown") notSent++;
+    }
+    // Give back what certainly did not go out, to the month it was taken from (as the worker does).
+    if (notSent) {
+      await this.prisma.db.usageCounter.updateMany({ where: { workspaceId: w.id, metric: "marketing_emails", period, value: { gte: notSent } }, data: { value: { decrement: notSent } } });
     }
     return { results };
   }
@@ -330,6 +335,16 @@ export class MarketingCampaignsService {
     return this.get(ctx, id);
   }
 
+  /** Back to a draft so it can be edited; it is sent again with Send or Schedule. */
+  async unschedule(ctx: RequestContext, id: string) {
+    const c = await this.find(ctx, id);
+    // Conditional on the status, so a campaign the worker just started is not pulled back.
+    const moved = await this.prisma.db.marketingCampaign.updateMany({ where: { id, workspaceId: c.workspaceId, status: "scheduled" }, data: { status: "draft", scheduledAt: null } });
+    if (!moved.count) throw conflict("Only a scheduled campaign can be unscheduled.");
+    await this.audit.record(ctx, { action: "marketing.campaign_unscheduled", targetType: "marketing_campaign", targetId: id, metadata: { scheduledAt: c.scheduledAt } });
+    return this.get(ctx, id);
+  }
+
   async resume(ctx: RequestContext, id: string) {
     const w = ws(ctx);
     const c = await this.find(ctx, id);
@@ -340,7 +355,13 @@ export class MarketingCampaignsService {
       if (d?.pausedAt) throw conflict(`Sending from ${d.domain} is paused (${d.pausedReason}). Review it in Settings → Sending domains first.`);
     }
     const next = c.startedAt ? "sending" : c.scheduledAt ? "scheduled" : "sending";
-    await this.prisma.db.marketingCampaign.update({ where: { id, workspaceId: w.id }, data: { status: next, pausedAt: null, pausedReason: "" } });
+    // After a guardrail pause, judge only what is sent from now on, or the old totals pause it again at once.
+    // Only then: resetting the sample on every manual resume would let the guardrail be sidestepped.
+    const rebase = c.startedAt && /bounce rate|complaint rate/i.test(c.pausedReason);
+    await this.prisma.db.marketingCampaign.update({
+      where: { id, workspaceId: w.id },
+      data: { status: next, pausedAt: null, pausedReason: "", ...(rebase ? { audience: { ...(c.audience as object), guardrailSince: new Date().toISOString() } as never } : {}) },
+    });
     if (next === "sending" && !c.startedAt) await this.start(w.id, id);
     await this.audit.record(ctx, { action: "marketing.campaign_resumed", targetType: "marketing_campaign", targetId: id });
     return this.get(ctx, id);

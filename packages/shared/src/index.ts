@@ -24,4 +24,7 @@ export * from "./platform-email-admin.js";
 export * from "./platform-growth.js";
 export * from "./lifecycle.js";
 export * from "./email-library.js";
+export * from "./design-library.js";
 export * from "./template-library.js";
+export * from "./mail-providers.js";
+export * from "./workflows.js";

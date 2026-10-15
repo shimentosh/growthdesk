@@ -400,6 +400,7 @@ model Workspace {
   sendingDomains     SendingDomain[]
   emailDesigns       EmailDesign[]
   librarySeeds       LibrarySeed[]
+  assets             WorkspaceAsset[]
   marketingCampaigns MarketingCampaign[]
   marketingSends     MarketingSend[]
   pipelines          Pipeline[]
@@ -704,7 +705,7 @@ model Tag {
   color       String   @default("gray")
   createdAt   DateTime @default(now())
 
-  workspace Workspace    @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  workspace     Workspace         @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   contacts      ContactTag[]
   companies     CompanyTag[]
   conversations ConversationTag[]
@@ -1567,19 +1568,19 @@ model ConversationTag {
 
 /// A person chatting through a website widget. The widget holds a random token; only its hash is stored.
 model ChatVisitor {
-  id                   String    @id @default(uuid(7)) @db.Uuid
-  workspaceId          String    @db.Uuid
-  channelIntegrationId String    @db.Uuid
-  tokenHash            String    @unique
-  name                 String    @default("")
-  email                String    @default("")
-  contactId            String?   @db.Uuid
+  id                   String   @id @default(uuid(7)) @db.Uuid
+  workspaceId          String   @db.Uuid
+  channelIntegrationId String   @db.Uuid
+  tokenHash            String   @unique
+  name                 String   @default("")
+  email                String   @default("")
+  contactId            String?  @db.Uuid
   /// The page they were on when they last wrote, and their browser.
-  pageUrl              String    @default("")
-  userAgent            String    @default("")
-  lastSeenAt           DateTime  @default(now())
-  createdAt            DateTime  @default(now())
-  updatedAt            DateTime  @updatedAt
+  pageUrl              String   @default("")
+  userAgent            String   @default("")
+  lastSeenAt           DateTime @default(now())
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
 
   workspace     Workspace          @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   integration   ChannelIntegration @relation(fields: [channelIntegrationId], references: [id], onDelete: Cascade)
@@ -2107,6 +2108,27 @@ model EmailLog {
 /// already been given. Seeding adds only keys missing here, so an item a
 /// team edits or deletes is never overwritten or brought back by a later
 /// deploy, while items added to the library in a new release still arrive.
+/// An image a workspace uploaded for its marketing emails (the email designer's image blocks).
+/// Served publicly at /v1/m/assets/:id, since mail clients fetch images without signing in;
+/// the uuid is unguessable and the bytes behind an id never change.
+model WorkspaceAsset {
+  id          String   @id @default(uuid(7)) @db.Uuid
+  workspaceId String   @db.Uuid
+  /// The type sniffed from the bytes: image/png | image/jpeg | image/gif | image/webp.
+  contentType String
+  bytes       Bytes
+  size        Int
+  sha256      String
+  /// The uploaded file's name, for display only.
+  fileName    String   @default("")
+  createdById String?  @db.Uuid
+  createdAt   DateTime @default(now())
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId, sha256])
+}
+
 model LibrarySeed {
   id          String   @id @default(uuid(7)) @db.Uuid
   workspaceId String   @db.Uuid
@@ -2139,6 +2161,8 @@ model MarketingList {
   workspaceId String    @db.Uuid
   name        String
   description String    @default("")
+  /// Double opt-in: people added without recorded consent join as `pending` and are emailed a link to confirm.
+  doubleOptIn Boolean   @default(false)
   archivedAt  DateTime?
   createdById String?   @db.Uuid
   createdAt   DateTime  @default(now())
@@ -2160,6 +2184,8 @@ model ListMembership {
   source         String               @default("")
   subscribedAt   DateTime?
   unsubscribedAt DateTime?
+  /// When the last double opt-in confirmation email went out (at most one a day per membership).
+  confirmSentAt  DateTime?
   createdAt      DateTime             @default(now())
   updatedAt      DateTime             @updatedAt
 
@@ -2175,6 +2201,8 @@ model ListMembership {
 enum EspProvider {
   ses
   smtp_relay
+  /// Resend's HTTP API; the API key is the sealed secret. Domains are created there and their records shown here.
+  resend
 }
 
 /// The workspace's email service for marketing sends. One per workspace.
@@ -2214,6 +2242,12 @@ model SendingDomain {
   verificationToken String
   /// DKIM selectors the ESP signs with (SES Easy DKIM gives three).
   dkimSelectors     String[]            @default([])
+  /// The domain's id at the email service, when the service manages domains (Resend).
+  espDomainId       String?
+  /// The service's own status for the domain ("not_started", "pending", "verified", "failed", …); "" when unmanaged.
+  espStatus         String              @default("")
+  /// The DNS records the service asks for: [{ record, name, type, value, ttl, priority, status }].
+  espRecords        Json                @default("[]")
   /// The last DNS check, per record: { ownership, spf, dkim, dmarc: { ok, found, expected } }.
   checks            Json                @default("{}")
   lastCheckedAt     DateTime?
@@ -2623,4 +2657,35 @@ model PlatformRevenueSnapshot {
   createdAt     DateTime @default(now())
 
   @@id([day, currency])
+}
+
+enum PlatformEmailDesignStatus {
+  draft
+  published
+}
+
+/// The admin-managed email design template library (theme + blocks, as EmailDesign).
+/// Workspaces browse the published ones and copy one into their own designs.
+/// The built-ins (packages/shared/src/email-library.ts) are inserted once by
+/// key on start; an admin's edits are never overwritten, and a deleted entry
+/// keeps its row (deletedAt) so the next start does not bring it back.
+model PlatformEmailDesign {
+  id          String                    @id @default(uuid(7)) @db.Uuid
+  /// Stable identifier; built-ins keep their library key. Copied to EmailDesign.libraryKey.
+  key         String                    @unique
+  name        String
+  description String                    @default("")
+  category    String                    @default("")
+  theme       Json                      @default("{}")
+  blocks      Json                      @default("[]")
+  status      PlatformEmailDesignStatus @default(draft)
+  sortOrder   Int                       @default(0)
+  createdById String?                   @db.Uuid
+  createdAt   DateTime                  @default(now())
+  updatedAt   DateTime                  @updatedAt
+  publishedAt DateTime?
+  /// Tombstone: hidden everywhere, and its key is never seeded again.
+  deletedAt   DateTime?
+
+  @@index([status, deletedAt, sortOrder])
 }

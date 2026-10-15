@@ -12,7 +12,7 @@ import { MailboxFaultService } from "./mailbox-faults.service.js";
 import { sendSmtp, type SendFailure, type SmtpSettings } from "./smtp.js";
 import { resolvePinnedTarget } from "../mailboxes/net-guard.js";
 import { escapeHtml, markdownToEmailHtml } from "./mail-html.js";
-import { trackingBase, unsubscribeUrl, withTracking } from "./tracking.js";
+import { testUnsubscribeUrl, trackingBase, unsubscribeUrl, withTracking } from "./tracking.js";
 import type { Mailbox } from "../generated/prisma/client.js";
 
 export type SendEmailInput = {
@@ -33,8 +33,12 @@ export type SendEmailInput = {
   inReplyTo?: string | null;
   references?: string | null;
   tracking?: { opens: boolean; clicks: boolean };
-  /** Adds a visible unsubscribe link plus List-Unsubscribe / one-click headers. */
-  unsubscribe?: boolean;
+  /**
+   * Adds a visible unsubscribe link plus List-Unsubscribe / one-click headers.
+   * "test": the same footer, but its link opens a page that says it was a test
+   * (testUnsubscribeUrl) and no headers are set, so nothing can opt anyone out.
+   */
+  unsubscribe?: boolean | "test";
   /**
    * campaign: obeys the platform outreach kill switch and parks (deferred) when
    * the mailbox or plan allowance is exhausted. manual: a person pressing Send.
@@ -235,7 +239,7 @@ export class OutboundEmailService {
     });
 
     const base = trackingBase(this.config.PUBLIC_APP_URL);
-    const unsubscribe = input.unsubscribe ? unsubscribeUrl(base, messageRowId) : null;
+    const unsubscribe = input.unsubscribe === "test" ? testUnsubscribeUrl(this.config.PUBLIC_APP_URL) : input.unsubscribe ? unsubscribeUrl(base, messageRowId) : null;
     const signature = mailbox.signature.trim();
     const textBody = [input.body.trim(), signature ? `--\n${signature}` : "", unsubscribe ? `If you would rather not hear from me again, reply "unsubscribe" or visit: ${unsubscribe}` : ""].filter(Boolean).join("\n\n");
     let html = markdownToEmailHtml(input.body) + (signature ? `<div style="margin-top:14px;color:#52525b;font-size:13px;white-space:pre-line">${escapeHtml(signature)}</div>` : "");
@@ -256,7 +260,7 @@ export class OutboundEmailService {
         messageId: providerMessageId,
         inReplyTo: input.inReplyTo ?? null,
         references: input.references ?? input.inReplyTo ?? null,
-        headers: unsubscribe ? { "List-Unsubscribe": `<${unsubscribe}>`, "List-Unsubscribe-Post": "List-Unsubscribe=One-Click" } : undefined,
+        headers: unsubscribe && input.unsubscribe !== "test" ? { "List-Unsubscribe": `<${unsubscribe}>`, "List-Unsubscribe-Post": "List-Unsubscribe=One-Click" } : undefined,
       });
     } catch (e) {
       // Credentials could not be produced (e.g. OAuth refresh failed): nothing was sent.

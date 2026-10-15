@@ -19,8 +19,26 @@ import { cn } from "@/lib/cn";
 type ThemeKey = keyof EmailTheme;
 type ColourKey = Exclude<ThemeKey, "font" | "headingFont" | "radius" | "buttonRadius">;
 
-/** One-click palettes. "Default" is the empty theme. */
+/** One-click palettes. "Default" is the empty theme; "No theme" reads like a plain email typed in a mail app. */
 export const THEME_PRESETS: { id: string; label: string; theme: EmailTheme }[] = [
+  {
+    id: "plain",
+    label: "No theme",
+    theme: {
+      background: "#ffffff",
+      surface: "#ffffff",
+      text: "#222222",
+      heading: "#222222",
+      muted: "#777777",
+      accent: "#1a73e8",
+      accentText: "#ffffff",
+      tint: "#ffffff",
+      font: "helvetica",
+      headingFont: "helvetica",
+      radius: 0,
+      buttonRadius: 4,
+    },
+  },
   { id: "default", label: "Default", theme: {} },
   {
     id: "editorial",
@@ -158,7 +176,13 @@ export function ThemePanel({ theme, onChange, disabled, className }: { theme: Em
       <CardHeader
         icon={<Palette />}
         title="Theme"
-        description={preset ? `${preset.label} palette. Colours, fonts and corners for the whole email.` : "Custom palette. Colours, fonts and corners for the whole email."}
+        description={
+          preset?.id === "plain"
+            ? "No theme: a plain white email, like one typed in a mail app."
+            : preset
+              ? `${preset.label} palette. Colours, fonts and corners for the whole email.`
+              : "Custom palette. Colours, fonts and corners for the whole email."
+        }
         actions={
           !disabled ? (
             <Button size="sm" variant="ghost" icon={<RotateCcw />} disabled={isDefault} onClick={() => onChange({})}>
@@ -168,7 +192,7 @@ export function ThemePanel({ theme, onChange, disabled, className }: { theme: Em
         }
       />
       <CardBody className="flex flex-col gap-3">
-        <div role="radiogroup" aria-label="Theme presets" className="grid grid-cols-3 gap-2 sm:grid-cols-6">
+        <div role="radiogroup" aria-label="Theme presets" className="grid grid-cols-[repeat(auto-fill,minmax(88px,1fr))] gap-2">
           {THEME_PRESETS.map((p) => (
             <PresetSwatch key={p.id} label={p.label} theme={p.theme} selected={preset?.id === p.id} disabled={disabled} onClick={() => onChange(cleanTheme(p.theme))} />
           ))}
@@ -230,7 +254,7 @@ function PresetSwatch({ label, theme, selected, disabled, onClick }: { label: st
         selected ? "border-accent bg-accent-soft" : "border-line hover:bg-hover",
       )}
     >
-      <span aria-hidden className="block rounded-sm p-1.5" style={{ background: t.background }}>
+      <span aria-hidden className="block rounded-sm border border-line p-1.5" style={{ background: t.background }}>
         <span className="flex flex-col gap-1 p-1.5" style={{ background: t.surface, borderRadius: Math.min(t.radius, 8) / 2 }}>
           <span className="block h-1.5 w-3/4 rounded-full" style={{ background: t.heading }} />
           <span className="block h-1 w-full rounded-full opacity-60" style={{ background: t.text }} />

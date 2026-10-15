@@ -7,11 +7,12 @@ import { Modal } from "@/components/ui/Dialog";
 import { Field, FormError } from "@/components/ui/Field";
 import { EntityTile } from "@/components/ui/icons";
 import { Input, Textarea } from "@/components/ui/Input";
+import { Switch } from "@/components/ui/Switch";
 import { useApiMutation } from "@/lib/query";
 import type { MarketingList } from "@/lib/types/marketing";
 import { useMarketing } from "../common";
 
-type Body = { name: string; description: string };
+type Body = { name: string; description: string; doubleOptIn: boolean };
 
 /**
  * Create a list (POST marketing/lists) or rename and describe one (PATCH
@@ -33,6 +34,7 @@ export function ListFormModal({
   const mk = useMarketing();
   const [name, setName] = useState(list?.name ?? "");
   const [description, setDescription] = useState(list?.description ?? "");
+  const [doubleOptIn, setDoubleOptIn] = useState(list?.doubleOptIn ?? false);
   const save = useApiMutation<MarketingList, Body>({
     method: list ? "PATCH" : "POST",
     path: mk.path(list ? `/lists/${list.id}` : "/lists"),
@@ -49,13 +51,14 @@ export function ListFormModal({
     if (!next) {
       setName(list?.name ?? "");
       setDescription(list?.description ?? "");
+      setDoubleOptIn(list?.doubleOptIn ?? false);
       save.reset();
     }
     onOpenChange(next);
   };
   const submit = (e: FormEvent) => {
     e.preventDefault();
-    save.mutate({ name: name.trim(), description: description.trim() });
+    save.mutate({ name: name.trim(), description: description.trim(), doubleOptIn });
   };
   const fields = save.error?.fields ?? {};
 
@@ -84,6 +87,18 @@ export function ListFormModal({
         </Field>
         <Field label="Description" error={fields.description} hint="What subscribers get and how often. They see it on their email preferences page.">
           <Textarea value={description} maxLength={500} rows={3} onChange={(e) => setDescription(e.target.value)} placeholder="Product news and tips, once a month." />
+        </Field>
+        <Field error={fields.doubleOptIn}>
+          <Switch
+            checked={doubleOptIn}
+            onCheckedChange={setDoubleOptIn}
+            label="Require confirmation (double opt-in)"
+            description={
+              list?.doubleOptIn && !doubleOptIn
+                ? "People already waiting stay pending until they confirm; nobody new is asked."
+                : "People added without recorded consent are emailed a link and join only once they confirm. Needs a connected email service and a verified sending domain."
+            }
+          />
         </Field>
       </form>
     </Modal>

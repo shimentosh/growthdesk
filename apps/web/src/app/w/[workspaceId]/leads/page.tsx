@@ -1,10 +1,12 @@
 "use client";
 
-import { Suspense } from "react";
-import { ListChecks, Upload, UserPlus } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { Suspense, useState } from "react";
+import { ListChecks, Plus, Upload, UserPlus } from "lucide-react";
 import type { LifecycleStage } from "@growthdesk/shared";
 import { ContactListView, Segments, useContactQuery } from "@/components/crm/ContactListView";
 import { LIST_READ } from "@/components/crm/lifecycle";
+import { NewContactModal } from "@/components/crm/NewContactModal";
 import { activeFilterCount, useContactListState } from "@/components/crm/contactListState";
 import { useMarketing, useMarketingLists } from "@/components/marketing/common";
 import { Button } from "@/components/ui/Button";
@@ -42,7 +44,10 @@ const TABS: { value: Tab; label: string }[] = [
  */
 function Leads() {
   const ws = useWorkspace();
+  const router = useRouter();
   const mk = useMarketing();
+  const [creating, setCreating] = useState(false);
+  const canWrite = ws.can("contacts.write");
   const { state, update, clearFilters } = useContactListState(DEFAULTS);
   const { contacts, query } = useContactQuery(state);
   const canLists = ws.can(LIST_READ);
@@ -69,8 +74,13 @@ function Leads() {
               </Button>
             )}
             {ws.can("contacts.import") && (
-              <Button variant="primary" icon={<Upload />} href={ws.href(state.listId ? `/imports?listId=${state.listId}` : "/imports")}>
+              <Button icon={<Upload />} href={ws.href(state.listId ? `/imports?listId=${state.listId}` : "/imports")}>
                 Import leads
+              </Button>
+            )}
+            {canWrite && (
+              <Button variant="primary" icon={<Plus />} onClick={() => setCreating(true)}>
+                New lead
               </Button>
             )}
           </>
@@ -122,17 +132,36 @@ function Leads() {
             description={
               tab === "sales"
                 ? "Select leads and choose Transfer to sales to hand them over. Their outreach sequences stop and they show here."
-                : "Import a CSV into a lead list, then enroll the list in an outreach campaign."
+                : "Add leads one at a time, or import a CSV into a lead list, then enroll the list in an outreach campaign."
             }
             action={
-              tab === "lead" && ws.can("contacts.import") ? (
-                <Button size="sm" variant="primary" icon={<Upload />} href={ws.href("/imports")}>
-                  Import leads
-                </Button>
+              tab === "lead" ? (
+                <>
+                  {canWrite && (
+                    <Button size="sm" variant="primary" icon={<Plus />} onClick={() => setCreating(true)}>
+                      New lead
+                    </Button>
+                  )}
+                  {ws.can("contacts.import") && (
+                    <Button size="sm" icon={<Upload />} href={ws.href("/imports")}>
+                      Import leads
+                    </Button>
+                  )}
+                </>
               ) : undefined
             }
           />
         }
+      />
+
+      {/* Keyed by tab and list so a new lead starts at the stage and on the list being looked at. */}
+      <NewContactModal
+        key={`${tab}:${state.listId}`}
+        open={creating}
+        onOpenChange={setCreating}
+        stage={tab === "sales" ? "sales" : "lead"}
+        listId={state.listId || undefined}
+        onCreated={(c) => router.push(ws.href(`/contacts/${c.id}`))}
       />
     </Page>
   );

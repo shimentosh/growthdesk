@@ -163,11 +163,29 @@ export function UserMenu() {
   );
 }
 
+/**
+ * "Switch to admin" for platform staff: the operator console is another
+ * origin, reached through /admin (a full page load; src/proxy.ts redirects).
+ * The console's own top bar links back here.
+ */
+function AdminSwitch() {
+  const me = useMe();
+  const role = me.data?.user.platformRole;
+  if (!role || role === "none") return null;
+  return (
+    <Button size="sm" variant="ghost" icon={<ShieldCheck />} title="Open the operator console" onClick={() => window.location.assign("/admin")}>
+      <span className="hidden sm:inline">Switch to admin</span>
+      <span className="sm:hidden">Admin</span>
+    </Button>
+  );
+}
+
 export function Topbar({ onOpenNav }: { onOpenNav: () => void }) {
   return (
     <header className="sticky top-0 z-30 flex h-12 shrink-0 items-center gap-2 border-b border-line bg-bg/90 px-3 backdrop-blur nav:px-4">
       <IconButton label="Open navigation" icon={<Menu />} className="nav:hidden" onClick={onOpenNav} />
       <div className="flex-1" />
+      <AdminSwitch />
       <NotificationsBell />
       <UserMenu />
     </header>

@@ -1,11 +1,12 @@
 import nodemailer, { type Transporter } from "nodemailer";
 import { classifySmtpError, type SendFailure } from "../messaging/smtp.js";
+import { resendSend } from "./resend.js";
 
 /*
- * Marketing sends through the workspace's email service (EspConnection),
- * over SMTP. Both providers are SMTP endpoints: Amazon SES (its SMTP
- * interface in the chosen region) and any other relay (Postmark, SendGrid,
- * Mailgun, or Mailpit locally). Never a connected Mailbox (R1).
+ * Marketing sends through the workspace's email service (EspConnection):
+ * Amazon SES (its SMTP interface in the chosen region), any other SMTP relay
+ * (Postmark, SendGrid, Mailgun, or Mailpit locally), or Resend over its HTTP
+ * API. Never a connected Mailbox (R1).
  */
 
 export type EspSmtp = {
@@ -16,6 +17,8 @@ export type EspSmtp = {
   username: string;
   password: string;
   allowSelfSigned: boolean;
+  /** Set for Resend: send through its HTTP API with this key instead of SMTP. */
+  resendKey?: string;
 };
 
 export type EspMail = {
@@ -73,6 +76,10 @@ export function providerIdFrom(response: string, fallback: string): string {
 }
 
 export async function sendViaEsp(s: EspSmtp, mail: EspMail): Promise<EspResult> {
+  if (s.resendKey) {
+    // Our send id makes the idempotency key, so a retried request never sends twice.
+    return resendSend(s.resendKey, mail, mail.headers["X-Growthdesk-Send"] ?? mail.messageId);
+  }
   try {
     const info = await transportFor(s).sendMail({
       from: mail.from,

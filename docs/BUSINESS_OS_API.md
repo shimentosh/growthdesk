@@ -149,6 +149,8 @@ Idempotency-Key: bos-sync-2026-10-10T09:00Z-1
 | `onDuplicate` | `"update"` \| `"skip"` | default `update` |
 | `tags` | string[] ≤20 | added to every lead |
 | `campaignId` | uuid | enroll every lead that resolved to a contact |
+| `listId` | uuid | subscribe every lead that resolved to a contact to this lead list (e.g. a newsletter form) |
+| `consent` | `{ "confirmed": true, "source": "…" }` | the leads opted in to marketing email (say where, ≤200); recorded on each contact |
 
 Per lead (all optional, but each needs a name, an email or a phone): `externalId` (≤200),
 `firstName`, `lastName`, `fullName`, `email`, `emails[]` (≤10), `phone`, `phones[]` (≤10),
@@ -170,7 +172,8 @@ on the source record).
     "results": [
       { "index": 0, "externalId": "lead_4821", "contactId": "0199...", "status": "created", "matchedBy": null, "error": null }
     ],
-    "enrollment": { "campaignId": "8b1e...", "enrolled": 1, "skipped": [], "error": null }
+    "enrollment": { "campaignId": "8b1e...", "enrolled": 1, "skipped": [], "error": null },
+    "list": null
   }
 }
 ```
@@ -184,6 +187,15 @@ on the source record).
   not enrolled (`no_email`, `already_enrolled`, `unsubscribed`, `bounced`, `suppressed`,
   `do_not_contact`, …). If enrolling fails after the leads were saved, `error` says why and the
   contacts remain.
+- `list` is `null` without `listId`; otherwise `{ listId, added, pending, alreadyMember, skipped, error }`.
+  On a double opt-in list, leads without consent are `pending`: they get a confirmation email and join
+  once they confirm (pass `consent` when your form already collected a confirmed opt-in).
+  Anyone can join a list; only people with recorded consent (`consent` here, or `consentStatus:
+  "granted"` on the lead) receive its marketing campaigns. Someone who unsubscribed from the list is
+  never re-added. Joining fires the `list.subscribed` workflow trigger.
+- A new contact fires the `lead.imported` workflow trigger. A lead that matches an existing contact by
+  email or phone fires it too, with `returning: true` in the event (use the condition
+  `event.returning`); a re-send matched by `externalId` does not.
 
 ### Refused before any lead is saved
 
@@ -192,8 +204,8 @@ on the source record).
 | 400 | `bad_request` | Body invalid (`fields` names each problem), bad `Idempotency-Key` |
 | 402 | `plan_limit` | The plan does not include API access (`details.feature: "apiAccess"`) |
 | 403 | `forbidden` | Key lacks `leads:write` |
-| 404 | `not_found` | Wrong workspace id, or `campaignId` not in the workspace |
-| 409 | `conflict` | `campaignId` is a draft, completed or canceled campaign; idempotency conflicts (below) |
+| 404 | `not_found` | Wrong workspace id, or `campaignId` / `listId` not in the workspace |
+| 409 | `conflict` | `campaignId` is a draft, completed or canceled campaign; `listId` is archived; idempotency conflicts (below) |
 | 423 | `locked` | Workspace suspended, or the subscription is restricted (payment overdue past grace) |
 
 ## Idempotency

@@ -265,6 +265,7 @@ export class EngineService {
     const rows = await this.prisma.unscoped.$queryRaw<{ id: string; workspaceId: string }[]>`
       SELECT c.id, c."workspaceId" FROM "Campaign" c
       WHERE c.status = 'running' AND c."deletedAt" IS NULL
+        AND COALESCE(c.settings->>'keepOpen', 'false') <> 'true'
         AND NOT EXISTS (SELECT 1 FROM "Enrollment" e WHERE e."campaignId" = c.id AND e.status IN ('active', 'paused'))
       LIMIT 200`;
     let n = 0;
@@ -665,7 +666,10 @@ export class EngineService {
       // A deleted sticky mailbox will never come back: fall through and pick another.
     }
     if (!mailbox) {
-      const allowed = (await this.prisma.db.campaignMailbox.findMany({ where: { workspaceId, campaignId: campaign.id }, select: { mailboxId: true } })).map((m) => m.mailboxId);
+      // Deleted mailboxes are left out; when none of the chosen ones is left, any connected mailbox sends, as with none chosen.
+      const allowed = (
+        await this.prisma.db.campaignMailbox.findMany({ where: { workspaceId, campaignId: campaign.id, mailbox: { deletedAt: null } }, select: { mailboxId: true } })
+      ).map((m) => m.mailboxId);
       mailbox = await this.outbound.pickMailbox(workspaceId, allowed);
       if (!mailbox) {
         return this.reschedule(run, pos, nextOpening(schedule, new Date(run.now.getTime() + HOUR_MS)), "No connected campaign mailbox has capacity left right now.");

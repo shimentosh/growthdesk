@@ -9,6 +9,7 @@
  * The step types here are also what campaign steps use, so the StepsEditor
  * (src/components/sequences/StepsEditor.tsx) works for both.
  */
+import type { ReactNode } from "react";
 import type { FeatureKey, RuleOp, StepType, TaskType } from "@growthdesk/shared";
 
 export type StepRule = { field: string; op: RuleOp; value: string };
@@ -79,6 +80,8 @@ export type StepsEditorProps = {
   errors?: Record<string, string>;
   /** The key prefix of `errors` (default "steps"). */
   errorPrefix?: string;
+  /** Extra controls in a step's header (the campaign page's "Send test"); shown even when read-only. */
+  stepActions?: (step: SequenceStep, index: number) => ReactNode;
 };
 
 /** Steps that send a message through a channel (`MESSAGE_STEPS`). */

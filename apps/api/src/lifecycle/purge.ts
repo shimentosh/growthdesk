@@ -24,6 +24,7 @@ export const PURGE_ORDER = [
   "ListMembership",
   "MarketingList",
   "EmailDesign",
+  "WorkspaceAsset",
   "SendingDomain",
   "EspConnection",
   "WorkflowRun",
