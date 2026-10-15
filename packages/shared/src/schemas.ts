@@ -543,6 +543,68 @@ export const TelegramConnectInput = z.object({
   name: text(80).optional(),
   botToken: z.string().regex(/^\d{5,}:[A-Za-z0-9_-]{30,}$/, "That does not look like a bot token from @BotFather"),
 });
+// ─── Website live chat ──────────────────────────────────────────────────────
+
+export const WIDGET_PRE_CHAT = ["off", "optional", "required"] as const;
+export type WidgetPreChat = (typeof WIDGET_PRE_CHAT)[number];
+
+const widgetFields = {
+  title: text(60),
+  greeting: text(300),
+  replyTime: text(80),
+  color: z.string().regex(/^#[0-9a-fA-F]{6}$/, "A colour like #2563eb"),
+  position: z.enum(["right", "left"]),
+  /** off: chat right away; optional: ask for name and email but let them skip; required: no chat until given. */
+  preChat: z.enum(WIDGET_PRE_CHAT),
+  /** Host names the widget may run on ("example.com" also allows its subdomains). Empty = anywhere. */
+  allowedDomains: z.array(z.string().trim().toLowerCase().max(253).regex(/^[a-z0-9.-]+(:\d+)?$/, "A host name like example.com")).max(20),
+  /** New chats go to this member (otherwise unassigned). */
+  assigneeId: z.string().uuid().nullable(),
+  /** Tags put on every new chat from this widget. */
+  tagIds: z.array(z.string().uuid()).max(10),
+};
+
+export const WIDGET_DEFAULTS = {
+  title: "Chat with us",
+  greeting: "Hi there! How can we help?",
+  replyTime: "We usually reply within a few minutes",
+  color: "#2563eb",
+  position: "right",
+  preChat: "optional",
+  allowedDomains: [],
+  assigneeId: null,
+  tagIds: [],
+} as const satisfies { [K in keyof typeof widgetFields]: z.infer<(typeof widgetFields)[K]> };
+
+/** How a website chat widget looks and behaves. Partial on the way in; WIDGET_DEFAULTS fills the rest. */
+export const WebWidgetSettings = z.object(widgetFields).partial();
+export type WebWidgetSettingsT = { [K in keyof typeof widgetFields]: z.infer<(typeof widgetFields)[K]> };
+
+export const WebWidgetInput = z.object({
+  name: requiredText(80),
+  enabled: z.boolean().default(true),
+  settings: WebWidgetSettings.optional(),
+});
+export const WebWidgetPatch = z.object({
+  name: requiredText(80).optional(),
+  enabled: z.boolean().optional(),
+  settings: WebWidgetSettings.optional(),
+});
+
+/** Public, from the widget: who the visitor says they are. */
+export const WidgetVisitorInput = z.object({
+  name: text(120).optional(),
+  email: z.union([z.literal(""), z.string().trim().toLowerCase().email("That email address does not look right").max(254)]).optional(),
+  pageUrl: text(1000).optional(),
+});
+export const WidgetMessageInput = z.object({
+  body: requiredText(5000),
+  pageUrl: text(1000).optional(),
+});
+
+/** Replace a conversation's tags (ids from the workspace tag list). */
+export const ConversationTagsInput = z.object({ tagIds: z.array(z.string().uuid()).max(20) });
+
 export const TwilioConnectInput = z.object({
   name: text(80).optional(),
   accountSid: z.string().regex(/^AC[0-9a-f]{32}$/i, "Account SID starts with AC"),

@@ -64,7 +64,7 @@ function Inner({ open, onOpenChange, onSent }: Props) {
   const [contactId, setContactId] = useState<string | null>(null);
   const [contactName, setContactName] = useState<string | null>(null);
   const [creating, setCreating] = useState<Prefill | null>(null);
-  const [channel, setChannel] = useState<InboxChannel>("email");
+  const [channel, setChannel] = useState<Exclude<InboxChannel, "web">>("email");
   const [mailboxId, setMailboxId] = useState("");
   const [subject, setSubject] = useState("");
   const [body, setBody] = useState("");
@@ -195,7 +195,7 @@ function Inner({ open, onOpenChange, onSent }: Props) {
             <NativeSelect
               value={channel}
               onChange={(e) => {
-                setChannel(e.target.value as InboxChannel);
+                setChannel(e.target.value as Exclude<InboxChannel, "web">);
                 setTemplateId("");
               }}
               options={(["email", "whatsapp", "telegram"] as const).map((c) => ({ value: c, label: labelOf(c) }))}

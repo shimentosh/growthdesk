@@ -1,6 +1,7 @@
 "use client";
 
-import type { ReactNode } from "react";
+import { Suspense, type ReactNode } from "react";
+import { NavigationProgress } from "@/components/shell/NavigationProgress";
 import { Toaster } from "@/components/ui/Toast";
 import { TooltipProvider } from "@/components/ui/Tooltip";
 import { UnsavedChangesGuard } from "@/components/ui/UnsavedChangesGuard";
@@ -10,6 +11,9 @@ export function Providers({ children }: { children: ReactNode }) {
   return (
     <QueryProvider>
       <TooltipProvider>
+        <Suspense fallback={null}>
+          <NavigationProgress />
+        </Suspense>
         {children}
         <Toaster />
         <UnsavedChangesGuard />

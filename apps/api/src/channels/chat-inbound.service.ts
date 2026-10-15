@@ -6,6 +6,7 @@ import { ActivityService } from "../crm/activity.service.js";
 import { EventsService } from "../core/events.service.js";
 import { NotificationsService } from "../notifications/notifications.service.js";
 import { Queues } from "../queues/queues.js";
+import { RealtimeService } from "../realtime/realtime.service.js";
 import { isApiError } from "../common/errors.js";
 import type { ChatChannel } from "./chat-sender.js";
 import { OPT_OUT } from "./providers.js";
@@ -71,6 +72,7 @@ export class ChatInboundService {
     private readonly events: EventsService,
     private readonly notifications: NotificationsService,
     private readonly queues: Queues,
+    private readonly realtime: RealtimeService,
   ) {}
 
   async file(input: InboundChat): Promise<FiledChat> {
@@ -193,6 +195,7 @@ export class ChatInboundService {
         this.log.warn(`could not queue reply classification: ${e instanceof Error ? e.message : String(e)}`);
       }
     }
+    await this.realtime.conversationChanged(workspaceId, filed.convo.id, "message");
     await this.notify(input, filed.convo, contactId, body, isStart, optOut);
     return { outcome: "filed", messageId: filed.message.id, conversationId: filed.convo.id, contactId, optOut };
   }

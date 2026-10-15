@@ -6,7 +6,9 @@
 import type { Channel, ContactStatus, ConversationStatus, MessageDirection, MessageStatus } from "@growthdesk/shared";
 
 /** The channels a conversation list can be filtered by (calls are logged, not replied to). */
-export type InboxChannel = "email" | "whatsapp" | "telegram";
+export type InboxChannel = "email" | "whatsapp" | "telegram" | "web";
+
+export type TagRef = { id: string; name: string; color: string };
 
 /** `conversationRow()` — one row of GET /inbox/conversations. */
 export type ConversationRow = {
@@ -36,6 +38,7 @@ export type ConversationRow = {
   lastInboundAt: string | null;
   lastOutboundAt: string | null;
   snoozedUntil: string | null;
+  tags: TagRef[];
   preview: { direction: MessageDirection; status: MessageStatus; text: string; at: string } | null;
   createdAt: string;
 };
@@ -109,6 +112,30 @@ export type ConversationDetail = Omit<ConversationRow, "contact"> & {
     freeFormAllowed?: boolean;
     freeFormUntil?: string | null;
   } | null;
+  /** Live chat: the website visitor (what they told us, where they were). */
+  visitor: {
+    name: string;
+    email: string;
+    pageUrl: string;
+    userAgent: string;
+    lastSeenAt: string;
+    createdAt: string;
+    widget: { id: string; name: string };
+  } | null;
+};
+
+/** `facets()` — GET /inbox/facets. Counts over open, not-snoozed conversations the caller can see. */
+export type InboxFacets = {
+  total: number;
+  mine: number;
+  unassigned: number;
+  unread: number;
+  channels: Record<InboxChannel, number>;
+  unreadByChannel: Record<InboxChannel, number>;
+  campaignReplies: number;
+  campaigns: { id: string; name: string; status: string; count: number }[];
+  tags: (TagRef & { count: number })[];
+  widgets: { id: string; name: string; count: number }[];
 };
 
 /** `unreadCount()` — GET /inbox/unread-count. Open, unread and not snoozed. */

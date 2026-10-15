@@ -1,5 +1,6 @@
 import { Module } from "@nestjs/common";
 import { ChannelsModule } from "../channels/channels.module.js";
+import { LiveChatModule } from "../livechat/livechat.module.js";
 import { InboxController } from "./inbox.controller.js";
 import { InboxService } from "./inbox.service.js";
 
@@ -10,7 +11,7 @@ import { InboxService } from "./inbox.service.js";
  * ChannelsService for WhatsApp / Telegram sends.
  */
 @Module({
-  imports: [ChannelsModule],
+  imports: [ChannelsModule, LiveChatModule],
   controllers: [InboxController],
   providers: [InboxService],
   exports: [InboxService],

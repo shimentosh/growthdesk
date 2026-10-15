@@ -1,9 +1,11 @@
-import { Controller, Delete, Get, HttpCode, Param, Patch, Post } from "@nestjs/common";
+import { Controller, Delete, Get, HttpCode, Param, Patch, Post, Put, Res } from "@nestjs/common";
 import { ApiTags } from "@nestjs/swagger";
+import type { Response } from "express";
 import { z } from "zod";
-import { ComposeInput, ConversationPatchInput, ReplyInput, requiredText } from "@growthdesk/shared";
-import { Body, Ctx, Permission, Query } from "../common/decorators.js";
-import type { RequestContext } from "../common/context.js";
+import { ComposeInput, ConversationPatchInput, ConversationTagsInput, ReplyInput, requiredText } from "@growthdesk/shared";
+import { Body, Ctx, Permission, Query, Raw } from "../common/decorators.js";
+import { ws, type RequestContext } from "../common/context.js";
+import { RealtimeService } from "../realtime/realtime.service.js";
 import { InboxService } from "./inbox.service.js";
 import { ConversationListQuery, ConversationTaskInput, type ConversationListQueryT, type ConversationTaskInputT } from "./inbox.schemas.js";
 
@@ -25,7 +27,10 @@ const ConversationNoteInput = z.object({ body: requiredText(10000) });
 @ApiTags("inbox")
 @Controller("workspaces/:workspaceId/inbox")
 export class InboxController {
-  constructor(private readonly inbox: InboxService) {}
+  constructor(
+    private readonly inbox: InboxService,
+    private readonly realtime: RealtimeService,
+  ) {}
 
   @Permission("inbox.read")
   @Get("conversations")
@@ -38,6 +43,25 @@ export class InboxController {
   @Get("unread-count")
   unreadCount(@Ctx() ctx: RequestContext) {
     return this.inbox.unreadCount(ctx);
+  }
+
+  /** Counts for the filter rail: views, channels, campaigns with replies, tags, live-chat widgets. */
+  @Permission("inbox.read")
+  @Get("facets")
+  facets(@Ctx() ctx: RequestContext) {
+    return this.inbox.facets(ctx);
+  }
+
+  /**
+   * Server-Sent Events: `conversation` { conversationId, reason } whenever one
+   * changes (new message, reply, status, tags). Ids only: the page refetches
+   * what it shows through the normal, permission-checked endpoints.
+   */
+  @Permission("inbox.read")
+  @Raw()
+  @Get("stream")
+  stream(@Ctx() ctx: RequestContext, @Res() res: Response) {
+    this.realtime.stream(res, [`ws:${ws(ctx).id}`]);
   }
 
   /** New outbound message to a contact (starts or continues their conversation on that channel). */
@@ -71,6 +95,13 @@ export class InboxController {
   @Post("conversations/:id/reply")
   reply(@Ctx() ctx: RequestContext, @Param("id") id: string, @Body(ReplyInput) body: z.infer<typeof ReplyInput>) {
     return this.inbox.reply(ctx, id, body);
+  }
+
+  /** Replace the conversation's tags. */
+  @Permission("inbox.reply", "inbox.assign")
+  @Put("conversations/:id/tags")
+  setTags(@Ctx() ctx: RequestContext, @Param("id") id: string, @Body(ConversationTagsInput) body: z.infer<typeof ConversationTagsInput>) {
+    return this.inbox.setTags(ctx, id, body.tagIds);
   }
 
   @Permission("inbox.read")

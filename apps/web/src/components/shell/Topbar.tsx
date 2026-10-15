@@ -5,6 +5,7 @@ import { useState } from "react";
 import { Bell, CheckCheck, LogOut, Menu, Monitor, Moon, ShieldCheck, Sun, UserRound } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { useApiMutation, useApiQuery } from "@/lib/query";
+import { navigation } from "@/lib/stores/navigation";
 import { signOut, useFormat, useMe, useWorkspace } from "@/lib/session";
 import { applyTheme, currentTheme, type ThemeChoice } from "@/lib/theme";
 import type { NotificationsResponse } from "@/lib/types";
@@ -74,6 +75,7 @@ function NotificationsBell() {
                       if (!n.readAt) readOne.mutate(n.id);
                       if (n.link) {
                         setOpen(false);
+                        navigation.start(n.link);
                         router.push(n.link);
                       }
                     }}
@@ -115,11 +117,15 @@ export function UserMenu() {
           </div>
         )}
         <DropdownMenuSeparator />
-        <DropdownMenuItem icon={<UserRound />} onSelect={() => router.push("/account")}>
+        <DropdownMenuItem icon={<UserRound />} onSelect={() => {
+            navigation.start("/account");
+            router.push("/account");
+          }}>
           Account settings
         </DropdownMenuItem>
+        {/* A full page load: /admin redirects to the operator console, another origin (src/proxy.ts). */}
         {user && user.platformRole !== "none" && (
-          <DropdownMenuItem icon={<ShieldCheck />} onSelect={() => router.push("/admin")}>
+          <DropdownMenuItem icon={<ShieldCheck />} onSelect={() => window.location.assign("/admin")}>
             Platform admin
           </DropdownMenuItem>
         )}

@@ -45,6 +45,7 @@ import { useApiMutation, useApiQuery } from "@/lib/query";
 import { useFormat, useMe, useWorkspace } from "@/lib/session";
 import type { Mailbox } from "@/lib/types/integrations";
 import type { ConversationDetail, ConversationNote, ConversationRow, InboxMessage } from "@/lib/types/inbox";
+import { ConversationTags } from "./ConversationTags";
 import { TaskFromConversationModal } from "./TaskFromConversationModal";
 import { conversationTitle, isSnoozed, snoozePresets, threadItems } from "./utils";
 
@@ -55,10 +56,10 @@ type PatchVars = {
   unread?: boolean;
 };
 
-/** The middle pane: header with triage actions, the thread (messages and internal notes), the composer. Polled every 15 seconds. */
+/** The middle pane: header with triage actions, the thread (messages and internal notes), the composer. Live via the inbox stream; polled every minute as a fallback. */
 export function ConversationPane({ id, onBack, onShowDetails }: { id: string; onBack: () => void; onShowDetails: () => void }) {
   const ws = useWorkspace();
-  const detail = useApiQuery<ConversationDetail>(ws.key("inbox", "detail", id), ws.path(`/inbox/conversations/${id}`), { refetchInterval: 15_000 });
+  const detail = useApiQuery<ConversationDetail>(ws.key("inbox", "detail", id), ws.path(`/inbox/conversations/${id}`), { refetchInterval: 60_000 });
   const canWork = ws.can(["inbox.reply", "inbox.assign"]);
 
   // Opening an unread conversation marks it read (for a role that may change it).
@@ -118,7 +119,14 @@ function Loaded({ d, onBack, onShowDetails }: { d: ConversationDetail; onBack: (
 
   const snoozed = isSnoozed(d);
   const title = conversationTitle(d);
-  const sub = [labelOf(d.channel), d.handle && d.handle !== title ? d.handle : null, d.mailbox?.email ?? d.integration?.name ?? null].filter(Boolean).join(" · ");
+  const sub = [
+    labelOf(d.channel),
+    d.handle && d.handle !== title ? d.handle : null,
+    d.channel === "web" && d.subject ? d.subject : null,
+    d.mailbox?.email ?? d.integration?.name ?? null,
+  ]
+    .filter(Boolean)
+    .join(" · ");
   const presets = snoozePresets(ws.timezone);
 
   return (
@@ -278,6 +286,7 @@ function Loaded({ d, onBack, onShowDetails }: { d: ConversationDetail; onBack: (
           <IconButton size="sm" label="Contact and details" icon={<PanelRight />} onClick={onShowDetails} className="xl:hidden" />
         </div>
       </header>
+      <ConversationTags conversationId={d.id} tags={d.tags} canEdit={canWork} />
 
       <Thread d={d} />
       <Composer d={d} />
@@ -521,6 +530,7 @@ function ReplyForm({ d }: { d: ConversationDetail }) {
   const ws = useWorkspace();
   const f = useFormat();
   const isEmail = d.channel === "email";
+  const isChat = d.channel === "web";
   const mailboxes = useApiQuery<Mailbox[]>(ws.key("mailboxes", "list"), isEmail && ws.can("integrations.read") ? ws.path("/mailboxes") : null);
   const [mailboxId, setMailboxId] = useState<string>(d.mailboxId ?? "");
   const [subject, setSubject] = useState("");
@@ -529,7 +539,7 @@ function ReplyForm({ d }: { d: ConversationDetail }) {
   const send = useApiMutation<InboxMessage, { body: string; subject?: string; mailboxId?: string }>({
     path: ws.path(`/inbox/conversations/${d.id}/reply`),
     invalidate: [ws.key("inbox"), ws.key("tasks", "summary"), ws.key("contacts")],
-    success: "Sent",
+    success: isChat ? undefined : "Sent",
     errorToast: false,
     onSuccess: () => {
       setBody("");
@@ -605,13 +615,18 @@ function ReplyForm({ d }: { d: ConversationDetail }) {
           maxLength={50000}
           onChange={(e) => setBody(e.target.value)}
           onKeyDown={(e) => {
-            if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) submit(e);
+            // Live chat answers like a chat: Enter sends, Shift + Enter breaks the line.
+            if (e.key === "Enter" && (e.metaKey || e.ctrlKey || (isChat && !e.shiftKey))) submit(e);
           }}
         />
       </Field>
       <div className="flex items-center justify-between gap-2">
         <span className="text-2xs text-text-3">
-          {isEmail ? "Sent from the mailbox above, threaded on their last message." : "Sent through the connected channel."} ⌘/Ctrl + Enter sends.
+          {isEmail
+            ? "Sent from the mailbox above, threaded on their last message. ⌘/Ctrl + Enter sends."
+            : isChat
+              ? "Appears in the visitor's chat window right away. Enter sends, Shift + Enter for a new line."
+              : "Sent through the connected channel. ⌘/Ctrl + Enter sends."}
         </span>
         <Button type="submit" size="sm" variant="primary" icon={<Send />} loading={send.isPending} disabled={!body.trim()}>
           Send

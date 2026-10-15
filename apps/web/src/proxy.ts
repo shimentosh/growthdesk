@@ -72,7 +72,15 @@ function firstTouch(request: NextRequest): string | null {
  */
 function withCsp(request: NextRequest): NextResponse {
   const nonce = btoa(crypto.randomUUID());
-  const policy = contentSecurityPolicy({ nonce, dev: process.env.NODE_ENV === "development", connect: ANALYTICS_CONNECT_HOSTS });
+  // The live-chat widget (/chat/<key>) is framed by customers' websites; the widget's own
+  // allowed-domains setting is enforced by the API on every call it makes.
+  const framed = request.nextUrl.pathname.startsWith("/chat/");
+  const policy = contentSecurityPolicy({
+    nonce,
+    dev: process.env.NODE_ENV === "development",
+    connect: ANALYTICS_CONNECT_HOSTS,
+    frameAncestors: framed ? ["http:", "https:"] : undefined,
+  });
   const headers = new Headers(request.headers);
   headers.set("content-security-policy", policy);
   const response = NextResponse.next({ request: { headers } });
@@ -80,8 +88,21 @@ function withCsp(request: NextRequest): NextResponse {
   return response;
 }
 
+/*
+ * Fourth job: platform staff work in the operator console (apps/admin, ADMIN_APP_URL), which has every
+ * setting; the older /admin pages here would only show some of them. Its routes match these without the
+ * /admin prefix. In development the console runs on :3602; a production deploy without ADMIN_APP_URL keeps /admin.
+ */
+function consoleUrl(): string | null {
+  const configured = process.env.ADMIN_APP_URL?.trim();
+  if (configured) return configured.replace(/\/+$/, "");
+  return process.env.NODE_ENV === "production" ? null : "http://localhost:3602";
+}
+
 function route(request: NextRequest): NextResponse {
   const { pathname, search } = request.nextUrl;
+  const adminConsole = pathname === "/admin" || pathname.startsWith("/admin/") ? consoleUrl() : null;
+  if (adminConsole) return NextResponse.redirect(`${adminConsole}${pathname.slice("/admin".length) || "/"}${search}`);
   if (!isAppRoute(pathname) || request.cookies.has(SESSION_COOKIE)) return withCsp(request);
 
   const login = request.nextUrl.clone();

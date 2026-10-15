@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import type { ReactNode } from "react";
-import { CheckSquare, ExternalLink, Handshake, MessagesSquare, UserRound } from "lucide-react";
+import { CheckSquare, ExternalLink, Globe, Handshake, MessagesSquare, UserRound } from "lucide-react";
 import { labelOf } from "@growthdesk/shared";
 import { Avatar } from "@/components/ui/Avatar";
 import { StatusBadge } from "@/components/ui/Badge";
@@ -34,7 +34,7 @@ function Block({ title, icon, children }: { title: string; icon: ReactNode; chil
  */
 export function ContactContext({ id }: { id: string }) {
   const ws = useWorkspace();
-  const detail = useApiQuery<ConversationDetail>(ws.key("inbox", "detail", id), ws.path(`/inbox/conversations/${id}`), { refetchInterval: 15_000 });
+  const detail = useApiQuery<ConversationDetail>(ws.key("inbox", "detail", id), ws.path(`/inbox/conversations/${id}`), { refetchInterval: 60_000 });
   if (!detail.data) return null;
   return <Loaded d={detail.data} />;
 }
@@ -143,6 +143,30 @@ function Loaded({ d }: { d: ConversationDetail }) {
         </Block>
       )}
 
+      {d.visitor && (
+        <Block title="Website visitor" icon={<Globe />}>
+          <KeyValueList
+            items={[
+              { label: "Name", value: d.visitor.name || "Not given" },
+              { label: "Email", value: d.visitor.email || "Not given" },
+              {
+                label: "Page",
+                value: d.visitor.pageUrl ? (
+                  <a href={d.visitor.pageUrl} target="_blank" rel="noopener noreferrer nofollow" className="break-all text-accent-hi hover:underline">
+                    {d.visitor.pageUrl.replace(/^https?:\/\//, "")}
+                  </a>
+                ) : (
+                  "—"
+                ),
+              },
+              { label: "Widget", value: d.visitor.widget.name },
+              { label: "Last seen", value: f.relative(d.visitor.lastSeenAt) },
+              { label: "First chat", value: f.date(d.visitor.createdAt) },
+            ]}
+          />
+          {!d.visitor.email && <p className="mt-2 text-2xs text-text-3">Ask for their email in the chat to follow up later; it links them to a contact.</p>}
+        </Block>
+      )}
       <Block title="Conversation" icon={<ChannelGlyph />}>
         <KeyValueList
           items={[

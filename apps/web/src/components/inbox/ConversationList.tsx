@@ -1,16 +1,15 @@
 "use client";
 
-import { AlarmClock, Inbox as InboxIcon, PenSquare } from "lucide-react";
+import { AlarmClock, Inbox as InboxIcon, Megaphone, PenSquare, SlidersHorizontal } from "lucide-react";
 import { labelOf } from "@growthdesk/shared";
 import { Segmented } from "@/components/pipeline/controls";
 import { Avatar } from "@/components/ui/Avatar";
 import { Button } from "@/components/ui/Button";
-import { Checkbox } from "@/components/ui/Checkbox";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { ChannelTile, EntityTile } from "@/components/ui/icons";
 import { ErrorState } from "@/components/ui/ErrorState";
 import { AiCategoryBadge } from "@/components/ai/AiCategoryBadge";
-import { NativeSelect } from "@/components/ui/Input";
+import { TagList } from "@/components/crm/Tags";
 import { Pagination } from "@/components/ui/Pagination";
 import { SearchInput } from "@/components/ui/SearchInput";
 import { SkeletonText } from "@/components/ui/Skeleton";
@@ -18,14 +17,20 @@ import { cn } from "@/lib/cn";
 import { useApiQuery } from "@/lib/query";
 import { useFormat, useWorkspace } from "@/lib/session";
 import type { Paged } from "@/lib/types";
-import type { ConversationRow } from "@/lib/types/inbox";
+import type { ConversationRow, InboxChannel } from "@/lib/types/inbox";
 import { conversationTitle, isSnoozed } from "./utils";
 
 export type InboxFilters = {
   status: "open" | "snoozed" | "closed";
   assignee: "all" | "me" | "none";
-  channel: "" | "email" | "whatsapp" | "telegram";
+  channel: "" | InboxChannel;
   unread: boolean;
+  /** "" (any), "any" (every campaign reply) or a campaign id. */
+  campaign: string;
+  /** "" (any), "none" (untagged) or a tag id. */
+  tag: string;
+  /** A live-chat widget's id. */
+  widget: string;
   q: string;
   page: number;
 };
@@ -35,7 +40,7 @@ export const PAGE_SIZE = 50;
 const EMPTY: Record<InboxFilters["status"], { title: string; description: string }> = {
   open: {
     title: "Nothing waiting",
-    description: "Replies to your emails and WhatsApp or Telegram messages land here.",
+    description: "Replies to your emails and campaigns, WhatsApp and Telegram messages, and website live chats land here.",
   },
   snoozed: {
     title: "Nothing snoozed",
@@ -47,19 +52,29 @@ const EMPTY: Record<InboxFilters["status"], { title: string; description: string
   },
 };
 
-/** The left pane: filters, then the conversations (newest activity first), polled every 30 seconds. */
+/**
+ * The conversation list: search and status on top, then the conversations
+ * (newest activity first). The other filters live in the rail (InboxRail);
+ * below `lg` the Filters button opens it in a drawer. Kept fresh by the live
+ * stream, with a slow poll as the fallback.
+ */
 export function ConversationList({
   filters,
   onFilters,
   selectedId,
   onSelect,
   onCompose,
+  onOpenFilters,
+  activeFilters,
 }: {
   filters: InboxFilters;
   onFilters: (patch: Partial<InboxFilters>) => void;
   selectedId: string | null;
   onSelect: (id: string) => void;
   onCompose?: () => void;
+  onOpenFilters?: () => void;
+  /** How many rail filters are on (shown on the Filters button and as "Clear"). */
+  activeFilters: number;
 }) {
   const ws = useWorkspace();
   const query = {
@@ -67,6 +82,9 @@ export function ConversationList({
     assignee: filters.assignee === "all" ? undefined : filters.assignee,
     channel: filters.channel || undefined,
     unread: filters.unread ? "true" : undefined,
+    campaignId: filters.campaign || undefined,
+    tag: filters.tag || undefined,
+    integrationId: filters.widget || undefined,
     q: filters.q || undefined,
     page: filters.page,
     pageSize: PAGE_SIZE,
@@ -74,9 +92,9 @@ export function ConversationList({
   const list = useApiQuery<Paged<ConversationRow>>(ws.key("inbox", "list"), ws.path("/inbox/conversations"), {
     query,
     keepPrevious: true,
-    refetchInterval: 30_000,
+    refetchInterval: 120_000,
   });
-  const filtered = filters.assignee !== "all" || filters.channel !== "" || filters.unread || filters.q !== "";
+  const filtered = activeFilters > 0 || filters.q !== "";
 
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -103,46 +121,22 @@ export function ConversationList({
             { value: "closed", label: "Closed" },
           ]}
         />
-        <div className="grid grid-cols-2 gap-2">
-          <NativeSelect
-            size="sm"
-            aria-label="Assignee"
-            value={filters.assignee}
-            onChange={(e) =>
-              onFilters({
-                assignee: e.target.value as InboxFilters["assignee"],
-                page: 1,
-              })
-            }
-            options={[
-              // Without records.view_all, "all" is what the API lets you see: yours and unassigned.
-              {
-                value: "all",
-                label: ws.can("records.view_all") ? "Everyone" : "Mine & unassigned",
-              },
-              { value: "me", label: "Assigned to me" },
-              { value: "none", label: "Unassigned" },
-            ]}
-          />
-          <NativeSelect
-            size="sm"
-            aria-label="Channel"
-            value={filters.channel}
-            onChange={(e) =>
-              onFilters({
-                channel: e.target.value as InboxFilters["channel"],
-                page: 1,
-              })
-            }
-            options={[
-              { value: "", label: "All channels" },
-              { value: "email", label: "Email" },
-              { value: "whatsapp", label: "WhatsApp" },
-              { value: "telegram", label: "Telegram" },
-            ]}
-          />
+        <div className={cn("flex items-center gap-2", !activeFilters && "lg:hidden")}>
+          {onOpenFilters && (
+            <Button size="sm" variant="secondary" icon={<SlidersHorizontal />} onClick={onOpenFilters} className="lg:hidden">
+              Filters{activeFilters ? ` (${activeFilters})` : ""}
+            </Button>
+          )}
+          {activeFilters > 0 && (
+            <button
+              type="button"
+              className="text-xs text-text-3 underline-offset-2 hover:text-text hover:underline"
+              onClick={() => onFilters({ assignee: "all", channel: "", unread: false, campaign: "", tag: "", widget: "", page: 1 })}
+            >
+              Clear filters
+            </button>
+          )}
         </div>
-        <Checkbox checked={filters.unread} onCheckedChange={(unread) => onFilters({ unread, page: 1 })} label="Unread only" />
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto">
@@ -197,10 +191,16 @@ function ConversationItem({ c, active, onSelect }: { c: ConversationRow; active:
               {c.lastMessageAt ? f.relative(c.lastMessageAt) : ""}
             </span>
           </span>
-          {c.channel === "email" && c.subject && <span className={cn("block truncate text-xs", c.unread ? "text-text" : "text-text-2")}>{c.subject}</span>}
+          {(c.channel === "email" || c.channel === "web") && c.subject && <span className={cn("block truncate text-xs", c.unread ? "text-text" : "text-text-2")}>{c.subject}</span>}
           <span className="block truncate text-xs text-text-3">{preview}</span>
           <span className="mt-1 flex items-center gap-2 text-2xs text-text-3">
             <span>{labelOf(c.channel)}</span>
+            {c.campaignId && (
+              <span className="inline-flex items-center" title="Campaign reply">
+                <Megaphone aria-label="Campaign reply" className="size-3" />
+              </span>
+            )}
+            {c.tags.length > 0 && <TagList tags={c.tags} max={2} className="min-w-0" />}
             <AiCategoryBadge category={c.aiCategory} className="h-4 px-1.5" />
             {snoozed && c.snoozedUntil && (
               <span className="inline-flex items-center gap-1 text-warn-ink">

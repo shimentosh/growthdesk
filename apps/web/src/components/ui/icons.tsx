@@ -25,6 +25,7 @@ import {
   MailPlus,
   Megaphone,
   MessageCircle,
+  MessagesSquare,
   Palette,
   Phone,
   ScrollText,
@@ -85,6 +86,7 @@ export const ENTITY = {
   roles: { icon: ShieldCheck, tint: "indigo" },
   mailboxes: { icon: Mail, tint: "blue" },
   channels: { icon: MessageCircle, tint: "green" },
+  liveChat: { icon: MessagesSquare, tint: "purple" },
   calling: { icon: Phone, tint: "teal" },
   pipelines: { icon: SquareKanban, tint: "orange" },
   tags: { icon: Tag, tint: "yellow" },
@@ -127,6 +129,7 @@ export const CHANNEL: Record<Channel, { icon: LucideIcon; tint: Tint }> = {
   whatsapp: { icon: MessageCircle, tint: "green" },
   telegram: { icon: Send, tint: "cyan" },
   call: { icon: Phone, tint: "teal" },
+  web: { icon: MessagesSquare, tint: "purple" },
 };
 
 /** The channel's small coloured tile. */

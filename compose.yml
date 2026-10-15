@@ -108,6 +108,8 @@ services:
         NEXT_PUBLIC_SENTRY_DSN: ${NEXT_PUBLIC_SENTRY_DSN:-}
     environment:
       API_URL: http://growthdesk-api:3601
+      # /admin here redirects platform staff to the operator console.
+      ADMIN_APP_URL: ${ADMIN_APP_URL}
       SENTRY_DSN: ${SENTRY_DSN:-}
       SENTRY_ENVIRONMENT: ${SENTRY_ENVIRONMENT:-}
       SENTRY_RELEASE: ${SENTRY_RELEASE:-}

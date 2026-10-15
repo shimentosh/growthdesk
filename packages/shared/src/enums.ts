@@ -73,7 +73,7 @@ export type MailboxProvider = (typeof MAILBOX_PROVIDERS)[number];
 export const CONNECTION_STATUSES = ["connected", "error", "disconnected"] as const;
 export type ConnectionStatus = (typeof CONNECTION_STATUSES)[number];
 
-export const CHANNELS = ["email", "whatsapp", "telegram", "call"] as const;
+export const CHANNELS = ["email", "whatsapp", "telegram", "call", "web"] as const;
 export type Channel = (typeof CHANNELS)[number];
 
 export const STEP_TYPES = [
@@ -189,6 +189,7 @@ export const LABELS: Record<string, string> = {
   email: "Email",
   whatsapp: "WhatsApp",
   telegram: "Telegram",
+  web: "Live chat",
   call_task: "Call task",
   update_field: "Update field",
   assign_owner: "Assign owner",

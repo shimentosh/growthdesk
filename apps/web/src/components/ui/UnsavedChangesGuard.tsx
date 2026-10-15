@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useEffect, useState, useSyncExternalStore } from "react";
 import { ConfirmDialog } from "@/components/ui/Dialog";
+import { navigation } from "@/lib/stores/navigation";
 import { unsavedStore } from "@/lib/unsaved";
 
 /**
@@ -52,7 +53,10 @@ export function UnsavedChangesGuard() {
         const to = pending?.to;
         setPending(null);
         unsavedStore.clear();
-        if (to) router.push(to);
+        if (to) {
+          navigation.start(to);
+          router.push(to);
+        }
       }}
     />
   );

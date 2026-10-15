@@ -47,6 +47,7 @@ const CHANNEL_HINT: Record<Channel, string> = {
   whatsapp: "Used by WhatsApp steps.",
   telegram: "Used by Telegram steps.",
   call: "A call script for your own reference; sequence steps do not send call templates.",
+  web: "A saved reply for website live chat; paste it into a chat from the inbox.",
 };
 
 function Editor({ template }: { template: Template | null }) {

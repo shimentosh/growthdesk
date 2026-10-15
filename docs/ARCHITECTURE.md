@@ -8,7 +8,8 @@ subscription billing. It shares no runtime, database or deployment with LinkDesk
 
 ```
 apps/api        NestJS 12 REST API (src/main.ts) and background worker (src/worker.ts), Prisma 7 + PostgreSQL 18, BullMQ + Redis
-apps/web        Next.js 16 App Router + React 19 + Tailwind 4: customer workspace (/w/:workspaceId/...) and platform admin (/admin)
+apps/web        Next.js 16 App Router + React 19 + Tailwind 4: customer workspace (/w/:workspaceId/...); /admin redirects to apps/admin
+apps/admin      Next.js 16 operator console for platform staff (ADMIN_APP_URL): users, workspaces, billing, email, settings
 packages/shared Zod input schemas, enums, permission catalogue, plan keys, personalisation, sequence flow + time-zone windows (pure, tested)
 docs/           This file, LinkDesk reuse report, billing policy, deployment, privacy operations, Business OS API
 ```
@@ -17,8 +18,9 @@ Why one API package with two entrypoints instead of `apps/worker`: the worker ne
 service; splitting would mean extracting a domain package for no runtime benefit. The worker is still a
 separate process (`node dist/worker.js`) so sending and IMAP sync never share the HTTP event loop.
 
-Why `/admin` lives inside `apps/web`: one deployable web app; the admin area has its own layout and every
-admin endpoint is authorised server-side by platform role (`@Platform()`), independent of workspace roles.
+Why the operator console is its own app (`apps/admin`): it runs on its own host with its own sign-in, so
+staff tooling never ships in the customer bundle. Every admin endpoint is still authorised server-side by
+platform role (`@Platform()`), independent of workspace roles.
 
 ## Request pipeline (apps/api)
 

@@ -583,6 +583,61 @@
   }
 }
 
+/* A quiet scrollbar for side lists: a thin pill that only shows while the pointer is over the list (or it has focus). */
+.gd-scroll-quiet::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+.gd-scroll-quiet::-webkit-scrollbar-thumb {
+  background: transparent;
+  border: 0;
+  border-radius: 999px;
+  transition: background-color 150ms;
+}
+.gd-scroll-quiet:hover::-webkit-scrollbar-thumb,
+.gd-scroll-quiet:focus-within::-webkit-scrollbar-thumb {
+  background: var(--line-strong);
+}
+.gd-scroll-quiet::-webkit-scrollbar-thumb:hover {
+  background: var(--text-3);
+}
+@supports not selector(::-webkit-scrollbar) {
+  .gd-scroll-quiet {
+    scrollbar-width: thin;
+    scrollbar-color: transparent transparent;
+  }
+  .gd-scroll-quiet:hover,
+  .gd-scroll-quiet:focus-within {
+    scrollbar-color: var(--line-strong) transparent;
+  }
+}
+
+/* The page-navigation progress bar (components/shell/NavigationProgress.tsx): eases toward 90% while waiting, then completes and fades. */
+.gd-nav-bar {
+  height: 100%;
+  width: 90%;
+  transform-origin: left;
+  background: var(--color-accent);
+  box-shadow: 0 0 8px var(--color-accent);
+  animation: gd-nav-trickle 8s cubic-bezier(0.1, 0.7, 0.2, 1) both;
+}
+.gd-nav-bar-done {
+  animation: none;
+  transform: scaleX(1.12);
+  opacity: 0;
+  transition:
+    transform 200ms ease-out,
+    opacity 250ms ease 80ms;
+}
+@keyframes gd-nav-trickle {
+  from {
+    transform: scaleX(0.05);
+  }
+  to {
+    transform: scaleX(1);
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   ::before,

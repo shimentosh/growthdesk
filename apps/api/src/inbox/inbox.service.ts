@@ -12,10 +12,13 @@ import { ApiError, badRequest, conflict, forbidden, notFound } from "../common/e
 import { holds, me, ownershipScope, ws, type RequestContext } from "../common/context.js";
 import { CHAT_SENDER, type ChatChannel, type ChatSender, type ChatSendResult } from "../channels/chat-sender.js";
 import { ChannelsService } from "../channels/channels.service.js";
+import { LiveChatService } from "../livechat/livechat.service.js";
+import { RealtimeService } from "../realtime/realtime.service.js";
 import type { ConversationListQueryT, ConversationTaskInputT } from "./inbox.schemas.js";
 
 /*
- * The unified inbox: email, WhatsApp and Telegram conversations in one list.
+ * The unified inbox: email, WhatsApp, Telegram and website live-chat
+ * conversations in one list, filtered by channel, campaign and tag.
  *
  * Visibility: a role with records.view_all sees every conversation; without
  * it, a person sees conversations assigned to them and unassigned ones (for
@@ -31,6 +34,7 @@ const conversationInclude = {
   contact: { select: { id: true, fullName: true, email: true, phone: true, status: true, company: { select: { id: true, name: true } } } },
   assignee: { select: { id: true, name: true, email: true } },
   messages: { orderBy: { createdAt: "desc" }, take: 1, select: { id: true, direction: true, bodyText: true, createdAt: true, status: true } },
+  tags: { select: { tag: { select: { id: true, name: true, color: true } } }, orderBy: { createdAt: "asc" } },
 } satisfies Prisma.ConversationInclude;
 
 type ConversationRow = Prisma.ConversationGetPayload<{ include: typeof conversationInclude }>;
@@ -67,6 +71,7 @@ export function conversationRow(c: ConversationRow) {
     lastInboundAt: c.lastInboundAt,
     lastOutboundAt: c.lastOutboundAt,
     snoozedUntil: c.snoozedUntil,
+    tags: c.tags.map((t) => t.tag),
     preview: last ? { direction: last.direction, status: last.status, text: last.bodyText.replace(/\s+/g, " ").trim().slice(0, 160), at: last.createdAt } : null,
     createdAt: c.createdAt,
   };
@@ -120,6 +125,8 @@ export class InboxService {
     private readonly channels: ChannelsService,
     private readonly activity: ActivityService,
     private readonly notifications: NotificationsService,
+    private readonly livechat: LiveChatService,
+    private readonly realtime: RealtimeService,
     @Inject(CHAT_SENDER) private readonly chat: ChatSender,
   ) {}
 
@@ -151,7 +158,11 @@ export class InboxService {
     else if (q.assignee === "none") and.push({ assigneeId: null });
     else if (q.assignee) and.push({ assigneeId: q.assignee });
     if (q.mailboxId) and.push({ mailboxId: q.mailboxId });
-    if (q.campaignId) and.push({ campaignId: q.campaignId });
+    if (q.campaignId === "any") and.push({ campaignId: { not: null } });
+    else if (q.campaignId) and.push({ campaignId: q.campaignId });
+    if (q.integrationId) and.push({ channelIntegrationId: q.integrationId });
+    if (q.tag === "none") and.push({ tags: { none: {} } });
+    else if (q.tag) and.push({ tags: { some: { tagId: q.tag } } });
     if (q.q) {
       const term = q.q.trim();
       and.push({
@@ -186,9 +197,83 @@ export class InboxService {
       where: { workspaceId: w.id, unread: true, status: "open", AND: [this.scope(ctx), { OR: [{ snoozedUntil: null }, { snoozedUntil: { lte: new Date() } }] }] },
       _count: { _all: true },
     });
-    const byChannel: Record<string, number> = { email: 0, whatsapp: 0, telegram: 0 };
+    const byChannel: Record<string, number> = { email: 0, whatsapp: 0, telegram: 0, web: 0 };
     for (const r of rows) byChannel[r.channel] = r._count._all;
     return { total: Object.values(byChannel).reduce((a, b) => a + b, 0), byChannel };
+  }
+
+  /**
+   * Counts for the inbox's filter rail, over the open (not snoozed) conversations
+   * the caller can see: per channel, per tag, per campaign with replies, and per
+   * live-chat widget.
+   */
+  async facets(ctx: RequestContext) {
+    const w = ws(ctx);
+    const db = this.prisma.db;
+    const where: Prisma.ConversationWhereInput = {
+      workspaceId: w.id,
+      status: "open",
+      AND: [this.scope(ctx), { OR: [{ snoozedUntil: null }, { snoozedUntil: { lte: new Date() } }] }],
+    };
+    const user = ctx.identity?.userId ?? "00000000-0000-0000-0000-000000000000";
+    const [channels, unreadChannels, mine, unassigned, unread, campaigns, tagRows, tags, widgets] = await Promise.all([
+      db.conversation.groupBy({ by: ["channel"], where, _count: { _all: true } }),
+      db.conversation.groupBy({ by: ["channel"], where: { ...where, unread: true }, _count: { _all: true } }),
+      db.conversation.count({ where: { ...where, assigneeId: user } }),
+      db.conversation.count({ where: { ...where, assigneeId: null } }),
+      db.conversation.count({ where: { ...where, unread: true } }),
+      db.conversation.groupBy({ by: ["campaignId"], where: { ...where, campaignId: { not: null } }, _count: { _all: true } }),
+      db.conversationTag.groupBy({ by: ["tagId"], where: { workspaceId: w.id, conversation: where }, _count: { _all: true } }),
+      db.tag.findMany({ where: { workspaceId: w.id }, select: { id: true, name: true, color: true }, orderBy: { name: "asc" } }),
+      db.channelIntegration.findMany({ where: { workspaceId: w.id, provider: "web_widget", deletedAt: null }, select: { id: true, name: true }, orderBy: { createdAt: "asc" } }),
+    ]);
+    const campaignIds = campaigns.map((c) => c.campaignId).filter((x): x is string => Boolean(x));
+    const names = campaignIds.length
+      ? await db.campaign.findMany({ where: { workspaceId: w.id, id: { in: campaignIds } }, select: { id: true, name: true, status: true } })
+      : [];
+    const byName = new Map(names.map((c) => [c.id, c]));
+    const tagCount = new Map(tagRows.map((t) => [t.tagId, t._count._all]));
+    const widgetCounts = widgets.length
+      ? await db.conversation.groupBy({ by: ["channelIntegrationId"], where: { ...where, channel: "web" }, _count: { _all: true } })
+      : [];
+    const widgetCount = new Map(widgetCounts.map((r) => [r.channelIntegrationId, r._count._all]));
+    const count = (rows: { channel: string; _count: { _all: number } }[]) => {
+      const out: Record<string, number> = { email: 0, whatsapp: 0, telegram: 0, web: 0 };
+      for (const r of rows) if (r.channel in out) out[r.channel] = r._count._all;
+      return out;
+    };
+    return {
+      total: channels.reduce((a, r) => a + r._count._all, 0),
+      mine,
+      unassigned,
+      unread,
+      channels: count(channels),
+      unreadByChannel: count(unreadChannels),
+      campaignReplies: campaigns.reduce((a, r) => a + r._count._all, 0),
+      campaigns: campaigns
+        .flatMap((c) => {
+          const found = c.campaignId ? byName.get(c.campaignId) : undefined;
+          return found ? [{ ...found, count: c._count._all }] : [];
+        })
+        .sort((a, b) => b.count - a.count),
+      tags: tags.map((t) => ({ ...t, count: tagCount.get(t.id) ?? 0 })),
+      widgets: widgets.map((wd) => ({ ...wd, count: widgetCount.get(wd.id) ?? 0 })),
+    };
+  }
+
+  /** Replaces the conversation's tags with these (from the workspace tag list). */
+  async setTags(ctx: RequestContext, id: string, tagIds: string[]) {
+    const w = ws(ctx);
+    const c = await this.find(ctx, id);
+    const wanted = [...new Set(tagIds)];
+    const found = wanted.length ? await this.prisma.db.tag.findMany({ where: { workspaceId: w.id, id: { in: wanted } }, select: { id: true } }) : [];
+    if (found.length !== wanted.length) throw badRequest("One of those tags does not exist", { tagIds: "Unknown tag" });
+    await this.prisma.db.$transaction([
+      this.prisma.db.conversationTag.deleteMany({ where: { workspaceId: w.id, conversationId: c.id, tagId: { notIn: wanted } } }),
+      this.prisma.db.conversationTag.createMany({ data: wanted.map((tagId) => ({ workspaceId: w.id, conversationId: c.id, tagId })), skipDuplicates: true }),
+    ]);
+    await this.realtime.conversationChanged(w.id, c.id, "tags");
+    return this.summary(ctx, c.id);
   }
 
   private async authors(ids: (string | null)[]) {
@@ -249,6 +334,7 @@ export class InboxService {
     const channel = c.channel;
     const reachability =
       (channel === "whatsapp" || channel === "telegram") && c.contactId ? await this.chat.reachability(w.id, channel, c.contactId) : null;
+    const visitor = channel === "web" ? await this.livechat.visitorInfo(w.id, c.chatVisitorId) : null;
     return {
       ...conversationRow(full),
       peer: full.peer,
@@ -261,6 +347,7 @@ export class InboxService {
       tasks,
       campaign,
       reachability,
+      visitor,
     };
   }
 
@@ -290,7 +377,10 @@ export class InboxService {
       }
       data.dealId = input.dealId;
     }
-    if (Object.keys(data).length) await this.prisma.db.conversation.update({ where: { id: c.id, workspaceId: w.id }, data });
+    if (Object.keys(data).length) {
+      await this.prisma.db.conversation.update({ where: { id: c.id, workspaceId: w.id }, data });
+      await this.realtime.conversationChanged(w.id, c.id, "updated");
+    }
     if (notifyAssignee) {
       await this.notifications.notify(w.id, [notifyAssignee], {
         type: "conversation.assigned",
@@ -311,7 +401,10 @@ export class InboxService {
   async markRead(ctx: RequestContext, id: string) {
     const w = ws(ctx);
     const c = await this.find(ctx, id);
-    await this.prisma.db.conversation.update({ where: { id: c.id, workspaceId: w.id }, data: { unread: false } });
+    if (c.unread) {
+      await this.prisma.db.conversation.update({ where: { id: c.id, workspaceId: w.id }, data: { unread: false } });
+      await this.realtime.conversationChanged(w.id, c.id, "read");
+    }
     return { id: c.id, unread: false };
   }
 
@@ -389,10 +482,14 @@ export class InboxService {
       const base = { workspaceId: w.id, channel: c.channel as ChatChannel, conversationId: c.id, integrationId: c.channelIntegrationId, body: input.body, authorId: author };
       const result = c.contactId ? await this.chat.send({ ...base, contactId: c.contactId }) : await this.channels.deliver({ ...base, contactId: null });
       out = await this.chatOutcome(w.id, result);
+    } else if (c.channel === "web") {
+      const result = await this.livechat.agentReply({ workspaceId: w.id, conversationId: c.id, body: input.body, authorId: author });
+      out = await this.messageOut(w.id, result.messageRowId);
     } else {
       throw badRequest("Call conversations cannot be replied to — log a call instead.");
     }
     await this.prisma.db.conversation.update({ where: { id: c.id, workspaceId: w.id }, data: { unread: false } });
+    await this.realtime.conversationChanged(w.id, c.id, "reply");
     return out;
   }
 
@@ -476,6 +573,7 @@ export class InboxService {
     const c = await this.find(ctx, id);
     const author = me(ctx);
     const n = await this.prisma.db.conversationNote.create({ data: { workspaceId: w.id, conversationId: c.id, authorId: author.userId, body } });
+    await this.realtime.conversationChanged(w.id, c.id, "note");
     return { id: n.id, body: n.body, author: { id: author.userId, name: author.name }, createdAt: n.createdAt };
   }
 

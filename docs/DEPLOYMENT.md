@@ -202,7 +202,7 @@ docker compose -f docker-compose.prod.yml --env-file .env.production exec api \
   node dist/scripts/create-admin.js --email you@example.com --password '…' --name 'You'
 ```
 
-Then sign in at the web app and open `/admin`.
+Then sign in at the operator console (`ADMIN_APP_URL`). The web app's `/admin` redirects there.
 
 ## Upgrades
 

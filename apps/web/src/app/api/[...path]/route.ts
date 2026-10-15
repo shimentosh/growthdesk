@@ -83,8 +83,11 @@ async function proxy(request: Request): Promise<Response> {
       body: body && body.byteLength ? body : undefined,
       redirect: "manual",
       cache: "no-store",
+      // A stream (the inbox and live-chat SSE) ends upstream when the browser goes away.
+      signal: request.signal,
     });
   } catch (e) {
+    if (request.signal.aborted) return new Response(null, { status: 499 });
     console.error(`[api proxy] request ${requestId}: could not reach the API at`, target(), "-", e instanceof Error ? e.message : e);
     return Response.json(
       { error: { code: "api_unreachable", message: "Could not reach the Growthdesk API. Is it running?" } },

@@ -123,6 +123,7 @@ export const SETTINGS_NAV: SettingsGroup[] = [
     items: [
       { href: "/settings/mailboxes", label: "Mailboxes", permission: "integrations.read" },
       { href: "/settings/channels", label: "WhatsApp & Telegram", permission: "integrations.read" },
+      { href: "/settings/live-chat", label: "Live chat", permission: "integrations.read" },
       { href: "/settings/calling", label: "Calling", permission: "integrations.read" },
     ],
   },

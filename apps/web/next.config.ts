@@ -38,7 +38,11 @@ const nextConfig: NextConfig = {
   devIndicators: { position: "bottom-right" },
   async headers() {
     return [
-      { source: "/:path*", headers: securityHeaders },
+      // /chat/<key> is the live-chat widget, framed by customers' websites: no X-Frame-Options there
+      // (its CSP frame-ancestors, set in src/proxy.ts, decides instead).
+      { source: "/:path((?!chat/).*)", headers: securityHeaders },
+      { source: "/chat/:path*", headers: securityHeaders.filter((h) => h.key !== "X-Frame-Options") },
+      { source: "/widget.js", headers: [{ key: "Cache-Control", value: "public, max-age=300" }, { key: "Access-Control-Allow-Origin", value: "*" }] },
       // Pages get a per-request nonce policy from src/proxy.ts; the API proxy never serves a document.
       { source: "/api/:path*", headers: [{ key: "Content-Security-Policy", value: "default-src 'none'; frame-ancestors 'none'" }] },
     ];

@@ -11,11 +11,16 @@ const queryBoolean = z.enum(["true", "false"]).transform((v) => v === "true");
  */
 export const ConversationListQuery = ListQuery.extend({
   status: z.enum(["open", "snoozed", "closed"]).optional(),
-  channel: z.enum(["email", "whatsapp", "telegram"]).optional(),
+  channel: z.enum(["email", "whatsapp", "telegram", "web"]).optional(),
   unread: queryBoolean.optional(),
   assignee: z.union([z.enum(["me", "none"]), z.string().uuid()]).optional(),
   mailboxId: z.string().uuid().optional(),
-  campaignId: z.string().uuid().optional(),
+  /** A campaign's id, or "any" for every campaign reply. */
+  campaignId: z.union([z.literal("any"), z.string().uuid()]).optional(),
+  /** A tag's id, or "none" for untagged conversations. */
+  tag: z.union([z.literal("none"), z.string().uuid()]).optional(),
+  /** A channel integration — e.g. one live-chat widget. */
+  integrationId: z.string().uuid().optional(),
   q: text(200).optional(),
 });
 export type ConversationListQueryT = z.infer<typeof ConversationListQuery>;

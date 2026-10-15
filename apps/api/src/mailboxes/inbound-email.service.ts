@@ -9,6 +9,7 @@ import { ActivityService } from "../crm/activity.service.js";
 import { EventsService } from "../core/events.service.js";
 import { NotificationsService } from "../notifications/notifications.service.js";
 import { Queues } from "../queues/queues.js";
+import { RealtimeService } from "../realtime/realtime.service.js";
 import { isApiError } from "../common/errors.js";
 import {
   addressList,
@@ -95,6 +96,7 @@ export class InboundEmailService {
     private readonly events: EventsService,
     private readonly notifications: NotificationsService,
     private readonly queues: Queues,
+    private readonly realtime: RealtimeService,
   ) {}
 
   /**
@@ -343,6 +345,7 @@ export class InboundEmailService {
       if (plan.isReply) await this.afterReply(plan, { ...reply, messageId: message.id });
     }
 
+    await this.realtime.conversationChanged(mailbox.workspaceId, conversation.id, "message");
     return { outcome: "filed", messageId: message.id, conversationId: conversation.id, contactId, reply: Boolean(plan?.isReply), autoReply };
   }
 

@@ -3,6 +3,7 @@ import { AuthModule } from "./auth/auth.module.js";
 import { WorkspacesModule } from "./workspaces/workspaces.module.js";
 import { BillingModule } from "./billing/billing.module.js";
 import { NotificationsModule } from "./notifications/notifications.service.js";
+import { RealtimeModule } from "./realtime/realtime.service.js";
 import { MessagingModule } from "./messaging/messaging.module.js";
 import { CrmModule } from "./crm/crm.module.js";
 import { PipelineModule } from "./pipeline/pipeline.controller.js";
@@ -23,12 +24,14 @@ import { SiteModule } from "./site/site.controller.js";
 import { PlatformMailModule } from "./platform-mail/platform-mail.module.js";
 import { PlatformGrowthModule } from "./platform-growth/platform-growth.module.js";
 import { LifecycleModule } from "./lifecycle/lifecycle.module.js";
+import { LiveChatModule } from "./livechat/livechat.module.js";
 
 /** Every feature module, shared by the HTTP app and the worker. Do not reorder casually: globals first. */
 export const FEATURE_MODULES = [
   HealthModule,
   PlatformMailModule,
   NotificationsModule,
+  RealtimeModule,
   MessagingModule,
   CrmModule,
   AuthModule,
@@ -51,4 +54,5 @@ export const FEATURE_MODULES = [
   SiteModule,
   PlatformGrowthModule,
   LifecycleModule,
+  LiveChatModule,
 ];

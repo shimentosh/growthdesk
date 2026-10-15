@@ -24,9 +24,11 @@ export type CspOptions = {
   dev?: boolean;
   /** Extra origins fetch/XHR/beacons may reach. */
   connect?: readonly string[];
+  /** Who may frame the page. Default 'none'; the live-chat widget page is framed by customers' sites. */
+  frameAncestors?: readonly string[];
 };
 
-export function contentSecurityPolicy({ nonce, dev = false, connect = [] }: CspOptions): string {
+export function contentSecurityPolicy({ nonce, dev = false, connect = [], frameAncestors = ["'none'"] }: CspOptions): string {
   const directives: Record<string, string[]> = {
     "default-src": ["'self'"],
     "script-src": ["'self'", `'nonce-${nonce}'`, "'strict-dynamic'", ...(dev ? ["'unsafe-eval'"] : [])],
@@ -36,7 +38,7 @@ export function contentSecurityPolicy({ nonce, dev = false, connect = [] }: CspO
     "font-src": ["'self'", "data:"],
     "connect-src": ["'self'", ...connect, ...(dev ? ["ws:", "wss:"] : [])],
     "frame-src": ["'self'"],
-    "frame-ancestors": ["'none'"],
+    "frame-ancestors": [...frameAncestors],
     "object-src": ["'none'"],
     "base-uri": ["'self'"],
     "form-action": ["'self'"],

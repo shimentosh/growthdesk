@@ -422,6 +422,8 @@ model Workspace {
   messages           Message[]
   messageEvents      MessageEvent[]
   convoNotes         ConversationNote[]
+  conversationTags   ConversationTag[]
+  chatVisitors       ChatVisitor[]
   integrations       ChannelIntegration[]
   calls              Call[]
   callScripts        CallScript[]
@@ -703,8 +705,9 @@ model Tag {
   createdAt   DateTime @default(now())
 
   workspace Workspace    @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  contacts  ContactTag[]
-  companies CompanyTag[]
+  contacts      ContactTag[]
+  companies     CompanyTag[]
+  conversations ConversationTag[]
 
   @@unique([workspaceId, name])
 }
@@ -1223,6 +1226,8 @@ enum Channel {
   whatsapp
   telegram
   call
+  /// The website live-chat widget (a ChannelIntegration with provider "web_widget").
+  web
 }
 
 model Template {
@@ -1521,6 +1526,8 @@ model Conversation {
   aiSentiment          String             @default("")
   aiSummary            String             @default("")
   aiUpdatedAt          DateTime?
+  /// Live chat: the website visitor on the other end.
+  chatVisitorId        String?            @db.Uuid
   createdAt            DateTime           @default(now())
   updatedAt            DateTime           @updatedAt
 
@@ -1532,12 +1539,54 @@ model Conversation {
   messages    Message[]
   notes       ConversationNote[]
   tasks       Task[]
+  tags        ConversationTag[]
+  visitor     ChatVisitor?        @relation(fields: [chatVisitorId], references: [id], onDelete: SetNull)
 
   @@unique([workspaceId, externalKey])
   @@index([workspaceId, lastMessageAt])
   @@index([workspaceId, contactId])
   @@index([workspaceId, assigneeId, status])
   @@index([workspaceId, channel, unread])
+  @@index([workspaceId, campaignId])
+}
+
+/// Labels on a conversation, from the workspace's shared tag list (the same Tag rows contacts use).
+model ConversationTag {
+  workspaceId    String   @db.Uuid
+  conversationId String   @db.Uuid
+  tagId          String   @db.Uuid
+  createdAt      DateTime @default(now())
+
+  workspace    Workspace    @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  tag          Tag          @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  @@id([conversationId, tagId])
+  @@index([workspaceId, tagId])
+}
+
+/// A person chatting through a website widget. The widget holds a random token; only its hash is stored.
+model ChatVisitor {
+  id                   String    @id @default(uuid(7)) @db.Uuid
+  workspaceId          String    @db.Uuid
+  channelIntegrationId String    @db.Uuid
+  tokenHash            String    @unique
+  name                 String    @default("")
+  email                String    @default("")
+  contactId            String?   @db.Uuid
+  /// The page they were on when they last wrote, and their browser.
+  pageUrl              String    @default("")
+  userAgent            String    @default("")
+  lastSeenAt           DateTime  @default(now())
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @updatedAt
+
+  workspace     Workspace          @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  integration   ChannelIntegration @relation(fields: [channelIntegrationId], references: [id], onDelete: Cascade)
+  conversations Conversation[]
+
+  @@index([workspaceId, channelIntegrationId])
+  @@index([contactId])
 }
 
 model Message {
@@ -1630,7 +1679,7 @@ model ChannelIntegration {
   id           String           @id @default(uuid(7)) @db.Uuid
   workspaceId  String           @db.Uuid
   channel      Channel
-  /// meta_cloud | telegram_bot | twilio | manual
+  /// meta_cloud | telegram_bot | twilio | manual | web_widget
   provider     String
   name         String           @default("")
   status       ConnectionStatus @default(disconnected)
@@ -1651,6 +1700,7 @@ model ChannelIntegration {
 
   workspace     Workspace      @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   conversations Conversation[]
+  chatVisitors  ChatVisitor[]
 
   @@unique([provider, externalId])
   @@index([workspaceId, channel])

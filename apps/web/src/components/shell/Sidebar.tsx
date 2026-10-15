@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
+import { navigation, useActivePath } from "@/lib/stores/navigation";
 import { useEffect, useState } from "react";
 import { Check, ChevronDown, ChevronsUpDown, Plus } from "lucide-react";
 import { cn } from "@/lib/cn";
@@ -39,12 +40,18 @@ function WorkspaceSwitcher() {
       <DropdownMenuContent align="start" className="w-64">
         <DropdownMenuLabel>Workspaces</DropdownMenuLabel>
         {others.map((w) => (
-          <DropdownMenuItem key={w.id} onSelect={() => router.push(`/w/${w.id}`)} shortcut={w.id === ws.id ? <Check aria-hidden className="!size-3.5 !text-accent" /> : undefined}>
+          <DropdownMenuItem key={w.id} onSelect={() => {
+            navigation.start(`/w/${w.id}`);
+            router.push(`/w/${w.id}`);
+          }} shortcut={w.id === ws.id ? <Check aria-hidden className="!size-3.5 !text-accent" /> : undefined}>
             {w.name}
           </DropdownMenuItem>
         ))}
         <DropdownMenuSeparator />
-        <DropdownMenuItem icon={<Plus />} onSelect={() => router.push("/onboarding")}>
+        <DropdownMenuItem icon={<Plus />} onSelect={() => {
+          navigation.start("/onboarding");
+          router.push("/onboarding");
+        }}>
           New workspace
         </DropdownMenuItem>
       </DropdownMenuContent>
@@ -113,7 +120,8 @@ function NavLink({ item, active, badge, onNavigate }: { item: NavItem; active: b
 /** Primary navigation. Links a role cannot use are hidden. */
 export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
   const ws = useWorkspace();
-  const pathname = usePathname();
+  // The clicked item lights up at once, before its page has arrived.
+  const pathname = useActivePath(usePathname());
   const { collapsed, toggle } = useCollapsedGroups();
   // Open, unread, not-snoozed conversations for the Inbox link (the inbox's own changes refresh it via ws.key("inbox")).
   const unread = useApiQuery<InboxUnreadCount>(ws.key("inbox", "unread"), ws.can("inbox.read") ? ws.path("/inbox/unread-count") : null, { refetchInterval: 60_000 });
