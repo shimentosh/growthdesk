@@ -1,7 +1,7 @@
 import { Inject, Injectable, Logger } from "@nestjs/common";
 import { randomUUID } from "node:crypto";
 import type { z } from "zod";
-import type { SmtpMailboxInput, TestSendInput, UpdateMailboxInput } from "@growthdesk/shared";
+import { detectMailProvider, type SmtpMailboxInput, type TestSendInput, type UpdateMailboxInput } from "@growthdesk/shared";
 import { APP_CONFIG, type AppConfig } from "../config/config.js";
 import { PrismaService } from "../prisma/prisma.service.js";
 import type { Mailbox, Prisma } from "../generated/prisma/client.js";
@@ -17,7 +17,7 @@ import { actorId, ws, type RequestContext } from "../common/context.js";
 import { badRequest, conflict, notFound, tooMany } from "../common/errors.js";
 import { assertReachableTarget, isLocalHost, resolvePinnedTarget } from "./net-guard.js";
 import { verifyImap } from "./imap.js";
-import { domainAuth, systemResolver, type DnsResolver } from "./domain-auth.js";
+import { domainAuth, domainOf, lookupMx, systemResolver, type DnsResolver } from "./domain-auth.js";
 
 type SmtpMailboxInputT = z.infer<typeof SmtpMailboxInput>;
 type UpdateMailboxInputT = z.infer<typeof UpdateMailboxInput>;
@@ -240,9 +240,14 @@ export class MailboxesService {
   async remove(ctx: RequestContext, id: string) {
     const w = ws(ctx);
     const box = await this.find(w.id, id);
-    await this.prisma.db.mailbox.update({
-      where: { id: box.id, workspaceId: w.id },
-      data: { deletedAt: new Date(), status: "disconnected", secretSealed: null, oauthAccessSealed: null, oauthExpiresAt: null },
+    // Campaigns that chose it forget it too: a deleted mailbox can never send, and a link the
+    // Mailboxes tab no longer shows could not be cleared from there.
+    await this.prisma.db.$transaction(async (tx) => {
+      await tx.mailbox.update({
+        where: { id: box.id, workspaceId: w.id },
+        data: { deletedAt: new Date(), status: "disconnected", secretSealed: null, oauthAccessSealed: null, oauthExpiresAt: null },
+      });
+      await tx.campaignMailbox.deleteMany({ where: { workspaceId: w.id, mailboxId: box.id } });
     });
     dropTransport(box.id);
     await this.audit.record(ctx, { action: "mailbox.deleted", targetType: "mailbox", targetId: box.id, metadata: { email: box.email } });
@@ -350,6 +355,17 @@ export class MailboxesService {
     if (!box.imapEnabled || !box.imapHost) throw conflict("Reply tracking (IMAP) is off for this mailbox, so there is nothing to read.");
     await this.enqueueSync(w.id, box.id, true);
     return { queued: true };
+  }
+
+  /**
+   * Which provider an address is on, and the servers that go with it, for the
+   * connect dialog: free-mail domains by name, any other domain by its MX.
+   * Nothing is stored and no server is contacted beyond DNS.
+   */
+  async detect(email: string) {
+    const domain = domainOf(email);
+    const mx = domain ? await lookupMx(domain, this.resolver) : [];
+    return { email, domain, mx: mx.slice(0, 5), ...detectMailProvider(email, mx) };
   }
 
   async dns(ctx: RequestContext, id: string) {

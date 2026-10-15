@@ -50,6 +50,7 @@ import { Input, NativeSelect, Textarea } from "@/components/ui/Input";
 import { focusAt, spliceToken } from "@/components/templates/VariableMenu";
 import { BLOCK_META, BLOCK_TYPES, BlockTile, blockSummary, makeBlockId, problemBlockIndex, SOCIAL_LABEL } from "@/components/marketing/designs/blocks";
 import { Choice, ColorField, Slider, TokenMenu } from "@/components/marketing/designs/controls";
+import { ImageUrlField } from "@/components/marketing/designs/ImageUrlField";
 import { cn } from "@/lib/cn";
 
 /*
@@ -489,9 +490,15 @@ function BlockFields({
     case "image":
       return (
         <>
-          <Field label="Image URL" error={errors.src ?? (problem ? "Use the image's full address, like https://example.com/photo.jpg." : undefined)} hint="A public https:// address. JPG, PNG or GIF read well in every inbox.">
-            <Input type="url" inputMode="url" value={b.src} maxLength={2000} onChange={(e) => onChange({ src: e.target.value })} placeholder="https://example.com/photo.jpg" />
-          </Field>
+          <ImageUrlField
+            label="Image URL"
+            error={errors.src ?? (problem ? "Use the image's full address, like https://example.com/photo.jpg, or upload one." : undefined)}
+            hint="Upload an image (up to 1 MB) or paste a public https:// address. JPG, PNG or GIF read well in every inbox."
+            value={b.src}
+            onChange={(src) => onChange({ src })}
+            placeholder="https://example.com/photo.jpg"
+            disabled={disabled}
+          />
           <div className="grid gap-3 sm:grid-cols-2">
             <Field label="Description" error={errors.alt} hint="Read aloud by screen readers and shown when images are off.">
               <Input value={b.alt} maxLength={300} onChange={(e) => onChange({ alt: e.target.value })} placeholder="Our new dashboard on a laptop" />
@@ -531,9 +538,15 @@ function BlockFields({
               <Input value={b.tagline} maxLength={120} onChange={(e) => onChange({ tagline: e.target.value })} placeholder="Monthly product news" />
             </Field>
           </div>
-          <Field label="Logo URL" error={errors.logo} hint="Optional. A public https:// image about 32 px tall; a PNG with a transparent background works best.">
-            <Input type="url" inputMode="url" value={b.logo} maxLength={2000} onChange={(e) => onChange({ logo: e.target.value })} placeholder="https://example.com/logo.png" />
-          </Field>
+          <ImageUrlField
+            label="Logo URL"
+            error={errors.logo}
+            hint="Optional. An image about 32 px tall, uploaded or at a public https:// address; a PNG with a transparent background works best."
+            value={b.logo}
+            onChange={(logo) => onChange({ logo })}
+            placeholder="https://example.com/logo.png"
+            disabled={disabled}
+          />
           <div className="flex flex-wrap gap-x-5 gap-y-3">
             <Field label="Alignment">
               <Choice aria-label="Header alignment" value={b.align} disabled={disabled} onChange={(align) => onChange({ align })} options={ALIGN} />
@@ -573,9 +586,15 @@ function BlockFields({
           >
             <Textarea ref={textRef} rows={3} value={b.text} maxLength={2000} onChange={(e) => onChange({ text: e.target.value })} placeholder="One or two lines on why it matters." />
           </Field>
-          <Field label="Image URL" error={errors.image} hint="Optional. Shown under the text, full width.">
-            <Input type="url" inputMode="url" value={b.image} maxLength={2000} onChange={(e) => onChange({ image: e.target.value })} placeholder="https://example.com/hero.jpg" />
-          </Field>
+          <ImageUrlField
+            label="Image URL"
+            error={errors.image}
+            hint="Optional. Shown under the text, full width."
+            value={b.image}
+            onChange={(image) => onChange({ image })}
+            placeholder="https://example.com/hero.jpg"
+            disabled={disabled}
+          />
           <div className="grid gap-3 sm:grid-cols-2">
             <Field label="Button label" error={errors.buttonLabel} hint="Leave empty for no button.">
               <Input ref={labelRef} value={b.buttonLabel} maxLength={80} onChange={(e) => onChange({ buttonLabel: e.target.value })} placeholder="Find out more" />
@@ -635,9 +654,15 @@ function BlockFields({
                 <Field label="Text" error={errors[`items.${j}.text`]}>
                   <Textarea rows={2} value={it.text} maxLength={2000} onChange={(e) => setItem(j, { text: e.target.value })} placeholder="A short line about it." />
                 </Field>
-                <Field label="Image URL" error={errors[`items.${j}.image`]} hint="Optional.">
-                  <Input type="url" inputMode="url" value={it.image} maxLength={2000} onChange={(e) => setItem(j, { image: e.target.value })} placeholder="https://example.com/photo.jpg" />
-                </Field>
+                <ImageUrlField
+                  label="Image URL"
+                  error={errors[`items.${j}.image`]}
+                  hint="Optional."
+                  value={it.image}
+                  onChange={(image) => setItem(j, { image })}
+                  placeholder="https://example.com/photo.jpg"
+                  disabled={disabled}
+                />
                 <div className="grid gap-3 sm:grid-cols-2">
                   <Field label="Link label" error={errors[`items.${j}.linkLabel`]} hint="Optional.">
                     <Input value={it.linkLabel} maxLength={80} onChange={(e) => setItem(j, { linkLabel: e.target.value })} placeholder="Read more" />

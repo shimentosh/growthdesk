@@ -6,6 +6,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import {
   ArrowRight,
   BarChart3,
+  CalendarX,
   CircleAlert,
   CircleSlash,
   Copy,
@@ -255,6 +256,8 @@ function ReportActions({ campaign: c }: { campaign: MarketingCampaign }) {
   };
   const pause = useApiMutation<MarketingCampaign, void>({ path: mk.path(`${base}/pause`), success: "Campaign paused", onSuccess: accept });
   const resume = useApiMutation<MarketingCampaign, void>({ path: mk.path(`${base}/resume`), success: "Campaign resumed", onSuccess: accept });
+  // Back to a draft: the page then opens the editor.
+  const unschedule = useApiMutation<MarketingCampaign, void>({ path: mk.path(`${base}/unschedule`), success: "Campaign moved back to drafts", onSuccess: accept });
   const cancel = useApiMutation<MarketingCampaign, void>({ path: mk.path(`${base}/cancel`), success: "Campaign canceled", errorToast: false, onSuccess: accept });
   const duplicate = useApiMutation<MarketingCampaign, void>({
     path: mk.path(`${base}/duplicate`),
@@ -269,6 +272,11 @@ function ReportActions({ campaign: c }: { campaign: MarketingCampaign }) {
       {canSend && live && (
         <Button icon={<Pause />} loading={pause.isPending} onClick={() => pause.mutate()}>
           Pause
+        </Button>
+      )}
+      {canSend && c.status === "scheduled" && (
+        <Button icon={<CalendarX />} loading={unschedule.isPending} onClick={() => unschedule.mutate()}>
+          Unschedule
         </Button>
       )}
       {canSend && c.status === "paused" && (

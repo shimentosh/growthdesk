@@ -7,9 +7,12 @@ import { NotificationsService } from "../notifications/notifications.service.js"
 import { ActivityService } from "../crm/activity.service.js";
 import { ContactsService } from "../crm/contacts.service.js";
 import { SuppressionService } from "../crm/suppression.service.js";
+import { EnrollmentService, SKIP_LABELS, SKIP_REASONS } from "../campaigns/enrollment.service.js";
 import { Queues } from "../queues/queues.js";
+import { queueConfirmations } from "../marketing/double-opt-in.js";
 import { type Condition, type SubjectSnapshot, evaluateConditions } from "./conditions.js";
 import { type ParsedAction, parseAction } from "./actions.js";
+import { advanceStage } from "../crm/lifecycle.js";
 
 /** Runs at this depth or deeper (a workflow's action triggering another workflow, and so on) are not started. */
 export const MAX_WORKFLOW_DEPTH = 3;
@@ -17,6 +20,7 @@ export const MAX_WORKFLOW_DEPTH = 3;
 const MAX_ATTEMPTS = 3;
 /** A run left "running" this long was abandoned by a crashed worker. */
 const STALE_RUNNING_MS = 10 * 60_000;
+const FAILURE_ALERT_WINDOW_MS = 60 * 60_000;
 
 type ContactRow = Prisma.ContactGetPayload<{ include: { tags: { include: { tag: true } } } }>;
 type DealRow = Prisma.DealGetPayload<{ include: { stage: true } }>;
@@ -64,8 +68,9 @@ export class WorkflowExecutor {
     private readonly notifications: NotificationsService,
     private readonly activity: ActivityService,
     private readonly contacts: ContactsService,
-    private readonly suppression: SuppressionService,
     private readonly queues: Queues,
+    private readonly enrollment: EnrollmentService,
+    private readonly suppression: SuppressionService,
   ) {}
 
   /** Runs (or resumes) one run. Returns the status it was left in, or null when there was nothing to do. */
@@ -199,7 +204,10 @@ export class WorkflowExecutor {
       if (outcome.emitted) await this.events.kick();
       if (outcome.after) await outcome.after().catch((e) => this.log.warn(`run ${run.id} after-effect: ${e instanceof Error ? e.message : String(e)}`));
     }
-    return this.finish(run, "succeeded", log, "", actions.length);
+    // A run whose every action was skipped (no email, already enrolled…) did nothing: say so instead of "succeeded".
+    const ran = log.filter((e) => e.step === "action" && (e.status === "ok" || e.status === "skipped"));
+    const allSkipped = ran.length > 0 && ran.every((e) => e.status === "skipped");
+    return this.finish(run, allSkipped ? "skipped" : "succeeded", log, "", actions.length);
   }
 
   private async finish(run: WorkflowRun, status: "succeeded" | "failed" | "skipped" | "canceled", log: LogEntry[], error: string, actionIndex?: number, attempts?: number) {
@@ -223,12 +231,19 @@ export class WorkflowExecutor {
   }
 
   private async notifyFailure(ctx: RunContext, message: string) {
+    // One alert per workflow per hour: a big import into a broken workflow fails every run the same way.
+    const title = `Workflow "${ctx.workflow.name}" failed`;
+    const recent = await this.prisma.db.notification.findFirst({
+      where: { workspaceId: ctx.workspaceId, type: "workflow.failed", title, createdAt: { gt: new Date(Date.now() - FAILURE_ALERT_WINDOW_MS) } },
+      select: { id: true },
+    });
+    if (recent) return;
     const roles = await this.prisma.db.membership.findMany({ where: { workspaceId: ctx.workspaceId, role: { in: ["owner", "admin"] } }, select: { userId: true } });
     const ids = [...roles.map((r) => r.userId), ...(ctx.workflow.createdById ? [ctx.workflow.createdById] : [])];
     await this.notifications.notify(ctx.workspaceId, ids, {
       type: "workflow.failed",
-      title: `Workflow "${ctx.workflow.name}" failed`,
-      body: message.slice(0, 500),
+      title,
+      body: `${message.slice(0, 500)}\nFurther failures of this workflow in the next hour are in its run history, not notified.`,
       link: `/w/${ctx.workspaceId}/automation/runs?run=${ctx.run.id}`,
     });
   }
@@ -274,6 +289,12 @@ export class WorkflowExecutor {
         return this.stopCampaigns(tx, ctx, action.config);
       case "add_tag":
         return this.addTag(tx, ctx, action.config);
+      case "add_to_list":
+        return this.addToList(tx, ctx, action.config);
+      case "remove_from_list":
+        return this.removeFromList(tx, ctx, action.config);
+      case "hand_to_sales":
+        return this.handToSales(tx, ctx, action.config);
     }
   }
 
@@ -454,32 +475,21 @@ export class WorkflowExecutor {
     if (!contact) return this.noContact();
     const campaign = await tx.campaign.findFirst({ where: { id: config.campaignId, workspaceId: ctx.workspaceId, deletedAt: null } });
     if (!campaign) throw new PermanentActionError("The campaign this workflow enrolls into no longer exists");
-    if (campaign.status !== "running" && campaign.status !== "paused") {
-      throw new PermanentActionError(`The campaign "${campaign.name}" is ${campaign.status}; only running or paused campaigns take new contacts`);
+    if (campaign.status !== "running" && campaign.status !== "paused" && campaign.status !== "scheduled") {
+      throw new PermanentActionError(
+        campaign.status === "draft"
+          ? `The campaign "${campaign.name}" has not been launched yet; launch it (it may start empty when "Always on" is set)`
+          : `The campaign "${campaign.name}" is ${campaign.status} and takes no new contacts. Turn on "Always on" in a campaign's settings so it stays open for new leads`,
+      );
     }
-    const fresh = await tx.contact.findFirst({ where: { id: contact.id, workspaceId: ctx.workspaceId } });
-    const reason = !fresh || fresh.deletedAt
-      ? "the contact was deleted"
-      : fresh.doNotContact
-        ? "the contact is marked do-not-contact"
-        : fresh.unsubscribedAt
-          ? "the contact unsubscribed"
-          : fresh.bouncedAt
-            ? "the contact's email bounced"
-            : !fresh.email
-              ? "the contact has no email address"
-              : await this.suppression.check(ctx.workspaceId, { email: fresh.email, phone: fresh.phone }, tx);
-    if (reason) return { status: "skipped", detail: `Not enrolled: ${reason}` };
-    const created = await tx.enrollment.createMany({
-      data: [{ workspaceId: ctx.workspaceId, campaignId: campaign.id, contactId: contact.id, status: "active", position: 0, stepRun: 0, nextRunAt: new Date(), source: "automation" }],
-      skipDuplicates: true,
-    });
-    if (!created.count) return { status: "skipped", detail: `Already enrolled in "${campaign.name}"` };
-    await tx.campaign.update({ where: { id: campaign.id, workspaceId: ctx.workspaceId }, data: { enrolledCount: { increment: 1 } } });
-    await this.activity.log(
-      { workspaceId: ctx.workspaceId, contactId: contact.id, type: "campaign.enrolled", summary: `Enrolled in "${campaign.name}" by workflow "${ctx.workflow.name}"`, data: { campaignId: campaign.id, workflowId: ctx.workflow.id } },
-      tx,
-    );
+    // The same path as a manual enrollment: eligibility (email only when the first step is an email),
+    // the first step's delay, the daily new-contact limit and the gap between starts.
+    const res = await this.enrollment.enroll(ctx.workspaceId, campaign, [contact.id], { source: "automation", enrolledById: null });
+    if (!res.enrolled) {
+      const reason = SKIP_REASONS.find((r) => (res.skipped[r] ?? 0) > 0);
+      return { status: "skipped", detail: reason ? `Not enrolled: ${SKIP_LABELS[reason]}` : "Not enrolled" };
+    }
+    // EnrollmentService writes the contact's "Enrolled in the campaign" timeline entry.
     return { status: "ok", detail: `Enrolled in "${campaign.name}"`, data: { campaignId: campaign.id } };
   }
 
@@ -505,6 +515,134 @@ export class WorkflowExecutor {
     const names = [...new Set([...(config.tag ? [config.tag] : []), ...(config.tags ?? [])])];
     await this.contacts.tag(tx, ctx.workspaceId, [contact.id], names);
     return { status: "ok", detail: `Tagged ${names.join(", ")}`, data: { tags: names } };
+  }
+
+  /**
+   * Subscribes the contact to a lead list, as "Add to list" does: never
+   * re-adds someone who unsubscribed from it, refused consent or may not be
+   * contacted. Only people with marketing consent count against the plan's
+   * subscriber allowance (they are the ones marketing email reaches).
+   */
+  private async addToList(tx: Tx, ctx: RunContext, config: Extract<ParsedAction, { type: "add_to_list" }>["config"]): Promise<ActionOutcome> {
+    const contact = ctx.contact;
+    if (!contact) return this.noContact();
+    const list = await tx.marketingList.findFirst({ where: { id: config.listId, workspaceId: ctx.workspaceId } });
+    if (!list) throw new PermanentActionError("The list this workflow adds to no longer exists");
+    if (list.archivedAt) throw new PermanentActionError(`The list "${list.name}" is archived; restore it to add people`);
+    const fresh = await tx.contact.findFirst({ where: { id: contact.id, workspaceId: ctx.workspaceId, deletedAt: null } });
+    if (!fresh) return { status: "skipped", detail: "The contact was deleted" };
+    const held = await tx.listMembership.findFirst({ where: { workspaceId: ctx.workspaceId, listId: list.id, contactId: fresh.id }, select: { id: true, status: true } });
+    if (held?.status === "subscribed") return { status: "skipped", detail: `Already on "${list.name}"` };
+    if (held?.status === "unsubscribed") return { status: "skipped", detail: `Unsubscribed from "${list.name}"; not re-added` };
+    const reason = fresh.doNotContact
+      ? "marked do-not-contact"
+      : fresh.consentStatus === "denied"
+        ? "refused marketing consent"
+        : fresh.email
+          ? await this.suppression.check(ctx.workspaceId, { email: fresh.email }, tx, "marketing")
+          : null;
+    if (reason) return { status: "skipped", detail: `Not added: ${reason}` };
+
+    // A double opt-in list takes someone without recorded consent as pending and emails them a link;
+    // list.subscribed waits for their confirmation (DoubleOptInService). Still pending: the email goes again, at most once a day.
+    if (list.doubleOptIn && fresh.consentStatus !== "granted") {
+      if (!fresh.email) return { status: "skipped", detail: `Not added: "${list.name}" asks people to confirm by email, and the contact has no email address` };
+      const pending =
+        held ??
+        (await tx.listMembership.create({ data: { workspaceId: ctx.workspaceId, listId: list.id, contactId: fresh.id, status: "pending", source: `Workflow "${ctx.workflow.name}"`.slice(0, 200) }, select: { id: true, status: true } }));
+      if (!held) {
+        await this.activity.log(
+          { workspaceId: ctx.workspaceId, contactId: fresh.id, actorId: null, type: "marketing.pending", summary: `Added to the list ${list.name} by workflow "${ctx.workflow.name}"; waiting for them to confirm by email`, data: { listId: list.id, workflowId: ctx.workflow.id } },
+          tx,
+        );
+      }
+      return {
+        status: "ok",
+        detail: held ? `Still waiting to confirm "${list.name}"` : `Added to "${list.name}"; waiting for them to confirm by email`,
+        data: { listId: list.id, pending: true },
+        after: () => queueConfirmations(this.queues, ctx.workspaceId, [pending.id]),
+      };
+    }
+
+    if (fresh.email && fresh.consentStatus === "granted") {
+      const counted = await tx.listMembership.findFirst({ where: { workspaceId: ctx.workspaceId, contactId: fresh.id, status: "subscribed" }, select: { id: true } });
+      if (!counted) {
+        const workspace = await tx.workspace.findUniqueOrThrow({ where: { id: ctx.workspaceId }, select: { billingAccountId: true } });
+        try {
+          await this.entitlements.assertCapacityIn(tx, workspace.billingAccountId, "marketingContacts", 1);
+        } catch (e) {
+          throw new PermanentActionError(e instanceof Error ? e.message : "The plan's subscriber allowance is used up");
+        }
+      }
+    }
+
+    const now = new Date();
+    const source = `Workflow "${ctx.workflow.name}"`.slice(0, 200);
+    if (held) await tx.listMembership.update({ where: { id: held.id, workspaceId: ctx.workspaceId }, data: { status: "subscribed", source, subscribedAt: now, unsubscribedAt: null } });
+    else await tx.listMembership.create({ data: { workspaceId: ctx.workspaceId, listId: list.id, contactId: fresh.id, status: "subscribed", source, subscribedAt: now } });
+    await this.activity.log(
+      { workspaceId: ctx.workspaceId, contactId: fresh.id, actorId: null, type: "marketing.subscribed", summary: `Added to the list ${list.name} by workflow "${ctx.workflow.name}"`, data: { listId: list.id, workflowId: ctx.workflow.id } },
+      tx,
+    );
+    await this.events.emitIn(tx, {
+      workspaceId: ctx.workspaceId,
+      type: "list.subscribed",
+      subjectType: "contact",
+      subjectId: fresh.id,
+      payload: this.eventPayload(ctx, { contactId: fresh.id, listId: list.id, listName: list.name, source: "workflow" }),
+    });
+    return { status: "ok", detail: `Added to "${list.name}"`, data: { listId: list.id }, emitted: true };
+  }
+
+  /**
+   * Takes the contact off a list. An unsubscribe is kept as it is (it is the
+   * person's own choice and stops a later re-add); anything else is removed,
+   * as "Remove from list" on the list page does.
+   */
+  private async removeFromList(tx: Tx, ctx: RunContext, config: Extract<ParsedAction, { type: "remove_from_list" }>["config"]): Promise<ActionOutcome> {
+    const contact = ctx.contact;
+    if (!contact) return this.noContact();
+    const list = await tx.marketingList.findFirst({ where: { id: config.listId, workspaceId: ctx.workspaceId } });
+    if (!list) throw new PermanentActionError("The list this workflow removes from no longer exists");
+    const held = await tx.listMembership.findFirst({ where: { workspaceId: ctx.workspaceId, listId: list.id, contactId: contact.id }, select: { id: true, status: true } });
+    if (!held) return { status: "skipped", detail: `Not on "${list.name}"` };
+    if (held.status === "unsubscribed") return { status: "skipped", detail: `Already unsubscribed from "${list.name}"` };
+    await tx.listMembership.delete({ where: { id: held.id, workspaceId: ctx.workspaceId } });
+    await this.activity.log(
+      { workspaceId: ctx.workspaceId, contactId: contact.id, actorId: null, type: "marketing.removed", summary: `Removed from the list ${list.name} by workflow "${ctx.workflow.name}"`, data: { listId: list.id, workflowId: ctx.workflow.id } },
+      tx,
+    );
+    return { status: "ok", detail: `Removed from "${list.name}"`, data: { listId: list.id } };
+  }
+
+  /**
+   * Marketing → sales, as "Transfer to sales" does: the stage moves to In
+   * sales (never back from Contact), an unqualified lead counts as qualified,
+   * outreach sequences stop so a rep is not talking over them, and by default
+   * the owner gets a task.
+   */
+  private async handToSales(tx: Tx, ctx: RunContext, config: Extract<ParsedAction, { type: "hand_to_sales" }>["config"]): Promise<ActionOutcome> {
+    const contact = ctx.contact;
+    if (!contact) return this.noContact();
+    const fresh = await tx.contact.findFirst({ where: { id: contact.id, workspaceId: ctx.workspaceId, deletedAt: null }, select: { id: true, archivedAt: true } });
+    if (!fresh) return { status: "skipped", detail: "The contact was deleted" };
+    if (fresh.archivedAt) return { status: "skipped", detail: "The contact is archived" };
+    const moved = await advanceStage(tx, ctx.workspaceId, [fresh.id], "sales");
+    await tx.contact.updateMany({ where: { workspaceId: ctx.workspaceId, id: fresh.id, qualification: { in: ["unqualified", "qualifying"] } }, data: { qualification: "qualified" } });
+    const stopped = await tx.enrollment.updateMany({
+      where: { workspaceId: ctx.workspaceId, contactId: fresh.id, status: { in: ["active", "paused"] } },
+      data: { status: "stopped", stopReason: "Handed to sales", nextRunAt: null },
+    });
+    if (moved) {
+      await this.activity.log(
+        { workspaceId: ctx.workspaceId, contactId: fresh.id, actorId: null, type: "contact.stage_changed", summary: `Handed to sales by workflow "${ctx.workflow.name}"`, data: { to: "sales", workflowId: ctx.workflow.id } },
+        tx,
+      );
+    }
+    const detail = [moved ? "Moved to In sales" : "Already in sales or a contact", stopped.count ? `stopped ${stopped.count} sequence${stopped.count === 1 ? "" : "s"}` : null].filter(Boolean).join("; ");
+    if (!config.createTask) return { status: "ok", detail, data: { moved: moved > 0, stopped: stopped.count } };
+    const task = await this.createTask(tx, ctx, { title: config.taskTitle, type: "follow_up", priority: "high", dueInMinutes: config.dueInMinutes, assignTo: "owner" });
+    return { ...task, detail: `${detail}; ${task.detail}`, data: { ...task.data, moved: moved > 0, stopped: stopped.count } };
   }
 
   // ─── Sweeps ────────────────────────────────────────────────────────────────

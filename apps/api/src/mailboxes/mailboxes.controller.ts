@@ -8,6 +8,8 @@ import type { RequestContext } from "../common/context.js";
 import { MailboxesService } from "./mailboxes.service.js";
 import { MailboxOAuthService } from "./mailbox-oauth.service.js";
 
+const DetectQuery = z.object({ email: z.string().trim().toLowerCase().email().max(320) });
+
 @ApiTags("mailboxes")
 @Controller("workspaces/:workspaceId/mailboxes")
 export class MailboxesController {
@@ -26,6 +28,14 @@ export class MailboxesController {
   @Post("smtp")
   connectSmtp(@Ctx() ctx: RequestContext, @Body(SmtpMailboxInput) body: z.infer<typeof SmtpMailboxInput>) {
     return this.mailboxes.connectSmtp(ctx, body);
+  }
+
+  /** The provider behind an address and its servers, for the connect dialog. Declared before :id. */
+  @Permission("integrations.manage")
+  @Get("detect")
+  async detect(@Query(DetectQuery) q: z.infer<typeof DetectQuery>) {
+    const [found, oauth] = await Promise.all([this.mailboxes.detect(q.email), this.oauth.available()]);
+    return { ...found, oauth };
   }
 
   @Permission("integrations.manage")

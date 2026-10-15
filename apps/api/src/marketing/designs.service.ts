@@ -42,9 +42,17 @@ export class DesignsService {
     return dto(await this.find(ctx, id));
   }
 
-  async create(ctx: RequestContext, input: z.infer<typeof EmailDesignInput>) {
+  /** `libraryKey`: the template library entry it was copied from (design-library). */
+  async create(ctx: RequestContext, input: z.infer<typeof EmailDesignInput>, libraryKey?: string) {
     const row = await this.prisma.db.emailDesign.create({
-      data: { workspaceId: ws(ctx).id, name: input.name, blocks: (input.blocks ?? starterBlocks(shortId)) as never, theme: (input.theme ?? {}) as never, createdById: actorId(ctx) },
+      data: {
+        workspaceId: ws(ctx).id,
+        name: input.name,
+        blocks: (input.blocks ?? starterBlocks(shortId)) as never,
+        theme: (input.theme ?? {}) as never,
+        createdById: actorId(ctx),
+        ...(libraryKey ? { libraryKey } : {}),
+      },
     });
     return dto(row);
   }

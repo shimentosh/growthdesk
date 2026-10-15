@@ -12,8 +12,17 @@ import { badRequest, conflict, notFound } from "../common/errors.js";
 import { actorId, ws, type RequestContext } from "../common/context.js";
 import { checkDomain, DnsResolver, domainVerified, type DomainChecks } from "./dns.js";
 import { dropEspTransport, sesHost, verifyEsp, type EspSmtp } from "./esp.js";
+import { resendCheckKey, resendEnsureDomain, resendVerifyDomain } from "./resend.js";
+import { ProviderError } from "../platform-mail/provider.js";
+import type { ResendDomain } from "../platform-mail/resend.provider.js";
 
 type EspSettings = { host: string; port: number; security: "ssl" | "starttls" | "none"; username: string; region?: string };
+
+const RESEND_HOST = "api.resend.com";
+
+/** A Resend refusal as the 400 the form shows. */
+const resendError = (e: unknown, what: string) =>
+  e instanceof ProviderError ? badRequest(`${what}: ${e.message}`) : e;
 
 /*
  * Marketing's sending setup: the workspace's email service (ESP) and its
@@ -60,6 +69,7 @@ export class MarketingSetupService {
     const s = c.settings as EspSettings;
     const password = c.secretSealed ? open(c.secretSealed) : "";
     if (password === null) return null;
+    if (c.provider === "resend") return { connectionId: c.id, host: RESEND_HOST, port: 443, security: "ssl", username: "", password: "", allowSelfSigned: false, resendKey: password };
     return {
       connectionId: c.id,
       host: s.host,
@@ -84,6 +94,7 @@ export class MarketingSetupService {
     const w = ws(ctx);
     await this.entitlements.assertFeature(w.billingAccountId, "marketing");
     const current = await this.prisma.db.espConnection.findUnique({ where: { workspaceId: w.id } });
+    if (input.provider === "resend") return this.connectResend(ctx, input, current);
 
     const settings: EspSettings =
       input.provider === "ses"
@@ -107,6 +118,41 @@ export class MarketingSetupService {
     if (current) dropEspTransport(current.id);
     await this.audit.record(ctx, { action: "marketing.esp_connected", targetType: "esp_connection", targetId: row.id, metadata: { provider: input.provider, host: settings.host } });
     return this.espDto(row);
+  }
+
+  /**
+   * Resend: the API key is checked against /domains (it must be a Full access
+   * key, since domains are created with it) and sealed like a password.
+   */
+  private async connectResend(ctx: RequestContext, input: Extract<z.infer<typeof EspConnectionInput>, { provider: "resend" }>, current: EspConnection | null) {
+    const w = ws(ctx);
+    const key = input.apiKey ?? (current?.provider === "resend" && current.secretSealed ? open(current.secretSealed) : null);
+    if (!key) throw badRequest("Enter a Resend API key", { apiKey: "Required" });
+    try {
+      await resendCheckKey(key);
+    } catch (e) {
+      throw resendError(e, "Resend refused the key");
+    }
+    const settings: EspSettings = { host: RESEND_HOST, port: 443, security: "ssl", username: "", region: input.region };
+    const data = { provider: "resend" as const, settings, secretSealed: seal(key), status: "connected" as const, lastError: "", lastCheckedAt: new Date() };
+    const row = current
+      ? await this.prisma.db.espConnection.update({ where: { workspaceId: w.id }, data })
+      : await this.prisma.db.espConnection.create({ data: { ...data, workspaceId: w.id, webhookToken: newToken(24), createdById: actorId(ctx) } });
+    if (current) dropEspTransport(current.id);
+    await this.audit.record(ctx, { action: "marketing.esp_connected", targetType: "esp_connection", targetId: row.id, metadata: { provider: "resend", region: input.region } });
+    return this.espDto(row);
+  }
+
+  /** The workspace's Resend key and region, when Resend is its email service. */
+  private async resendOf(workspaceId: string) {
+    const c = await this.prisma.db.espConnection.findUnique({ where: { workspaceId } });
+    if (c?.provider !== "resend" || !c.secretSealed) return null;
+    const key = open(c.secretSealed);
+    return key ? { key, region: (c.settings as EspSettings).region ?? "us-east-1" } : null;
+  }
+
+  private espDomainData(r: ResendDomain) {
+    return { espDomainId: r.id, espStatus: r.status, espRecords: r.records as never, dkimSelectors: ["resend"] };
   }
 
   async disconnectEsp(ctx: RequestContext) {
@@ -138,6 +184,8 @@ export class MarketingSetupService {
         ownership: { type: "TXT", name: `_growthdesk.${d.domain}`, value: `growthdesk-verification=${d.verificationToken}` },
         dmarc: { type: "TXT", name: `_dmarc.${d.domain}`, value: `v=DMARC1; p=none; rua=mailto:dmarc@${d.domain}` },
       },
+      /** The email service's own view, when it manages the domain (Resend): its status and the records it asks for. */
+      esp: d.espDomainId ? { status: d.espStatus, records: d.espRecords as unknown as ResendDomain["records"] } : null,
       lastCheckedAt: d.lastCheckedAt,
       verifiedAt: d.verifiedAt,
       pausedAt: d.pausedAt,
@@ -163,9 +211,19 @@ export class MarketingSetupService {
     const existing = await this.prisma.db.sendingDomain.findUnique({ where: { workspaceId_domain: { workspaceId: w.id, domain: input.domain } } });
     if (existing && !existing.deletedAt) throw conflict(`${input.domain} is already added.`, { domain: "Already added" });
     await this.entitlements.assertCapacity(w.billingAccountId, "sendingDomains");
+    // With Resend the domain is created there first: it generates the DKIM key and says which records to publish.
+    const resend = await this.resendOf(w.id);
+    let managed: ReturnType<typeof this.espDomainData> | null = null;
+    if (resend) {
+      try {
+        managed = this.espDomainData(await resendEnsureDomain(resend.key, input.domain, resend.region));
+      } catch (e) {
+        throw resendError(e, `Resend could not add ${input.domain}`);
+      }
+    }
     const row = existing
-      ? await this.prisma.db.sendingDomain.update({ where: { id: existing.id, workspaceId: w.id }, data: { deletedAt: null, status: "pending", dkimSelectors: input.dkimSelectors, checks: {}, verifiedAt: null, pausedAt: null, pausedReason: "" } })
-      : await this.prisma.db.sendingDomain.create({ data: { workspaceId: w.id, domain: input.domain, verificationToken: newToken(18), dkimSelectors: input.dkimSelectors, createdById: actorId(ctx) } });
+      ? await this.prisma.db.sendingDomain.update({ where: { id: existing.id, workspaceId: w.id }, data: { deletedAt: null, status: "pending", dkimSelectors: input.dkimSelectors, checks: {}, verifiedAt: null, pausedAt: null, pausedReason: "", espDomainId: null, espStatus: "", espRecords: [], ...managed } })
+      : await this.prisma.db.sendingDomain.create({ data: { workspaceId: w.id, domain: input.domain, verificationToken: newToken(18), dkimSelectors: input.dkimSelectors, createdById: actorId(ctx), ...managed } });
     await this.audit.record(ctx, { action: "marketing.domain_added", targetType: "sending_domain", targetId: row.id, metadata: { domain: row.domain } });
     return this.domainDto(row);
   }
@@ -188,6 +246,8 @@ export class MarketingSetupService {
   /** Looks the DNS records up again and updates the status. */
   async verifyDomain(ctx: RequestContext, id: string) {
     const d = await this.findDomain(ctx, id);
+    const resend = await this.resendOf(d.workspaceId);
+    if (resend) return this.verifyResendDomain(d, resend);
     let checks: DomainChecks;
     if (this.skipDns()) {
       // Same expected records as a real check, every one marked as passing.
@@ -207,6 +267,47 @@ export class MarketingSetupService {
         lastCheckedAt: now,
         status: verified ? "verified" : d.status === "verified" ? "failed" : "pending",
         verifiedAt: verified ? (d.verifiedAt ?? now) : null,
+      },
+    });
+    return this.domainDto(row);
+  }
+
+  /**
+   * A Resend-managed domain: Resend checks its own records (SPF on the send
+   * subdomain, DKIM at resend._domainkey), which also proves control of the
+   * domain, so it stands in for our ownership TXT. DMARC is still read from
+   * DNS here — Resend does not require it, inbox providers do. A domain added
+   * before Resend was connected is created there now.
+   */
+  private async verifyResendDomain(d: SendingDomain, resend: { key: string; region: string }) {
+    let r: ResendDomain;
+    try {
+      r = d.espDomainId ? await resendVerifyDomain(resend.key, d.espDomainId) : await resendEnsureDomain(resend.key, d.domain, resend.region);
+      if (!d.espDomainId) r = await resendVerifyDomain(resend.key, r.id);
+    } catch (e) {
+      throw resendError(e, `Resend could not check ${d.domain}`);
+    }
+    const kind = (k: string) => r.records.filter((x) => x.record.toUpperCase() === k);
+    const verified = (rows: ResendDomain["records"]) => rows.length > 0 && rows.every((x) => x.status === "verified");
+    const show = (rows: ResendDomain["records"]) => rows.map((x) => `${x.type} ${x.name}: ${x.status || "not checked"}`);
+    const dns = this.skipDns() ? null : await checkDomain(this.dns, d.domain, d.verificationToken, []);
+    const skipped = ["skipped in development (MARKETING_SKIP_DNS_CHECKS)"];
+    const checks: DomainChecks = {
+      ownership: { ok: r.status === "verified", found: [`Resend: ${r.status || "unknown"}`], expected: "Resend verifies the domain (its DKIM and SPF records)", required: true },
+      dkim: { ok: verified(kind("DKIM")), found: show(kind("DKIM")), expected: "The DKIM record Resend generated", required: true },
+      dmarc: dns ? dns.dmarc : { ok: true, found: skipped, expected: `TXT _dmarc.${d.domain} = v=DMARC1; p=none`, required: true },
+      spf: { ok: verified(kind("SPF")), found: show(kind("SPF")), expected: "The SPF records Resend asks for", required: false },
+    };
+    const ok = domainVerified(checks);
+    const now = new Date();
+    const row = await this.prisma.db.sendingDomain.update({
+      where: { id: d.id, workspaceId: d.workspaceId },
+      data: {
+        ...this.espDomainData(r),
+        checks: checks as never,
+        lastCheckedAt: now,
+        status: ok ? "verified" : d.status === "verified" ? "failed" : "pending",
+        verifiedAt: ok ? (d.verifiedAt ?? now) : null,
       },
     });
     return this.domainDto(row);

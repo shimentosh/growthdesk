@@ -16,7 +16,8 @@ import { ApiError, get, messageOf, post } from "@/lib/api";
  * opt-out happens only when the person presses the button (a POST — the same
  * endpoint a mail app's RFC 8058 one-click unsubscribe uses). The visitor is
  * an email recipient, not a Growthdesk user, so nothing here asks them to
- * sign in or points them into the app.
+ * sign in or points them into the app. A campaign's test send links to
+ * /unsubscribe/test (no token): the page says so and asks the API nothing.
  */
 
 function Frame({ title, children }: { title: string; children: ReactNode }) {
@@ -31,6 +32,7 @@ export function Unsubscribe({ token }: { token: string }) {
     queryKey: ["unsubscribe", token],
     queryFn: ({ signal }) => get<UnsubscribeDetails>(`${path}/details`, { signal, noAuthRedirect: true }),
     retry: false,
+    enabled: token !== "test",
   });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -46,6 +48,14 @@ export function Unsubscribe({ token }: { token: string }) {
     } finally {
       setBusy(false);
     }
+  }
+
+  if (token === "test") {
+    return (
+      <Frame title="Unsubscribe">
+        <Callout tone="info">This is a test email, so there is nothing to unsubscribe from. Nothing was changed.</Callout>
+      </Frame>
+    );
   }
 
   if (details.isPending) return <LoadingBlock label="Opening your unsubscribe link…" />;

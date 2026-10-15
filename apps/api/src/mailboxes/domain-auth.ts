@@ -438,6 +438,15 @@ function within<T>(work: Promise<T>, fallback: T): Promise<T> {
 
 const DOMAIN_RE = /^(?=.{1,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,}$/;
 
+/** The domain's mail servers, lowest priority first; [] when there are none or the lookup fails or times out. */
+export function lookupMx(domain: string, resolver: DnsResolver = systemResolver): Promise<string[]> {
+  if (!domain) return Promise.resolve([]);
+  return within(
+    resolver.mx(domain).then((rows) => [...rows].sort((a, b) => a.priority - b.priority).map((r) => r.exchange)),
+    [] as string[],
+  );
+}
+
 /** The domain of an address, or "" when there is nothing lookup-able in it. */
 export function domainOf(email: string) {
   const host = (email.split("@")[1] ?? "").trim().toLowerCase().replace(/\.$/, "");

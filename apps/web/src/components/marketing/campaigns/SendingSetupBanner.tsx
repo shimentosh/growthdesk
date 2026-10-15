@@ -17,7 +17,7 @@ export function SendingSetupBanner({ className }: { className?: string }) {
   if (connected && verified) return null;
   const title = !connected ? "Connect an email service to start sending" : "Verify a sending domain to start sending";
   const body = !connected
-    ? "Campaigns go out through your own email service (Amazon SES or any SMTP relay). You can write and test drafts in the meantime."
+    ? "Campaigns go out through your own email service (Resend, Amazon SES or any SMTP relay). You can write and test drafts in the meantime."
     : domains.some((d) => d.pausedAt)
       ? "Every verified domain is paused. Review it before sending more."
       : "Add the domain your emails come from and its DNS records, so inboxes trust them.";

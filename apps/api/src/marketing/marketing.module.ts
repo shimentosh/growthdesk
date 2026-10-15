@@ -9,6 +9,8 @@ import { DesignsService } from "./designs.service.js";
 import { MarketingCampaignsService } from "./campaigns.service.js";
 import { MarketingSenderService } from "./sender.service.js";
 import { MarketingPublicService } from "./public.service.js";
+import { MarketingAssetsService } from "./assets.service.js";
+import { DoubleOptInService } from "./double-opt-in.service.js";
 
 /**
  * Email marketing (docs/PRODUCT_PLAN.md §2.4): lists, sending setup, designs,
@@ -17,7 +19,7 @@ import { MarketingPublicService } from "./public.service.js";
  */
 @Module({
   controllers: [MarketingController, MarketingPublicController],
-  providers: [DnsResolver, AudienceService, ListsService, MarketingSetupService, DesignsService, MarketingCampaignsService, MarketingSenderService, MarketingPublicService],
-  exports: [DnsResolver, ListsService, MarketingCampaignsService, MarketingSenderService, MarketingPublicService],
+  providers: [DnsResolver, AudienceService, ListsService, MarketingSetupService, DesignsService, MarketingCampaignsService, MarketingSenderService, MarketingPublicService, MarketingAssetsService, DoubleOptInService],
+  exports: [DnsResolver, ListsService, DesignsService, MarketingCampaignsService, MarketingSenderService, MarketingPublicService, DoubleOptInService],
 })
 export class MarketingModule {}

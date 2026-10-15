@@ -141,6 +141,7 @@ function ListWorkspace({ list }: { list: MarketingList }) {
   });
 
   const total = list.counts.subscribed + list.counts.unsubscribed + list.counts.pending;
+  const showPending = list.doubleOptIn || list.counts.pending > 0 || state.status === "pending";
   const filtered = Boolean(state.q || state.status);
 
   let body: ReactNode;
@@ -325,7 +326,8 @@ function ListWorkspace({ list }: { list: MarketingList }) {
         </Callout>
       )}
 
-      <div className="mb-5 grid grid-cols-1 gap-3 sm:grid-cols-3">
+      {/* "Pending" is set by double opt-in: it shows on such a list, or while anyone is still waiting to confirm. */}
+      <div className={cn("mb-5 grid grid-cols-1 gap-3", showPending ? "sm:grid-cols-3" : "sm:grid-cols-2")}>
         <StatCard
           label="Subscribed"
           value={formatNumber(list.counts.subscribed)}
@@ -342,12 +344,21 @@ function ListWorkspace({ list }: { list: MarketingList }) {
           tint="gray"
           href={toUrl({ status: "unsubscribed" })}
         />
-        <StatCard label="Pending" value={formatNumber(list.counts.pending)} hint="Waiting to confirm" icon={<Clock />} tint="orange" href={toUrl({ status: "pending" })} />
+        {showPending && (
+          <StatCard
+            label="Pending"
+            value={formatNumber(list.counts.pending)}
+            hint={list.doubleOptIn ? "Emailed a link; joins once they confirm" : "Waiting to confirm"}
+            icon={<Clock />}
+            tint="orange"
+            href={toUrl({ status: "pending" })}
+          />
+        )}
       </div>
 
       <div className="mb-3 flex flex-col gap-2 lg:flex-row lg:items-center">
         <div role="tablist" aria-label="Status" className="-mx-1 flex gap-1 overflow-x-auto px-1 pb-1 lg:pb-0">
-          {(["", ...LIST_MEMBERSHIP_STATUSES] as const).map((s) => {
+          {(["", ...LIST_MEMBERSHIP_STATUSES] as const).filter((s) => s !== "pending" || showPending).map((s) => {
             const n = s ? list.counts[s] : total;
             return (
               <button

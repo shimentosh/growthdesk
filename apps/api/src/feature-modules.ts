@@ -20,6 +20,7 @@ import { AnalyticsModule } from "./analytics/analytics.module.js";
 import { AdminModule } from "./admin/admin.module.js";
 import { RevenueModule } from "./revenue/revenue.module.js";
 import { MarketingModule } from "./marketing/marketing.module.js";
+import { DesignLibraryModule } from "./design-library/design-library.controller.js";
 import { SiteModule } from "./site/site.controller.js";
 import { PlatformMailModule } from "./platform-mail/platform-mail.module.js";
 import { PlatformGrowthModule } from "./platform-growth/platform-growth.module.js";
@@ -51,6 +52,7 @@ export const FEATURE_MODULES = [
   AdminModule,
   RevenueModule,
   MarketingModule,
+  DesignLibraryModule,
   SiteModule,
   PlatformGrowthModule,
   LifecycleModule,

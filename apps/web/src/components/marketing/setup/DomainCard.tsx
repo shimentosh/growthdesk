@@ -35,7 +35,24 @@ function parseExpected(expected: string | undefined): { name: string; value: str
   return m?.[1] && m[2] ? { name: m[1], value: m[2] } : null;
 }
 
+/** Resend's per-record status as a ✓ / ✗ / not-yet. */
+const espOk = (status: string) => (status === "verified" ? true : status === "failed" || status === "temporary_failure" ? false : undefined);
+
 function recordsOf(d: SendingDomain, esp: EspConnection | null): Row[] {
+  if (d.esp) {
+    // Resend's own records (SPF on its send subdomain, DKIM at resend._domainkey), then our DMARC.
+    const rows: Row[] = d.esp.records.map((r, i): Row => ({
+      key: `esp-${i}`,
+      label: r.record || r.type,
+      type: r.priority !== null ? `${r.type} · ${r.priority}` : r.type,
+      name: r.name,
+      value: r.value,
+      ok: espOk(r.status),
+      required: ["SPF", "DKIM"].includes(r.record.toUpperCase()),
+    }));
+    rows.push({ key: "dmarc", label: "DMARC", type: d.records.dmarc.type, name: d.records.dmarc.name, value: d.records.dmarc.value, check: d.checks.dmarc, required: true });
+    return rows;
+  }
   const ses = esp?.provider === "ses";
   const dkim = d.checks.dkim;
   const rows: Row[] = [
@@ -182,10 +199,14 @@ export function DomainCard({ domain: d, esp, canManage }: { domain: SendingDomai
                   <IconButton size="sm" label="Domain actions" icon={<Ellipsis />} />
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end">
-                  <DropdownMenuItem icon={<Pencil />} onSelect={() => setEditing(true)}>
-                    Edit DKIM selectors
-                  </DropdownMenuItem>
-                  <DropdownMenuSeparator />
+                  {!d.esp && (
+                    <>
+                      <DropdownMenuItem icon={<Pencil />} onSelect={() => setEditing(true)}>
+                        Edit DKIM selectors
+                      </DropdownMenuItem>
+                      <DropdownMenuSeparator />
+                    </>
+                  )}
                   <DropdownMenuItem danger icon={<Trash2 />} onSelect={() => setConfirm(true)}>
                     Delete domain
                   </DropdownMenuItem>
@@ -229,7 +250,7 @@ export function DomainCard({ domain: d, esp, canManage }: { domain: SendingDomai
         {rows.map((r) => (
           <RecordRow key={r.key} row={r} />
         ))}
-        {d.dkimSelectors.length === 0 && (
+        {!d.esp && d.dkimSelectors.length === 0 && (
           <li className="flex flex-wrap items-center gap-x-3 gap-y-2 px-4 py-3">
             <span className="flex items-center gap-2">
               <span className="flex text-bad-ink">
@@ -247,7 +268,9 @@ export function DomainCard({ domain: d, esp, canManage }: { domain: SendingDomai
         )}
       </ul>
       <p className="rounded-b-xl border-t border-line px-4 py-2.5 text-xs text-text-3">
-        Ownership, DKIM and DMARC are required. DNS changes can take a while to spread, so verify again after publishing a record.
+        {d.esp
+          ? `Resend checks its own records; DMARC is required too. Names are relative to your DNS zone — most DNS panels add the domain themselves. Resend status: ${d.esp.status || "not checked"}.`
+          : "Ownership, DKIM and DMARC are required. DNS changes can take a while to spread, so verify again after publishing a record."}
       </p>
 
       {canManage && <SelectorsModal open={editing} onOpenChange={setEditing} domain={d} />}

@@ -1,14 +1,21 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useState, type FormEvent } from "react";
+import { Send } from "lucide-react";
+import { labelOf } from "@growthdesk/shared";
 import { Button } from "@/components/ui/Button";
 import { Callout } from "@/components/ui/Callout";
 import { Card, CardBody } from "@/components/ui/Card";
-import { FormError } from "@/components/ui/Field";
+import { Modal } from "@/components/ui/Dialog";
+import { Field, FormError } from "@/components/ui/Field";
+import { Input } from "@/components/ui/Input";
+import { toast } from "@/components/ui/Toast";
+import { ContactPicker, contactLabel } from "@/components/pickers/Pickers";
 import { StepsEditor } from "@/components/sequences/StepsEditor";
-import { useWorkspace } from "@/lib/session";
-import type { CampaignDetail } from "@/lib/types/campaigns";
+import { useApiMutation } from "@/lib/query";
+import { useMe, useWorkspace } from "@/lib/session";
+import type { CampaignDetail, StepTestBody, StepTestResult } from "@/lib/types/campaigns";
 import { cleanSteps, stepsOf, type SequenceStep } from "@/lib/types/sequences";
 import { lockedReason, useCampaignPatch } from "./common";
 
@@ -34,6 +41,22 @@ export function CampaignSteps({ campaign }: { campaign: CampaignDetail }) {
   const startedBefore = campaign.status === "paused" && campaign.stats.enrolled > 0;
   const restructured = startedBefore && dirty && changesStructure(baseline, steps);
   const fields = save.error?.fields ?? {};
+  const [testing, setTesting] = useState<number | null>(null);
+  const canTest = ws.can("campaigns.write");
+  // Tests send the saved step, so they are offered for saved email steps while nothing is unsaved.
+  const testButton = (step: SequenceStep, index: number) =>
+    canTest && step.type === "email" && baseline[index]?.type === "email" ? (
+      <Button
+        size="sm"
+        variant="ghost"
+        icon={<Send />}
+        disabled={dirty}
+        title={dirty ? "Save or discard your changes first: the test sends the saved step." : "Send this email to yourself as the engine would"}
+        onClick={() => setTesting(index)}
+      >
+        Send test
+      </Button>
+    ) : null;
 
   return (
     <div className="flex flex-col gap-3">
@@ -48,7 +71,7 @@ export function CampaignSteps({ campaign }: { campaign: CampaignDetail }) {
       {save.error && !save.error.isPlanLimit && !Object.keys(fields).some((k) => k.startsWith("steps")) && <FormError error={save.error.message} />}
       <Card>
         <CardBody>
-          <StepsEditor steps={steps} onChange={setSteps} readOnly={readOnly} errors={fields} />
+          <StepsEditor steps={steps} onChange={setSteps} readOnly={readOnly} errors={fields} stepActions={testButton} />
         </CardBody>
       </Card>
       {!readOnly && (
@@ -86,7 +109,79 @@ export function CampaignSteps({ campaign }: { campaign: CampaignDetail }) {
           </Button>
         </div>
       )}
+      {testing !== null && <StepTestModal campaign={campaign} position={testing} onClose={() => setTesting(null)} />}
     </div>
+  );
+}
+
+/**
+ * POST /steps/:position/test: the saved email step rendered as the engine
+ * would (personalized for a contact when one is picked, with the unsubscribe
+ * footer), marked "[Test]" and counted nowhere. A send the API declined comes
+ * back as `sent: false` with its reason, shown inline.
+ */
+function StepTestModal({ campaign, position, onClose }: { campaign: CampaignDetail; position: number; onClose: () => void }) {
+  const ws = useWorkspace();
+  const me = useMe();
+  const [to, setTo] = useState<string | null>(null);
+  const [contact, setContact] = useState<{ id: string; label: string } | null>(null);
+  const contactId = contact?.id ?? null;
+  const [declined, setDeclined] = useState<StepTestResult | null>(null);
+  const send = useApiMutation<StepTestResult, StepTestBody>({
+    path: ws.path(`/campaigns/${campaign.id}/steps/${position}/test`),
+    errorToast: false,
+    onSuccess: (r) => {
+      if (!r.sent) return setDeclined(r);
+      toast.success(`Test sent to ${r.to}`, {
+        description: r.missing.length ? `From ${r.from}. No value for ${r.missing.map((v) => `{{${v}}}`).join(", ")}, so those show as written.` : `From ${r.from}.`,
+      });
+      onClose();
+    },
+  });
+  const recipient = to ?? me.data?.user.email ?? "";
+  const fields = send.error?.fields ?? {};
+  const submit = (e: FormEvent) => {
+    e.preventDefault();
+    setDeclined(null);
+    send.mutate({ to: recipient.trim(), contactId });
+  };
+  return (
+    <Modal
+      open
+      onOpenChange={(o) => !o && onClose()}
+      title={`Send step ${position + 1} as a test`}
+      description="Sent from a mailbox the campaign may use, marked [Test]. It is not counted in the campaign's numbers."
+      footer={
+        <>
+          <Button onClick={onClose} disabled={send.isPending}>
+            Cancel
+          </Button>
+          <Button variant="primary" type="submit" form="step-test" icon={<Send />} loading={send.isPending}>
+            Send test
+          </Button>
+        </>
+      }
+    >
+      <form id="step-test" onSubmit={submit} noValidate className="flex flex-col gap-3">
+        {send.error && !send.error.isPlanLimit && !Object.keys(fields).length && <FormError error={send.error.message} />}
+        {declined && (
+          <Callout tone="bad" title={`Not sent (${labelOf(declined.status)})`}>
+            {declined.reason || "The mailbox did not send the message."}
+          </Callout>
+        )}
+        <Field label="Send to" required error={fields.to}>
+          <Input type="email" value={recipient} onChange={(e) => setTo(e.target.value)} autoComplete="email" />
+        </Field>
+        <Field label="Personalize as" error={fields.contactId} hint="Optional. Without a contact, tokens without a fallback are left as written.">
+          <ContactPicker
+            value={contactId}
+            valueLabel={contact?.label}
+            placeholder="Search a contact"
+            onChange={(id, c) => setContact(id ? { id, label: c ? contactLabel(c) : "Contact" } : null)}
+          />
+        </Field>
+      </form>
+    </Modal>
   );
 }
 

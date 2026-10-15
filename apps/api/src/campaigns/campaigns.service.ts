@@ -1,4 +1,5 @@
-import { Injectable } from "@nestjs/common";
+import { Inject, Injectable } from "@nestjs/common";
+import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import {
   AudienceInput,
@@ -9,11 +10,16 @@ import {
   type FeatureKey,
   ListQuery,
   StepInput,
+  email,
   isoDate,
   missingVariables,
+  nextOpening,
   optionalUuid,
+  planStarts,
+  renderTemplate,
   requiredText,
   text,
+  threadOf,
   uuid,
   variablesFor,
 } from "@growthdesk/shared";
@@ -23,7 +29,7 @@ import { EntitlementsService } from "../billing/entitlements.service.js";
 import { AuditService } from "../core/audit.service.js";
 import { ActivityService } from "../crm/activity.service.js";
 import { CrmExtrasService } from "../crm/crm-extras.service.js";
-import { ApiError, badRequest, conflict, notFound } from "../common/errors.js";
+import { ApiError, badRequest, conflict, notFound, tooMany } from "../common/errors.js";
 import { actorId, ownershipScope, ws, type RequestContext } from "../common/context.js";
 import {
   ACTION_STEPS,
@@ -45,6 +51,9 @@ import { EngineService } from "./engine.service.js";
 import { StepRulesService } from "./step-rules.service.js";
 import { SequencesService, editStepsInPlace, replaceSteps, stepDto, structureChange } from "./sequences.service.js";
 import { replyTrackingProblem } from "../mailboxes/mailbox-upkeep.js";
+import { OutboundEmailService } from "../messaging/outbound-email.service.js";
+import { testUnsubscribeUrl } from "../messaging/tracking.js";
+import { APP_CONFIG, type AppConfig } from "../config/config.js";
 
 // ─── Request schemas ─────────────────────────────────────────────────────────
 
@@ -72,7 +81,21 @@ export const CampaignListQuery = ListQuery.extend({
 
 export const EnrollmentListQuery = ListQuery.extend({
   status: z.enum(ENROLLMENT_STATUSES).optional(),
+  /** "true": only enrollments whose contact replied (any status). */
+  replied: z.enum(["true", "false"]).optional(),
   q: text(200).optional(),
+});
+
+/** POST /:id/steps/:position/test — `contactId` personalizes it; `mailboxId` picks the sender (else the engine's choice). */
+export const StepTestBody = z.object({ to: email, contactId: optionalUuid, mailboxId: optionalUuid });
+
+/** GET /lead-counts?listIds=a,b */
+export const LeadCountsQuery = z.object({
+  listIds: z
+    .string()
+    .max(2000)
+    .transform((v) => [...new Set(v.split(",").map((x) => x.trim()).filter(Boolean))])
+    .pipe(z.array(uuid).max(50)),
 });
 
 type CreateT = z.infer<typeof CampaignCreateBody>;
@@ -117,6 +140,12 @@ const STRUCTURE_KEYS = ["audience", "schedule", "settings", "mailboxIds", "steps
 const EDITABLE: CampaignStatus[] = ["draft", "paused"];
 const ENROLLABLE: CampaignStatus[] = ["scheduled", "running", "paused"];
 const SAMPLE = 200;
+/** Test sends of one campaign's steps allowed per hour (as for a mailbox's own test). */
+const TEST_SENDS_PER_HOUR = 20;
+/** At most this many failed enrollments are put back per "Retry failed". */
+const RETRY_BATCH = 5000;
+/** An active enrollment this long past due, while the campaign runs, means the worker is not picking it up. */
+const OVERDUE_MS = 60 * 60_000;
 
 const CONTACT_FOR_VARS = {
   company: { select: { name: true, domain: true } },
@@ -147,6 +176,8 @@ export class CampaignsService {
     private readonly audit: AuditService,
     private readonly activity: ActivityService,
     private readonly extras: CrmExtrasService,
+    private readonly outbound: OutboundEmailService,
+    @Inject(APP_CONFIG) private readonly config: AppConfig,
   ) {}
 
   // ─── Reads ─────────────────────────────────────────────────────────────────
@@ -364,6 +395,10 @@ export class CampaignsService {
           : `This campaign is ${c.status}; its steps, audience, schedule, settings and mailboxes can no longer change. Duplicate it to run it again.`,
       );
     }
+    // A paused campaign that never started (scheduled, then paused) can be rescheduled; one that has run cannot.
+    if (input.startAt !== undefined && c.startedAt) {
+      throw badRequest("This campaign has already started, so its start can no longer change.", { startAt: "Already started" });
+    }
     if (input.steps) await this.rules.validate(w.id, w.billingAccountId, input.steps);
     const mailboxIds = input.mailboxIds ? await this.checkMailboxes(w.id, input.mailboxIds) : null;
     if (input.ownerId !== undefined) await this.checkOwner(w.id, input.ownerId);
@@ -541,7 +576,12 @@ export class CampaignsService {
     let eligible: string[] = [];
     let skipped: Skipped = {};
     let viewName: string | string[] | null = null;
-    if (!audience) problems.push({ field: "audience", message: "Choose who this campaign is for." });
+    // An always-on campaign may start empty: its people arrive later, from workflows or by hand.
+    const keepOpen = readSettings(c.settings).keepOpen;
+    if (!audience) {
+      if (keepOpen) warnings.push("No starting audience: only people a workflow or a teammate enrolls later receive this campaign.");
+      else problems.push({ field: "audience", message: "Choose who this campaign is for." });
+    }
     else {
       try {
         if (audience.type === "view") viewName = (await this.extras.getView(ctx, audience.viewId)).name;
@@ -559,8 +599,21 @@ export class CampaignsService {
       const res = await this.enrollment.eligible(w.id, seen.ids, EnrollmentService.requiresEmail(steps));
       eligible = res.eligible;
       skipped = seen.hidden ? addSkipped(res.skipped, { not_found: seen.hidden }) : res.skipped;
-      if (candidates.length && audience && !eligible.length) problems.push({ field: "audience", message: "No one in the audience can be contacted." });
-      else if (!candidates.length && !problems.some((p) => p.field === "audience")) problems.push({ field: "audience", message: "The audience has no contacts." });
+      if (candidates.length && audience && !eligible.length) {
+        if (keepOpen) warnings.push("No one in the starting audience can be contacted; the campaign waits for people enrolled later.");
+        else problems.push({ field: "audience", message: "No one in the audience can be contacted." });
+      } else if (!candidates.length && !problems.some((p) => p.field === "audience")) {
+        // Lead lists only enroll their leads: say so when the lists have people but none of them is a lead.
+        const listPeople =
+          audience.type === "lists"
+            ? await this.prisma.db.listMembership.count({ where: { workspaceId: w.id, listId: { in: audience.listIds }, status: { not: "unsubscribed" }, list: { archivedAt: null } } })
+            : 0;
+        const why = listPeople
+          ? `None of the ${listPeople === 1 ? "person" : `${listPeople} people`} on the chosen lists is a lead; outreach only goes to contacts at the lead stage.`
+          : null;
+        if (keepOpen) warnings.push(why ?? "The starting audience is empty; the campaign waits for people a workflow or a teammate enrolls.");
+        else problems.push({ field: "audience", message: why ?? "The audience has no contacts." });
+      }
     }
 
     // Personalization, sampled: a message missing a value fails that contact's enrollment at that step.
@@ -677,8 +730,15 @@ export class CampaignsService {
     const now = new Date();
     const future = !c.startedAt && c.startAt !== null && c.startAt.getTime() > now.getTime();
     // While still paused (the engine leaves it alone): starts that fell due during the pause are spread
-    // over the coming days under the daily limit instead of all going out at once.
-    await this.enrollment.replanWaiting(w.id, c, now);
+    // over the coming days under the daily limit instead of all going out at once. A campaign that never
+    // started re-plans its queue from its (possibly moved) start, earlier as well as later.
+    let floor: Date | undefined;
+    if (!c.startedAt) {
+      const [first] = await this.steps(w.id, c.sequenceId);
+      const firstDelayMs = Math.max(0, Number(configOf(first ?? { config: {} }).delayMinutes ?? 0)) * 60_000;
+      floor = new Date(Math.max(now.getTime(), c.startAt?.getTime() ?? 0) + firstDelayMs);
+    }
+    await this.enrollment.replanWaiting(w.id, c, now, { floor });
     const res = await this.prisma.db.campaign.updateMany({
       where: { id, workspaceId: w.id, deletedAt: null, status: "paused" },
       data: future ? { status: "scheduled", pausedAt: null } : { status: "running", pausedAt: null, startedAt: c.startedAt ?? now },
@@ -735,7 +795,6 @@ export class CampaignsService {
     mailboxes: Map<string, string>,
   ) {
     const step = steps[e.position];
-    const open = e.status === "active" || e.status === "paused";
     return {
       id: e.id,
       status: e.status,
@@ -743,7 +802,8 @@ export class CampaignsService {
       position: e.position,
       // Where an open enrollment stands (the step it runs next); a finished one shows where it ended.
       step: step ? { position: e.position, type: step.type } : null,
-      nextRunAt: open ? e.nextRunAt : null,
+      // Only an active enrollment is due; a paused one keeps its time for the resume but runs nothing until then.
+      nextRunAt: e.status === "active" ? e.nextRunAt : null,
       lastError: e.lastError,
       stopReason: e.stopReason,
       errorCount: e.errorCount,
@@ -763,6 +823,7 @@ export class CampaignsService {
       workspaceId: w.id,
       campaignId: id,
       ...(q.status ? { status: q.status } : {}),
+      ...(q.replied ? { repliedAt: q.replied === "true" ? { not: null } : null } : {}),
       ...(q.q ? { contact: { OR: [{ fullName: { contains: q.q, mode: "insensitive" } }, { email: { contains: q.q, mode: "insensitive" } }] } } : {}),
     };
     const sortable: Record<string, keyof Prisma.EnrollmentOrderByWithRelationInput> = { enrolledAt: "enrolledAt", nextRunAt: "nextRunAt", updatedAt: "updatedAt", status: "status" };
@@ -797,13 +858,352 @@ export class CampaignsService {
     });
     if (!res.count) throw conflict(`This enrollment is already ${e.status}.`);
     await this.activity.log({ workspaceId: w.id, contactId: e.contactId, actorId: actorId(ctx), type: "campaign.stopped", summary: `${who} in “${c.name}”`, data: { campaignId: id, enrollmentId } });
+    return this.oneEnrollment(w.id, c, enrollmentId);
+  }
+
+  // ─── Pausing one enrollment ────────────────────────────────────────────────
+
+  private async liveEnrollment(ctx: RequestContext, id: string, enrollmentId: string, verb: string) {
+    const w = ws(ctx);
+    const c = await this.find(w.id, id);
+    if (!isUuid(enrollmentId)) throw notFound("That enrollment");
+    const e = await this.prisma.db.enrollment.findFirst({ where: { id: enrollmentId, workspaceId: w.id, campaignId: id } });
+    if (!e) throw notFound("That enrollment");
+    if (!ENROLLABLE.includes(c.status)) throw conflict(`This campaign is ${c.status}, so its enrollments can no longer be ${verb}.`);
+    return { w, c, e };
+  }
+
+  /**
+   * Holds one contact where they are: active → paused, place and due time
+   * kept. The engine only claims and runs active rows, and every write it
+   * makes is conditional on status "active", so a job already queued or in
+   * flight does nothing more. The stepRun is deliberately left alone (unlike
+   * stop/retry): it says whether the first step has run (the daily start
+   * quota reads stepRun 0), and keeping it lets a step a worker was halfway
+   * through be settled on resume (settlePrior) instead of sent again.
+   */
+  async pauseEnrollment(ctx: RequestContext, id: string, enrollmentId: string) {
+    const { w, c, e } = await this.liveEnrollment(ctx, id, enrollmentId, "paused");
+    if (e.status !== "active") throw conflict(`This enrollment is ${e.status}; only an active one can be paused.`);
+    const res = await this.prisma.db.enrollment.updateMany({
+      where: { id: e.id, workspaceId: w.id, campaignId: id, status: "active", stepRun: e.stepRun },
+      data: { status: "paused", lockedUntil: null },
+    });
+    if (!res.count) throw conflict("The enrollment changed meanwhile. Reload it and try again.");
+    const who = ctx.identity?.name ? `Paused by ${ctx.identity.name}` : "Paused";
+    await this.activity.log({ workspaceId: w.id, contactId: e.contactId, actorId: actorId(ctx), type: "campaign.paused", summary: `${who} in “${c.name}”`, data: { campaignId: id, enrollmentId } });
+    return this.oneEnrollment(w.id, c, enrollmentId);
+  }
+
+  /**
+   * Puts a paused enrollment back on the clock at the step it was held on:
+   * due when it was due, or now if that has passed, moved to the next opening
+   * of the send window (not before the campaign's start). Stop conditions
+   * (a reply, an opt-out) are re-checked by the engine before it acts.
+   */
+  async resumeEnrollment(ctx: RequestContext, id: string, enrollmentId: string) {
+    const { w, c, e } = await this.liveEnrollment(ctx, id, enrollmentId, "resumed");
+    if (e.status !== "paused") throw conflict(`This enrollment is ${e.status}; only a paused one can be resumed.`);
+    await this.entitlements.assertFullAccess(w.billingAccountId, "Resuming an enrollment");
+    const at = nextOpening(readSchedule(c.schedule), new Date(Math.max(Date.now(), e.nextRunAt?.getTime() ?? 0, c.startAt?.getTime() ?? 0)));
+    const res = await this.prisma.db.enrollment.updateMany({
+      where: { id: e.id, workspaceId: w.id, campaignId: id, status: "paused", stepRun: e.stepRun },
+      data: { status: "active", nextRunAt: at, lockedUntil: null },
+    });
+    if (!res.count) throw conflict("The enrollment changed meanwhile. Reload it and try again.");
+    const who = ctx.identity?.name ? `Resumed by ${ctx.identity.name}` : "Resumed";
+    await this.activity.log({ workspaceId: w.id, contactId: e.contactId, actorId: actorId(ctx), type: "campaign.resumed", summary: `${who} in “${c.name}”`, data: { campaignId: id, enrollmentId } });
+    return this.oneEnrollment(w.id, c, enrollmentId);
+  }
+
+  private async oneEnrollment(workspaceId: string, c: Campaign, enrollmentId: string) {
     const row = await this.prisma.db.enrollment.findFirstOrThrow({
-      where: { id: enrollmentId, workspaceId: w.id },
+      where: { id: enrollmentId, workspaceId },
       include: { contact: { select: { id: true, fullName: true, email: true, deletedAt: true, company: { select: { name: true } } } } },
     });
-    const steps = await this.steps(w.id, c.sequenceId);
-    const box = row.mailboxId ? await this.prisma.db.mailbox.findFirst({ where: { id: row.mailboxId, workspaceId: w.id }, select: { id: true, email: true } }) : null;
+    const steps = await this.steps(workspaceId, c.sequenceId);
+    const box = row.mailboxId ? await this.prisma.db.mailbox.findFirst({ where: { id: row.mailboxId, workspaceId }, select: { id: true, email: true } }) : null;
     return this.enrollmentDto(row, steps, new Map(box ? [[box.id, box.email]] : []));
+  }
+
+  // ─── Retrying failed and stopped enrollments ───────────────────────────────
+
+  private assertRetryable(c: Campaign) {
+    if (!ENROLLABLE.includes(c.status)) {
+      throw conflict(`This campaign is ${c.status}, so its enrollments can no longer be put back. Duplicate it to run it again.`);
+    }
+  }
+
+  /** Where each enrollment's last failed step was, so a retry runs that step again instead of re-walking waits before it. */
+  private async failedPositions(workspaceId: string, rows: { id: string; stepRun: number; position: number }[]): Promise<Map<string, number>> {
+    const out = new Map<string, number>();
+    if (!rows.length) return out;
+    const execs = await this.prisma.db.stepExecution.findMany({
+      where: { workspaceId, enrollmentId: { in: rows.map((r) => r.id) }, status: "failed" },
+      select: { enrollmentId: true, stepRun: true, position: true },
+    });
+    const byId = new Map(rows.map((r) => [r.id, r]));
+    for (const x of execs) {
+      const r = byId.get(x.enrollmentId);
+      // The run that failed is the one just before the row's current stepRun (failing bumps it).
+      if (r && x.stepRun === r.stepRun - 1 && x.position >= r.position) out.set(r.id, x.position);
+    }
+    return out;
+  }
+
+  /**
+   * Puts one failed or stopped enrollment back on the clock at the step it
+   * ended on: errors cleared, due at the next opening of the send window (not
+   * before the campaign's start). The stepRun is bumped, which retires any
+   * job still naming the old one. The engine re-checks every stop condition
+   * before it acts, so this only refuses what would stop again at once.
+   */
+  async retryEnrollment(ctx: RequestContext, id: string, enrollmentId: string) {
+    const w = ws(ctx);
+    const c = await this.find(w.id, id);
+    if (!isUuid(enrollmentId)) throw notFound("That enrollment");
+    const e = await this.prisma.db.enrollment.findFirst({ where: { id: enrollmentId, workspaceId: w.id, campaignId: id } });
+    if (!e) throw notFound("That enrollment");
+    this.assertRetryable(c);
+    if (e.status !== "failed" && e.status !== "stopped") throw conflict(`This enrollment is ${e.status}; only a failed or stopped one can be retried.`);
+    await this.entitlements.assertFullAccess(w.billingAccountId, "Retrying an enrollment");
+    if (e.repliedAt && readSettings(c.settings).stopOnReply !== false) {
+      throw conflict("The contact replied, and this campaign stops when someone replies, so it would stop again at once.");
+    }
+    const why = skipList((await this.enrollment.eligible(w.id, [e.contactId], false)).skipped)[0];
+    if (why) throw conflict(`This contact cannot be contacted: ${why.label}.`);
+    const position = (await this.failedPositions(w.id, [e])).get(e.id) ?? e.position;
+    const at = nextOpening(readSchedule(c.schedule), new Date(Math.max(Date.now(), c.startAt?.getTime() ?? 0)));
+    const res = await this.prisma.db.enrollment.updateMany({
+      where: { id: e.id, workspaceId: w.id, campaignId: id, status: e.status, stepRun: e.stepRun },
+      data: { status: "active", position, errorCount: 0, lastError: "", stopReason: "", nextRunAt: at, lockedUntil: null, completedAt: null, stepRun: { increment: 1 } },
+    });
+    if (!res.count) throw conflict("The enrollment changed meanwhile. Reload it and try again.");
+    const who = ctx.identity?.name ? `Put back by ${ctx.identity.name}` : "Put back";
+    await this.activity.log({ workspaceId: w.id, contactId: e.contactId, actorId: actorId(ctx), type: "campaign.retried", summary: `${who} in “${c.name}”`, data: { campaignId: id, enrollmentId } });
+    return this.oneEnrollment(w.id, c, enrollmentId);
+  }
+
+  /**
+   * "Retry failed": every failed enrollment whose contact may still be
+   * contacted goes back to the step it failed on, spaced by the campaign's
+   * gap between starts inside the send window. Returns how many went back
+   * and how many were left (opted out, bounced, replied, ...).
+   */
+  async retryFailed(ctx: RequestContext, id: string) {
+    const w = ws(ctx);
+    const c = await this.find(w.id, id);
+    this.assertRetryable(c);
+    await this.entitlements.assertFullAccess(w.billingAccountId, "Retrying enrollments");
+    const rows = await this.prisma.db.enrollment.findMany({
+      where: { workspaceId: w.id, campaignId: id, status: "failed" },
+      select: { id: true, contactId: true, repliedAt: true, stepRun: true, position: true },
+      orderBy: [{ updatedAt: "asc" }, { id: "asc" }],
+      take: RETRY_BATCH,
+    });
+    if (!rows.length) return { retried: 0, skipped: 0 };
+    const settings = readSettings(c.settings);
+    const open = rows.filter((r) => !(r.repliedAt && settings.stopOnReply !== false));
+    const ok = new Set((await this.enrollment.eligible(w.id, open.map((r) => r.contactId), false)).eligible);
+    const go = open.filter((r) => ok.has(r.contactId));
+    let retried = 0;
+    if (go.length) {
+      const positions = await this.failedPositions(w.id, go);
+      const floor = new Date(Math.max(Date.now(), c.startAt?.getTime() ?? 0));
+      // No daily cap (these already started); the gap and each mailbox's own pacing and limit still apply.
+      const at = planStarts(readSchedule(c.schedule), go.map(() => floor), { limit: go.length, gapMs: settings.gapSeconds * 1000 });
+      retried = await this.prisma.db.$executeRaw`
+        UPDATE "Enrollment" e SET status = 'active', position = v.pos, "errorCount" = 0, "lastError" = '', "stopReason" = '', "nextRunAt" = v.at,
+          "lockedUntil" = NULL, "completedAt" = NULL, "stepRun" = e."stepRun" + 1, "updatedAt" = now()
+        FROM unnest(${go.map((r) => r.id)}::uuid[], ${at}::timestamptz[], ${go.map((r) => positions.get(r.id) ?? r.position)}::int[]) AS v(id, at, pos)
+        WHERE e.id = v.id AND e."workspaceId" = ${w.id}::uuid AND e."campaignId" = ${id}::uuid AND e.status = 'failed'`;
+      await this.prisma.db.activity.createMany({
+        data: go.map((r) => ({
+          workspaceId: w.id,
+          contactId: r.contactId,
+          actorId: actorId(ctx),
+          type: "campaign.retried",
+          summary: `Put back in “${c.name}” after failing`.slice(0, 500),
+          data: { campaignId: id, enrollmentId: r.id },
+        })),
+      });
+    }
+    await this.audit.record(ctx, { action: "campaign.enrollments_retried", targetType: "campaign", targetId: id, metadata: { name: c.name, retried, skipped: rows.length - go.length } });
+    return { retried, skipped: rows.length - go.length };
+  }
+
+  // ─── Health of a launched campaign ─────────────────────────────────────────
+
+  /**
+   * What is holding a launched campaign back, for the Overview: mailboxes
+   * that cannot send its emails, contacts stuck on an error or long past due,
+   * and failed enrollments that could be retried. Read-only; a draft has
+   * readiness instead.
+   */
+  async health(ctx: RequestContext, id: string) {
+    const w = ws(ctx);
+    const c = await this.find(w.id, id);
+    const issues: Problem[] = [];
+    if (!ENROLLABLE.includes(c.status)) return { issues };
+    const enrollmentsTab = (status: string, label: string): ProblemFix => ({ label, href: `/campaigns/${c.id}?tab=enrollments&status=${status}` });
+    const contacts = (n: number) => (n === 1 ? "1 contact is" : `${n} contacts are`);
+    const steps = await this.steps(w.id, c.sequenceId);
+    const active = { workspaceId: w.id, campaignId: c.id, status: "active" as const };
+
+    if (steps.some((s) => s.type === "email")) {
+      const selected = await this.prisma.db.campaignMailbox.findMany({
+        where: { workspaceId: w.id, campaignId: c.id, mailbox: { deletedAt: null } },
+        select: { mailbox: { select: { status: true } } },
+      });
+      if (selected.length && !selected.some((m) => m.mailbox.status === "connected")) {
+        issues.push({ field: "mailboxIds", message: "None of the campaign's mailboxes is connected, so its emails are waiting. Reconnect one or choose another." });
+      } else if (!selected.length && !(await this.prisma.db.mailbox.count({ where: { workspaceId: w.id, deletedAt: null, status: "connected" } }))) {
+        issues.push({ field: "mailboxIds", message: "No mailbox in the workspace is connected, so the campaign's emails are waiting.", fix: { label: "Connect a mailbox", href: "/settings/mailboxes" } });
+      }
+      // Follow-ups stay on the mailbox that started the thread, so a disconnected one holds its contacts.
+      const sticky = await this.prisma.db.enrollment.groupBy({ by: ["mailboxId"], where: { ...active, mailboxId: { not: null } }, _count: { _all: true } });
+      const down = sticky.length
+        ? await this.prisma.db.mailbox.findMany({
+            where: { workspaceId: w.id, id: { in: sticky.map((g) => g.mailboxId!) }, deletedAt: null, status: { not: "connected" } },
+            select: { id: true, email: true },
+          })
+        : [];
+      for (const box of down) {
+        const n = sticky.find((g) => g.mailboxId === box.id)?._count._all ?? 0;
+        issues.push({
+          field: "mailboxIds",
+          message: `${contacts(n)} waiting for ${box.email} to reconnect: follow-ups stay on the mailbox that started the thread.`,
+          fix: { label: "Mailbox settings", href: "/settings/mailboxes" },
+        });
+      }
+    }
+
+    const [erroring, latest, overdue, failed] = await Promise.all([
+      this.prisma.db.enrollment.count({ where: { ...active, lastError: { not: "" } } }),
+      this.prisma.db.enrollment.findFirst({ where: { ...active, lastError: { not: "" } }, orderBy: { updatedAt: "desc" }, select: { lastError: true } }),
+      c.status === "running"
+        ? this.prisma.db.enrollment.count({ where: { ...active, nextRunAt: { lt: new Date(Date.now() - OVERDUE_MS) } } })
+        : Promise.resolve(0),
+      this.prisma.db.enrollment.count({ where: { workspaceId: w.id, campaignId: c.id, status: "failed" } }),
+    ]);
+    if (erroring) {
+      issues.push({ field: "enrollments", message: `${contacts(erroring)} held up by a problem and will try again. Latest: ${latest?.lastError ?? ""}`, fix: enrollmentsTab("active", "See enrollments") });
+    }
+    if (overdue) {
+      issues.push({ field: "enrollments", message: `${contacts(overdue)} more than an hour past due. The background worker may not be running.`, fix: enrollmentsTab("active", "See enrollments") });
+    }
+    if (failed) {
+      issues.push({
+        field: "enrollments",
+        message: `${failed === 1 ? "1 enrollment" : `${failed} enrollments`} failed. Fix the cause, then retry them.`,
+        fix: enrollmentsTab("failed", "Review failed"),
+      });
+    }
+    return { issues: issues.map((p) => withFix(c.id, p)) };
+  }
+
+  // ─── Lead counts of lists ──────────────────────────────────────────────────
+
+  /** Per list, the people a lead-list audience would take: leads who have not unsubscribed from it. */
+  async leadCounts(ctx: RequestContext, listIds: string[]) {
+    const w = ws(ctx);
+    const out: Record<string, number> = Object.fromEntries(listIds.map((id) => [id, 0]));
+    if (!listIds.length) return out;
+    const rows = await this.prisma.db.listMembership.groupBy({
+      by: ["listId"],
+      where: { workspaceId: w.id, listId: { in: listIds }, status: { not: "unsubscribed" }, contact: { lifecycleStage: "lead", deletedAt: null } },
+      _count: { _all: true },
+    });
+    for (const r of rows) out[r.listId] = r._count._all;
+    return out;
+  }
+
+  // ─── Test send ─────────────────────────────────────────────────────────────
+
+  /**
+   * Sends one saved email step to `to` as the engine would render it —
+   * personalized for `contactId` when given (tokens without a value stay as
+   * written), from the chosen or the engine's pick of mailbox, with the
+   * campaign's unsubscribe footer — but marked "[Test]" and attached to no
+   * contact, enrollment or campaign, so nothing is counted or tracked. The
+   * footer's link (and {{unsubscribe_url}}) opens a page saying it was a test,
+   * and no List-Unsubscribe header is set: opting out from a test must not
+   * suppress whoever it went to.
+   */
+  async testStep(ctx: RequestContext, id: string, position: number, input: z.infer<typeof StepTestBody>) {
+    const w = ws(ctx);
+    const c = await this.find(w.id, id);
+    const steps = await this.steps(w.id, c.sequenceId);
+    const step = steps.find((s) => s.position === position);
+    if (!step) throw notFound("That step");
+    if (step.type !== "email") throw badRequest("Only email steps can be sent as a test.");
+    const recent = await this.prisma.db.auditEvent.count({
+      where: { workspaceId: w.id, action: "campaign.test_send", targetId: c.id, createdAt: { gte: new Date(Date.now() - 3600_000) } },
+    });
+    if (recent >= TEST_SENDS_PER_HOUR) throw tooMany(`This campaign has sent ${TEST_SENDS_PER_HOUR} tests in the last hour — wait before sending more.`);
+
+    const source = async (s: SequenceStep) => {
+      const cfg = configOf(s);
+      const t = cfg.templateId ? await this.prisma.db.template.findFirst({ where: { id: cfg.templateId, workspaceId: w.id } }) : null;
+      return { templateId: t?.id ?? null, subject: cfg.subject?.trim() ? cfg.subject : (t?.subject ?? ""), body: cfg.body?.trim() ? cfg.body : (t?.body ?? "") };
+    };
+    const src = await source(step);
+    if (!src.body.trim()) throw badRequest("This step has no content yet. Write and save its message first.");
+
+    let contact: Prisma.ContactGetPayload<{ include: typeof CONTACT_FOR_VARS }> | null = null;
+    if (input.contactId) {
+      const seen = await this.visible(ctx, [input.contactId]);
+      contact = seen.ids.length ? await this.prisma.db.contact.findFirst({ where: { id: input.contactId, workspaceId: w.id, deletedAt: null }, include: CONTACT_FOR_VARS }) : null;
+      if (!contact) throw badRequest("That contact does not exist, or you cannot see it.", { contactId: "Unknown contact" });
+    }
+
+    let mailbox;
+    if (input.mailboxId) {
+      mailbox = await this.prisma.db.mailbox.findFirst({ where: { id: input.mailboxId, workspaceId: w.id, deletedAt: null } });
+      if (!mailbox) throw badRequest("Choose a mailbox connected to this workspace.", { mailboxId: "Unknown mailbox" });
+    } else {
+      const allowed = (
+        await this.prisma.db.campaignMailbox.findMany({ where: { workspaceId: w.id, campaignId: c.id, mailbox: { deletedAt: null } }, select: { mailboxId: true } })
+      ).map((m) => m.mailboxId);
+      mailbox = await this.outbound.pickMailbox(w.id, allowed);
+      if (!mailbox) throw conflict("No connected mailbox the campaign may send from has room left today.");
+    }
+
+    const settings = readSettings(c.settings);
+    const messageRowId = randomUUID();
+    const vars = variablesFor(contact ?? {}, {
+      senderName: mailbox.displayName,
+      senderEmail: mailbox.email,
+      unsubscribeUrl: testUnsubscribeUrl(this.config.PUBLIC_APP_URL),
+    });
+    // A follow-up without its own subject replies to the opener: show it as "Re: <first email's subject>".
+    const firstEmail = steps.find((s) => s.type === "email" && s.position < position);
+    const opener = !src.subject.trim() && firstEmail ? { subject: renderTemplate((await source(firstEmail)).subject, vars), messageId: null } : null;
+    const thread = threadOf(renderTemplate(src.subject, vars), opener);
+    const missing = missingVariables(`${src.subject}\n${src.body}`, vars);
+
+    await this.audit.record(ctx, { action: "campaign.test_send", targetType: "campaign", targetId: c.id, metadata: { position, to: input.to, contactId: contact?.id ?? null } });
+    const result = await this.outbound.send({
+      workspaceId: w.id,
+      mailboxId: mailbox.id,
+      to: input.to,
+      subject: `[Test] ${thread.subject}`.slice(0, 998),
+      body: renderTemplate(src.body, vars),
+      templateId: src.templateId,
+      authorId: actorId(ctx),
+      contactId: null,
+      unsubscribe: settings.unsubscribeLink ? "test" : false,
+      kind: "manual",
+      messageRowId,
+    });
+    return {
+      sent: result.status === "sent",
+      status: result.status,
+      to: input.to,
+      from: mailbox.email,
+      reason: "reason" in result ? result.reason : "",
+      missing,
+    };
   }
 
   // ─── Per-step numbers ──────────────────────────────────────────────────────

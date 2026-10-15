@@ -2,15 +2,16 @@
 
 import Link from "next/link";
 import { useState, type ReactNode } from "react";
-import { Plus } from "lucide-react";
+import { Plus, X } from "lucide-react";
 import { labelOf } from "@growthdesk/shared";
 import { AddToListModal } from "@/components/marketing/AddToListModal";
 import { MembershipBadge, useMarketing } from "@/components/marketing/common";
 import { Badge, StatusBadge } from "@/components/ui/Badge";
-import { Button } from "@/components/ui/Button";
+import { Button, IconButton } from "@/components/ui/Button";
 import { Card, CardHeader } from "@/components/ui/Card";
+import { ConfirmDialog } from "@/components/ui/Dialog";
 import { formatDuration } from "@/lib/format";
-import { useApiQuery } from "@/lib/query";
+import { useApiMutation, useApiQuery } from "@/lib/query";
 import { useFormat, useWorkspace } from "@/lib/session";
 import type { ConsentEntry, ContactDetail, RelatedDeal } from "@/lib/types/crm";
 import type { ContactListMembership } from "@/lib/types/marketing";
@@ -68,6 +69,67 @@ export function DealsCard({ deals, empty, action }: { deals: RelatedDeal[]; empt
   );
 }
 
+type ContactEnrollment = ContactDetail["enrollments"][number];
+
+/** The contact's campaign enrollments: each opens its campaign's enrollments, and an active or paused one can be stopped here. */
+function SequencesCard({ contact }: { contact: ContactDetail }) {
+  const ws = useWorkspace();
+  const f = useFormat();
+  const canRead = ws.can("campaigns.read");
+  const canStop = ws.can("campaigns.launch");
+  const [stopping, setStopping] = useState<ContactEnrollment | null>(null);
+  const stop = useApiMutation<unknown, ContactEnrollment>({
+    path: (e) => ws.path(`/campaigns/${e.campaign.id}/enrollments/${e.id}/stop`),
+    body: () => undefined,
+    invalidate: [ws.key("contacts"), ws.key("campaigns")],
+    success: "Stopped",
+  });
+  return (
+    <>
+      <RelatedCard title="Sequences" count={contact.enrollments.length}>
+        {contact.enrollments.map((e) => {
+          const lines = (
+            <Lines
+              title={e.campaign.name}
+              sub={
+                e.stopReason ||
+                (e.status === "paused"
+                  ? "Paused: nothing is sent until it is resumed"
+                  : e.nextRunAt && e.status === "active"
+                    ? `Next step ${f.smart(e.nextRunAt)}`
+                    : `Enrolled ${f.date(e.enrolledAt)}`)
+              }
+            />
+          );
+          return (
+            <li key={e.id} className={ROW}>
+              {canRead ? (
+                <Link href={ws.href(`/campaigns/${e.campaign.id}?tab=enrollments`)} className="min-w-0 flex-1 hover:text-accent-hi">
+                  {lines}
+                </Link>
+              ) : (
+                lines
+              )}
+              <span className="flex shrink-0 items-center gap-1">
+                <StatusBadge value={e.status} />
+                {canStop && (e.status === "active" || e.status === "paused") && <IconButton size="sm" label={`Stop “${e.campaign.name}” for this contact`} icon={<X />} onClick={() => setStopping(e)} />}
+              </span>
+            </li>
+          );
+        })}
+      </RelatedCard>
+      <ConfirmDialog
+        open={stopping !== null}
+        onOpenChange={(o) => !o && setStopping(null)}
+        title={`Stop “${stopping?.campaign.name ?? "the campaign"}” for this contact?`}
+        confirmLabel="Stop"
+        description="Nothing more is sent to them from this campaign. While it is live, the enrollment can be retried from the campaign's Enrollments tab."
+        onConfirm={() => stopping && stop.mutateAsync(stopping)}
+      />
+    </>
+  );
+}
+
 /** Everything else GET /contacts/:id returns about the contact: tasks, meetings, sequences, conversations, calls. */
 export function ContactActivityCards({ contact }: { contact: ContactDetail }) {
   const ws = useWorkspace();
@@ -99,17 +161,7 @@ export function ContactActivityCards({ contact }: { contact: ContactDetail }) {
         ))}
       </RelatedCard>
 
-      <RelatedCard title="Sequences" count={contact.enrollments.length}>
-        {contact.enrollments.map((e) => (
-          <Row key={e.id}>
-            <Lines
-              title={e.campaign.name}
-              sub={e.stopReason || (e.nextRunAt && e.status === "active" ? `Next step ${f.smart(e.nextRunAt)}` : `Enrolled ${f.date(e.enrolledAt)}`)}
-            />
-            <StatusBadge value={e.status} />
-          </Row>
-        ))}
-      </RelatedCard>
+      <SequencesCard contact={contact} />
 
       <RelatedCard title="Conversations" count={contact.conversations.length}>
         {contact.conversations.map((c) => (

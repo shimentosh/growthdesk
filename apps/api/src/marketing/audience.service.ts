@@ -16,6 +16,17 @@ export const readAudience = (raw: unknown): StoredAudience => {
   return { listIds: a.listIds ?? [], excludeListIds: a.excludeListIds ?? [], viewId: a.viewId ?? null, segmentWhere: a.segmentWhere ?? null };
 };
 
+/**
+ * When a campaign paused by the deliverability guardrail was resumed. It rides
+ * in the audience JSON, which is frozen once the campaign launches; the
+ * guardrail then judges only the emails sent since (a fresh sample).
+ */
+export const readGuardrailSince = (raw: unknown): Date | null => {
+  const v = raw && typeof raw === "object" ? (raw as { guardrailSince?: unknown }).guardrailSince : null;
+  const d = typeof v === "string" ? new Date(v) : null;
+  return d && !Number.isNaN(d.getTime()) ? d : null;
+};
+
 /*
  * Who a marketing campaign may reach (R2/R3): a live contact with an email,
  * recorded consent, not do-not-contact, never hard-bounced, subscribed to at

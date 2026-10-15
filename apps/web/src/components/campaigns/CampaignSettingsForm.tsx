@@ -1,7 +1,8 @@
 "use client";
 
 import { useMemo, useState, type FormEvent } from "react";
-import { CalendarClock, Gauge, Hand, Info, Mail } from "lucide-react";
+import Link from "next/link";
+import { ArrowRight, CalendarClock, Gauge, Hand, Info, Infinity as AlwaysOn, Mail } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { Callout } from "@/components/ui/Callout";
 import { Card, CardBody, CardHeader } from "@/components/ui/Card";
@@ -93,11 +94,13 @@ export function CampaignScheduleForm({ campaign }: { campaign: CampaignDetail })
   const setSchedule = (patch: Partial<CampaignSchedule>) => setDraft((d) => ({ ...d, schedule: { ...d.schedule, ...patch } }));
   const setSettings = (patch: Partial<CampaignSettings>) => setDraft((d) => ({ ...d, settings: { ...d.settings, ...patch } }));
   const overnight = sch.to <= sch.from;
+  // The start can move until the campaign has run: while a draft, or scheduled and then paused before its start.
+  const startEditable = campaign.status === "draft" || (campaign.status === "paused" && !campaign.startedAt);
 
   const submit = (e: FormEvent) => {
     e.preventDefault();
     const startAt = draft.startAt ? zonedInputToUtc(draft.startAt, f.timeZone) : null;
-    save.mutate({ schedule: draft.schedule, settings: draft.settings, ...(campaign.status === "draft" ? { startAt } : {}) });
+    save.mutate({ schedule: draft.schedule, settings: draft.settings, ...(startEditable ? { startAt } : {}) });
   };
   const err = (k: string) => fields[k];
 
@@ -106,6 +109,42 @@ export function CampaignScheduleForm({ campaign }: { campaign: CampaignDetail })
       {locked && <Callout tone="info">{locked}</Callout>}
       {save.error && !save.error.isPlanLimit && <FormError error={save.error.message} />}
       <fieldset disabled={disabled} className="flex min-w-0 flex-col gap-4">
+        <Card>
+          <CardHeader icon={<AlwaysOn />} title="New leads" description="Keep the campaign open so leads that arrive later get the same steps." />
+          <CardBody className="flex flex-col gap-3">
+            <Switch
+              checked={set.keepOpen}
+              disabled={disabled}
+              onCheckedChange={(v) => setSettings({ keepOpen: v })}
+              label="Always on"
+              description="The campaign keeps running after everyone enrolled has finished, waiting for new people, and it can launch with an empty audience."
+            />
+            <div className="flex flex-col gap-1">
+              <span className="text-xs text-text-2">Enroll new leads automatically with a workflow:</span>
+              <div className="flex flex-wrap gap-x-4 gap-y-1">
+                {(
+                  [
+                    ["contact.created", "Contacts added by hand, chat or inbound email"],
+                    ["lead.imported", "Leads from forms, the API and CSV imports"],
+                  ] as const
+                ).map(([trigger, label]) => (
+                  <Link
+                    key={trigger}
+                    href={ws.href(`/automation/new?enrollCampaign=${campaign.id}&trigger=${trigger}&campaignName=${encodeURIComponent(campaign.name)}`)}
+                    className="inline-flex items-center gap-1 text-xs font-medium text-accent-ink hover:underline"
+                  >
+                    {label}
+                    <ArrowRight aria-hidden className="size-3" />
+                  </Link>
+                ))}
+              </div>
+            </div>
+            {!set.keepOpen && (
+              <p className="text-xs text-text-3">Without “Always on” the campaign completes once its current people finish, and a workflow can no longer add anyone to it.</p>
+            )}
+          </CardBody>
+        </Card>
+
         <Card>
           <CardHeader icon={<CalendarClock />} title="Send window" description="Steps only run inside this window; anything due outside it waits for the next opening." />
           <CardBody className="grid gap-4 sm:grid-cols-2">
@@ -138,11 +177,15 @@ export function CampaignScheduleForm({ campaign }: { campaign: CampaignDetail })
                 ))}
               </div>
             </Field>
-            {campaign.status === "draft" && (
+            {startEditable && (
               <Field
                 label="Start"
                 error={err("startAt")}
-                hint={`Optional, in ${f.timeZone}. A launch before this enrolls the audience and schedules the campaign; the first steps wait until then.`}
+                hint={
+                  campaign.status === "draft"
+                    ? `Optional, in ${f.timeZone}. A launch before this enrolls the audience and schedules the campaign; the first steps wait until then.`
+                    : `In ${f.timeZone}. The campaign has not started yet: resuming re-plans everyone waiting from this time (earlier or later), and it stays scheduled until then. Leave it empty to start on resume.`
+                }
               >
                 <Input type="datetime-local" value={draft.startAt} onChange={(e) => setDraft({ ...draft, startAt: e.target.value })} />
               </Field>

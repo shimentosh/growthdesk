@@ -46,7 +46,7 @@ export function Checkbox({ checked, onCheckedChange, label, description, disable
   return (
     <div className={cn("flex items-start gap-2", className)}>
       <span className="pt-0.5">{box}</span>
-      <label htmlFor={boxId} className={cn("text-sm text-text select-none", disabled ? "opacity-60" : "cursor-pointer")}>
+      <label htmlFor={boxId} className={cn("min-w-0 text-sm text-text select-none", disabled ? "opacity-60" : "cursor-pointer")}>
         {label}
         {description && <span className="block text-xs text-text-3">{description}</span>}
       </label>

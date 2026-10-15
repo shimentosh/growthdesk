@@ -12,8 +12,14 @@ import {
   CircleX,
   Clock,
   Hand,
+  Handshake,
+  ListMinus,
+  ListPlus,
   LoaderCircle,
+  MailOpen,
+  MailX,
   MessageSquareReply,
+  MousePointerClick,
   PenLine,
   PhoneCall,
   Send,
@@ -43,6 +49,10 @@ export const TRIGGER_GLYPH: Record<WorkflowTrigger, { icon: LucideIcon; tint: Ti
   "meeting.booked": { icon: CalendarCheck, tint: "red" },
   "deal.stage_changed": { icon: ArrowRightLeft, tint: "green" },
   "task.overdue": { icon: AlarmClock, tint: "orange" },
+  "list.subscribed": { icon: ListPlus, tint: "purple" },
+  "marketing.opened": { icon: MailOpen, tint: "blue" },
+  "marketing.clicked": { icon: MousePointerClick, tint: "green" },
+  "marketing.unsubscribed": { icon: MailX, tint: "red" },
 };
 
 export const ACTION_GLYPH: Record<WorkflowActionType, { icon: LucideIcon; tint: Tint }> = {
@@ -53,6 +63,9 @@ export const ACTION_GLYPH: Record<WorkflowActionType, { icon: LucideIcon; tint: 
   enroll_campaign: { icon: Send, tint: "blue" },
   stop_campaigns: { icon: CircleStop, tint: "gray" },
   add_tag: { icon: Tag, tint: "yellow" },
+  add_to_list: { icon: ListPlus, tint: "purple" },
+  remove_from_list: { icon: ListMinus, tint: "gray" },
+  hand_to_sales: { icon: Handshake, tint: "green" },
 };
 
 export const RUN_STATUS_GLYPH: Record<WorkflowRunStatus, { icon: LucideIcon; tint: Tint }> = {

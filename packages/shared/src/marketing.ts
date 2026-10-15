@@ -9,7 +9,7 @@ import { EmailBlocks, EmailTheme } from "./email-design.js";
 
 export const LIST_MEMBERSHIP_STATUSES = ["subscribed", "unsubscribed", "pending"] as const;
 export type ListMembershipStatus = (typeof LIST_MEMBERSHIP_STATUSES)[number];
-export const ESP_PROVIDERS = ["ses", "smtp_relay"] as const;
+export const ESP_PROVIDERS = ["ses", "smtp_relay", "resend"] as const;
 export type EspProvider = (typeof ESP_PROVIDERS)[number];
 export const SENDING_DOMAIN_STATUSES = ["pending", "verified", "failed"] as const;
 export type SendingDomainStatus = (typeof SENDING_DOMAIN_STATUSES)[number];
@@ -20,6 +20,9 @@ export type MarketingSendStatus = (typeof MARKETING_SEND_STATUSES)[number];
 
 /** SES SMTP regions offered in the connect form. */
 export const SES_REGIONS = ["us-east-1", "us-east-2", "us-west-2", "ca-central-1", "eu-west-1", "eu-west-2", "eu-central-1", "eu-north-1", "ap-south-1", "ap-southeast-1", "ap-southeast-2", "ap-northeast-1", "sa-east-1"] as const;
+
+/** Regions Resend creates a sending domain in (the domain's mail goes out from there). */
+export const RESEND_REGIONS = ["us-east-1", "eu-west-1", "sa-east-1", "ap-northeast-1"] as const;
 
 /** Deliverability guardrail (R5): a campaign or domain pauses past these rates, once enough mail went out to judge. */
 export const GUARDRAIL = { minSample: 100, maxBounceRate: 0.02, maxComplaintRate: 0.003 } as const;
@@ -37,6 +40,12 @@ const domainName = z
 export const MarketingListInput = z.object({
   name: requiredText(120),
   description: text(500).optional(),
+  /**
+   * Double opt-in: people added without recorded consent join as `pending`
+   * and are emailed a link; they become subscribed (and their consent is
+   * recorded) only when they confirm.
+   */
+  doubleOptIn: z.boolean().optional(),
 });
 
 /**
@@ -78,6 +87,18 @@ export const EspConnectionInput = z.discriminatedUnion("provider", [
     security: z.enum(["ssl", "starttls", "none"]).default("starttls"),
     username: text(200).default(""),
     password: z.string().max(500).optional(),
+  }),
+  z.object({
+    provider: z.literal("resend"),
+    /** Where domains added from here are created. */
+    region: z.enum(RESEND_REGIONS).default("us-east-1"),
+    /** A Full access key (domains are created with it). Omit to keep the stored one. */
+    apiKey: z
+      .string()
+      .trim()
+      .regex(/^re_[A-Za-z0-9_-]{8,}$/, "A Resend API key starts with re_")
+      .max(200)
+      .optional(),
   }),
 ]);
 
@@ -142,6 +163,28 @@ export const MarketingRecipientsQuery = z.object({
   status: z.enum(MARKETING_SEND_STATUSES).optional(),
 });
 
+// ─── Email images ───────────────────────────────────────────────────────────
+
+/** Image types the email designer accepts for upload: what every inbox shows. Never SVG. */
+export const MARKETING_ASSET_MIMES = ["image/png", "image/jpeg", "image/gif", "image/webp"] as const;
+export type MarketingAssetMime = (typeof MARKETING_ASSET_MIMES)[number];
+/** One uploaded image. Emails stay quick to load; most clients clip messages past ~100 KB of HTML anyway. */
+export const MARKETING_ASSET_MAX_BYTES = 1024 * 1024;
+/** Every uploaded image in a workspace together. */
+export const MARKETING_ASSET_WORKSPACE_MAX_BYTES = 100 * 1024 * 1024;
+
+/**
+ * An image upload as JSON: the file's bytes in base64 (a data: URL is
+ * accepted too). The server checks the size, sniffs the real type from the
+ * magic bytes and refuses SVG and anything not PNG/JPEG/GIF/WebP.
+ */
+export const MarketingAssetUpload = z.object({
+  /** What the browser said the file is; must agree with the bytes when given. */
+  mime: z.string().trim().max(100).optional(),
+  fileName: text(200).optional(),
+  data: z.string().min(1, "Choose a file").max(Math.ceil((MARKETING_ASSET_MAX_BYTES * 4) / 3) + 200, "The image is larger than 1 MB"),
+});
+
 // ─── Public preference page ─────────────────────────────────────────────────
 
 export const PreferencesUpdate = z.object({
@@ -156,6 +199,16 @@ export type PreferencesDetails = {
   legalName: string;
   unsubscribedFromAll: boolean;
   lists: { id: string; name: string; description: string; subscribed: boolean }[];
+};
+
+/** GET /m/s/:token — a double opt-in confirmation link, before and after confirming. */
+export type ConfirmSubscriptionDetails = {
+  email: string;
+  workspaceName: string;
+  legalName: string;
+  listName: string;
+  /** pending until they confirm; unsubscribed if they left the list since. */
+  status: ListMembershipStatus;
 };
 
 /** Bounce/complaint notifications in Growthdesk's own format (any ESP can be bridged to it). */

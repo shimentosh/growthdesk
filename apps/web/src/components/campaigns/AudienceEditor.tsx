@@ -19,7 +19,7 @@ import { formatNumber } from "@/lib/format";
 import { useApiQuery } from "@/lib/query";
 import { useWorkspace } from "@/lib/session";
 import type { ContactSummary } from "@/lib/types";
-import type { CampaignAudience, CampaignDetail, CampaignReadiness } from "@/lib/types/campaigns";
+import type { CampaignAudience, CampaignDetail, CampaignReadiness, LeadCounts } from "@/lib/types/campaigns";
 import type { SavedView } from "@/lib/types/crm";
 import { SkippedList, lockedReason, useCampaignPatch } from "./common";
 
@@ -30,7 +30,7 @@ const MODES: { value: Mode; label: string; hint: string }[] = [
   {
     value: "lists",
     label: "Lead lists",
-    hint: "Resolved when you launch: the leads on any of these lists then. People already handed to sales or made contacts are left out.",
+    hint: "Resolved when you launch: the leads on any of these lists then. Only people at the lead stage are enrolled; those already handed to sales or made contacts are left out.",
   },
   { value: "filter", label: "Contacts matching a filter", hint: "Resolved when you launch: whoever matches then is enrolled." },
   { value: "view", label: "A saved contact view", hint: "Resolved when you launch, with the view's filters at that moment." },
@@ -65,6 +65,13 @@ export function AudienceEditor({ campaign }: { campaign: CampaignDetail }) {
   const mk = useMarketing();
   const canLists = ws.can(LIST_READ);
   const lists = useMarketingLists(true);
+  // Lists hold people at every stage and only their leads are enrolled, so each row shows its leads (GET /campaigns/lead-counts).
+  const shownListIds = (lists.data ?? []).filter((l) => !l.archivedAt || listIds.includes(l.id)).map((l) => l.id).slice(0, 50);
+  const leadCounts = useApiQuery<LeadCounts>(
+    ws.key("campaigns", "lead-counts", shownListIds.join()),
+    mode === "lists" && shownListIds.length ? ws.path("/campaigns/lead-counts") : null,
+    { query: { listIds: shownListIds.join(",") } },
+  );
   const [ids, setIds] = useState<string[]>(stored?.type === "contacts" ? stored.contactIds : []);
   const [viewId, setViewId] = useState(stored?.type === "view" ? stored.viewId : "");
   const [filter, setFilter] = useState<Filter>(filterOf(stored));
@@ -178,7 +185,14 @@ export function AudienceEditor({ campaign }: { campaign: CampaignDetail }) {
                               </span>
                             }
                           />
-                          <Link href={mk.href(`/lists/${l.id}`)} className="shrink-0 text-xs text-text-3 tabular-nums hover:text-accent-hi">
+                          <Link
+                            href={mk.href(`/lists/${l.id}`)}
+                            className="shrink-0 text-xs text-text-3 tabular-nums hover:text-accent-hi"
+                            title="Leads are the people this campaign would enroll; the rest of the list is at a later stage."
+                          >
+                            {leadCounts.data?.[l.id] !== undefined && (
+                              <strong className="font-medium text-text-2">{formatNumber(leadCounts.data[l.id]!)} lead{leadCounts.data[l.id] === 1 ? "" : "s"} · </strong>
+                            )}
                             {formatNumber(l.counts.subscribed + l.counts.pending)} people
                           </Link>
                         </li>

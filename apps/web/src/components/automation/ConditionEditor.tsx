@@ -33,21 +33,27 @@ const ENUM_VALUES: Record<string, readonly string[]> = {
 const EVENT = "__event";
 const OPS = Object.keys(OP_LABELS) as ConditionOp[];
 
+type EventField = { key: string; label: string };
+
 function ConditionRow({
   condition,
   onChange,
   onRemove,
   customFields,
+  eventFields,
   disabled,
 }: {
   condition: WorkflowCondition;
   onChange: (c: WorkflowCondition) => void;
   onRemove: () => void;
   customFields: CustomFieldDef[];
+  eventFields: EventField[];
   disabled?: boolean;
 }) {
-  const isEvent = condition.field.startsWith("event.");
-  const known = CONDITION_FIELDS.some((f) => f.value === condition.field) || customFields.some((d) => `contact.custom.${d.key}` === condition.field);
+  // A property the trigger is known to carry is picked by name; any other event property is typed.
+  const named = eventFields.some((f) => `event.${f.key}` === condition.field);
+  const isEvent = condition.field.startsWith("event.") && !named;
+  const known = named || CONDITION_FIELDS.some((f) => f.value === condition.field) || customFields.some((d) => `contact.custom.${d.key}` === condition.field);
   const selectValue = isEvent ? EVENT : condition.field;
   const eventKey = isEvent ? condition.field.slice("event.".length) : "";
   const custom = customFields.find((d) => `contact.custom.${d.key}` === condition.field);
@@ -68,6 +74,15 @@ function ConditionRow({
             }}
           >
             {!known && !isEvent && <option value={condition.field}>{condition.field || "Choose a field…"}</option>}
+            {eventFields.length > 0 && (
+              <optgroup label="This trigger">
+                {eventFields.map((f) => (
+                  <option key={f.key} value={`event.${f.key}`}>
+                    {f.label}
+                  </option>
+                ))}
+              </optgroup>
+            )}
             <optgroup label="Contact & deal">
               {CONDITION_FIELDS.map((f) => (
                 <option key={f.value} value={f.value}>
@@ -149,7 +164,18 @@ function ConditionRow({
  * A field the run's subject does not have (no deal on a contact event) reads
  * as empty.
  */
-export function ConditionEditor({ value, onChange, disabled }: { value: WorkflowCondition[]; onChange: (c: WorkflowCondition[]) => void; disabled?: boolean }) {
+export function ConditionEditor({
+  value,
+  onChange,
+  disabled,
+  eventFields = [],
+}: {
+  value: WorkflowCondition[];
+  onChange: (c: WorkflowCondition[]) => void;
+  disabled?: boolean;
+  /** Properties the chosen trigger carries (TRIGGER_EVENT_FIELDS), offered by name. */
+  eventFields?: EventField[];
+}) {
   const fields = useContactCustomFields();
   const customFields = fields.data ?? [];
   return (
@@ -163,6 +189,7 @@ export function ConditionEditor({ value, onChange, disabled }: { value: Workflow
               key={i}
               condition={c}
               customFields={customFields}
+              eventFields={eventFields}
               disabled={disabled}
               onChange={(next) => onChange(value.map((x, j) => (j === i ? next : x)))}
               onRemove={() => onChange(value.filter((_, j) => j !== i))}

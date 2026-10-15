@@ -6,6 +6,7 @@ import { PrismaService } from "../prisma/prisma.service.js";
 import { EntitlementsService } from "../billing/entitlements.service.js";
 import { EventsService } from "../core/events.service.js";
 import { Queues } from "../queues/queues.js";
+import { queueConfirmations } from "../marketing/double-opt-in.js";
 import { ContactsService } from "./contacts.service.js";
 import { badRequest, isApiError, notFound } from "../common/errors.js";
 import { actorId, ws, type RequestContext } from "../common/context.js";
@@ -182,7 +183,8 @@ export class ImportsService {
     const rows = (imp.rows ?? []) as Row[];
     const mapping = imp.mapping as Record<string, string>;
     const options = imp.options as { tags?: string[]; onDuplicate?: "update" | "skip"; leadSource?: string; defaultCountry?: string; listId?: string | null };
-    const listId = options.listId ? ((await this.prisma.db.marketingList.findFirst({ where: { id: options.listId, workspaceId }, select: { id: true } }))?.id ?? null) : null;
+    const list = options.listId ? await this.prisma.db.marketingList.findFirst({ where: { id: options.listId, workspaceId }, select: { id: true, name: true, doubleOptIn: true } }) : null;
+    const listId = list?.id ?? null;
     const listSource = `Import: ${imp.fileName ?? "file"}`;
     const errors = [...((imp.errors ?? []) as { row: number; message: string }[])];
     let { processedRows, createdCount, updatedCount, skippedCount, failedCount } = imp;
@@ -192,6 +194,9 @@ export class ImportsService {
     while (processedRows < rows.length) {
       const chunk = rows.slice(processedRows, processedRows + CHUNK);
       let remaining = await this.entitlements.remaining(ws.billingAccountId, "contacts");
+      let subscribersLeft = listId ? await this.entitlements.remaining(ws.billingAccountId, "marketingContacts") : Number.POSITIVE_INFINITY;
+      /** Pending memberships (a double opt-in list) to email a confirmation link to after this chunk. */
+      const confirmIds: string[] = [];
       for (const [i, raw] of chunk.entries()) {
         const rowNumber = processedRows + i + 2; // 1-based, after the header
         try {
@@ -210,11 +215,48 @@ export class ImportsService {
             createBlocked: !isUnlimited(remaining) && remaining <= 0 ? "Your plan's contact limit was reached; this row was not created." : undefined,
           });
           // Skipped duplicates still join the list: the file named them as leads for it.
-          if (listId) {
-            await this.prisma.db.listMembership.createMany({
-              data: [{ workspaceId, listId, contactId: res.contactId, status: "subscribed", source: listSource, subscribedAt: new Date() }],
-              skipDuplicates: true,
-            });
+          const held = listId ? await this.prisma.db.listMembership.findFirst({ where: { workspaceId, listId, contactId: res.contactId }, select: { id: true, status: true } }) : null;
+          // Still waiting to confirm: the email goes again (the worker sends at most one a day).
+          if (held?.status === "pending" && list?.doubleOptIn) confirmIds.push(held.id);
+          if (listId && !held) {
+            // As in ListsService.addMembers: someone the marketing engine could mail (consent granted, an
+            // email) who is on no other list yet takes a subscriber from the plan's allowance.
+            const c = await this.prisma.db.contact.findFirst({ where: { id: res.contactId, workspaceId, deletedAt: null }, select: { email: true, consentStatus: true } });
+            const counts =
+              Boolean(c?.email) && c?.consentStatus === "granted" && !(await this.prisma.db.listMembership.findFirst({ where: { workspaceId, contactId: res.contactId, status: "subscribed" }, select: { id: true } }));
+            // A double opt-in list takes anyone without recorded consent as pending, and emails them a link to confirm.
+            const confirm = Boolean(list?.doubleOptIn) && c?.consentStatus !== "granted";
+            if (confirm && !c?.email) {
+              if (errors.length < MAX_ERRORS) errors.push({ row: rowNumber, message: "Saved, but not added to the list: it asks new subscribers to confirm by email, and this row has no email address." });
+            } else if (confirm) {
+              const [row] = await this.prisma.db.listMembership.createManyAndReturn({
+                data: [{ workspaceId, listId, contactId: res.contactId, status: "pending", source: listSource }],
+                skipDuplicates: true,
+                select: { id: true },
+              });
+              if (row) confirmIds.push(row.id);
+            } else if (counts && !isUnlimited(subscribersLeft) && subscribersLeft <= 0) {
+              if (errors.length < MAX_ERRORS) errors.push({ row: rowNumber, message: "Saved, but not added to the list: your plan's marketing subscriber limit was reached." });
+            } else {
+              const added = await this.prisma.db.$transaction(async (tx) => {
+                const r = await tx.listMembership.createMany({
+                  data: [{ workspaceId, listId, contactId: res.contactId, status: "subscribed", source: listSource, subscribedAt: new Date() }],
+                  skipDuplicates: true,
+                });
+                // Dispatched by the kick after this chunk.
+                if (r.count) {
+                  await this.events.emitIn(tx, {
+                    workspaceId,
+                    type: "list.subscribed",
+                    subjectType: "contact",
+                    subjectId: res.contactId,
+                    payload: { contactId: res.contactId, listId, listName: list?.name ?? "", source: "import", importId: imp.id },
+                  });
+                }
+                return r;
+              });
+              if (counts && added.count) subscribersLeft -= 1;
+            }
           }
           if (res.created) {
             createdCount += 1;
@@ -233,6 +275,7 @@ export class ImportsService {
         data: { processedRows, createdCount, updatedCount, skippedCount, failedCount, errors: errors as never },
       });
       await this.events.kick();
+      if (confirmIds.length) await queueConfirmations(this.queues, workspaceId, confirmIds);
     }
     await this.prisma.db.import.update({ where: { id: imp.id, workspaceId }, data: { status: "completed", finishedAt: new Date() } });
   }

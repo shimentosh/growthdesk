@@ -82,7 +82,7 @@ export function SendingSetup() {
             )}
           </Section>
 
-          {manage && <AddDomainModal open={adding} onOpenChange={setAdding} />}
+          {manage && <AddDomainModal open={adding} onOpenChange={setAdding} esp={s.esp} />}
         </div>
       )}
     </QueryState>

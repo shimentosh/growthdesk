@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useState, type ReactNode } from "react";
-import { Copy, Ellipsis, Pencil, Plus, SearchX, Trash2, X } from "lucide-react";
+import { Copy, Ellipsis, Megaphone, Pencil, Plus, SearchX, Trash2, X } from "lucide-react";
 import { Button, IconButton } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
 import { ConfirmDialog } from "@/components/ui/Dialog";
@@ -18,6 +18,7 @@ import { SearchInput } from "@/components/ui/SearchInput";
 import { LoadingBlock, Skeleton } from "@/components/ui/Skeleton";
 import { toast } from "@/components/ui/Toast";
 import { useMembers } from "@/components/pickers/Pickers";
+import { NewCampaignModal } from "@/components/campaigns/NewCampaignModal";
 import { cn } from "@/lib/cn";
 import { formatNumber } from "@/lib/format";
 import { useApiMutation, useApiQuery } from "@/lib/query";
@@ -67,7 +68,7 @@ function useListParams() {
   return { state, update };
 }
 
-function RowActions({ seq, onDelete }: { seq: Sequence; onDelete: () => void }) {
+function RowActions({ seq, onDelete, onUse }: { seq: Sequence; onDelete: () => void; onUse: () => void }) {
   const ws = useWorkspace();
   const router = useRouter();
   const duplicate = useApiMutation<SequenceDetail, void>({
@@ -89,6 +90,9 @@ function RowActions({ seq, onDelete }: { seq: Sequence; onDelete: () => void }) 
         <DropdownMenuItem icon={<Copy />} onSelect={() => duplicate.mutate()}>
           Duplicate
         </DropdownMenuItem>
+        <DropdownMenuItem icon={<Megaphone />} onSelect={onUse}>
+          Use in campaign
+        </DropdownMenuItem>
         <DropdownMenuSeparator />
         <DropdownMenuItem danger icon={<Trash2 />} onSelect={onDelete}>
           Delete
@@ -105,6 +109,7 @@ function Sequences() {
   const { state, update } = useListParams();
   const canWrite = ws.can("campaigns.write");
   const [deleting, setDeleting] = useState<Sequence | null>(null);
+  const [using, setUsing] = useState<Sequence | null>(null);
   const list = useApiQuery<Paged<Sequence>>(ws.key("sequences", "list"), ws.path("/sequences"), {
     query: { q: state.q || undefined, page: state.page, pageSize: state.pageSize },
     keepPrevious: true,
@@ -200,7 +205,7 @@ function Sequences() {
                 </td>
                 {canWrite && (
                   <td className={cn(TD, "text-right")}>
-                    <RowActions seq={s} onDelete={() => setDeleting(s)} />
+                    <RowActions seq={s} onDelete={() => setDeleting(s)} onUse={() => setUsing(s)} />
                   </td>
                 )}
               </tr>
@@ -237,6 +242,7 @@ function Sequences() {
           </div>
         )}
       </Card>
+      {using && <NewCampaignModal key={using.id} open initialSequenceId={using.id} onOpenChange={(o) => !o && setUsing(null)} />}
       <ConfirmDialog
         open={deleting !== null}
         onOpenChange={(o) => !o && setDeleting(null)}

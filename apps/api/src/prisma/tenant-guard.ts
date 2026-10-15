@@ -44,6 +44,7 @@ export const TENANT_MODELS = new Set<string>([
   "EspConnection",
   "SendingDomain",
   "EmailDesign",
+  "WorkspaceAsset",
   "MarketingCampaign",
   "MarketingSend",
   "Pipeline",

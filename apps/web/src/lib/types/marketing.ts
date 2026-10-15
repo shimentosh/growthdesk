@@ -24,6 +24,8 @@ export type MarketingList = {
   id: string;
   name: string;
   description: string;
+  /** New people without recorded consent join as pending and must confirm by email. */
+  doubleOptIn: boolean;
   archivedAt: string | null;
   createdAt: string;
   updatedAt: string;
@@ -46,7 +48,13 @@ export const SKIP_REASONS = ["not_found", "no_email", "do_not_contact", "no_cons
 export type SkipReason = (typeof SKIP_REASONS)[number];
 
 /** POST marketing/lists/:id/members answer. */
-export type AddMembersResult = { added: number; alreadyMember: number; skipped: Record<SkipReason, number> };
+export type AddMembersResult = {
+  added: number;
+  /** Added (or already waiting) on a double opt-in list: sent an email to confirm, not subscribed yet. */
+  pending: number;
+  alreadyMember: number;
+  skipped: Record<SkipReason, number>;
+};
 
 /** POST marketing/lists/:id/members/remove answer. Unsubscribed rows are kept, so they cannot be added back. */
 export type RemoveMembersResult = { removed: number; keptUnsubscribed: number };
@@ -81,6 +89,8 @@ export type EspConnection = {
 
 export type DnsRecordCheck = { ok: boolean; found: string[]; expected: string; required: boolean };
 export type DnsRecord = { type: string; name: string; value: string };
+/** A record the email service asks for (Resend). `name` is relative to the DNS zone, as Resend shows it. */
+export type EspDnsRecord = { record: string; name: string; type: string; ttl: string; status: string; value: string; priority: number | null };
 
 export type SendingDomain = {
   id: string;
@@ -90,6 +100,8 @@ export type SendingDomain = {
   /** Empty until the first check. */
   checks: Partial<{ ownership: DnsRecordCheck; dkim: DnsRecordCheck; dmarc: DnsRecordCheck; spf: DnsRecordCheck }>;
   records: { ownership: DnsRecord; dmarc: DnsRecord };
+  /** The email service's own view when it manages the domain (Resend): its status and the records it asks for. */
+  esp: { status: string; records: EspDnsRecord[] } | null;
   lastCheckedAt: string | null;
   verifiedAt: string | null;
   pausedAt: string | null;
@@ -113,6 +125,18 @@ export type EmailDesign = {
   archivedAt: string | null;
   createdAt: string;
   updatedAt: string;
+};
+
+/** GET /marketing/design-library: the template gallery platform staff curate. */
+export type LibraryTemplate = {
+  id: string;
+  key: string;
+  name: string;
+  description: string;
+  category: string;
+  theme: EmailTheme;
+  blocks: EmailBlock[];
+  sortOrder: number;
 };
 
 // ─── Campaigns ──────────────────────────────────────────────────────────────

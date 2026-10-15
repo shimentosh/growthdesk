@@ -142,6 +142,7 @@ describe("Integrations: API keys, public API, lead ingest", () => {
       expect(d.results[1].matchedBy).toBe("email");
       expect(d.results[2].error.code).toBe("bad_request");
       expect(d.enrollment).toBeNull();
+      expect(d.list).toBeNull();
 
       const alan = await t.prisma.db.contact.findFirstOrThrow({ where: { workspaceId: w, email: "alan@bletchley.test" }, include: { company: true, tags: { include: { tag: true } }, sources: true } });
       expect(alan.company?.domain).toBe("bletchley.test");
@@ -153,8 +154,13 @@ describe("Integrations: API keys, public API, lead ingest", () => {
       expect(ada).toMatchObject({ fullName: "Ada Lovelace", jobTitle: "Analyst" });
       expect(await t.prisma.db.contact.count({ where: { workspaceId: w, email: "ada@engines.test" } })).toBe(1);
 
+      // A new lead emits lead.imported; so does someone already in the CRM arriving again as a lead
+      // (matched by email or phone), marked as returning so a workflow can tell them apart.
       const events = await t.prisma.db.domainEvent.findMany({ where: { workspaceId: w, type: "lead.imported" } });
-      expect(events.map((e) => e.subjectId)).toEqual([alan.id]);
+      expect(events.map((e) => e.subjectId).sort()).toEqual([alan.id, ada.id].sort());
+      const returning = events.find((e) => e.subjectId === ada.id)!;
+      expect(returning.payload).toMatchObject({ source: "business_os", importId: d.importId, returning: true, matchedBy: "email" });
+      expect(events.find((e) => e.subjectId === alan.id)!.payload).not.toHaveProperty("returning");
       const imp = await owner.get(api(`/imports/${d.importId}`)).expect(200);
       expect(imp.body.data).toMatchObject({ source: "business_os", status: "completed", fileName: "API key: Business OS", createdCount: 1, updatedCount: 1, failedCount: 1 });
       expect(imp.body.data.errors).toEqual([{ row: 3, message: d.results[2].error.message }]);
@@ -164,6 +170,8 @@ describe("Integrations: API keys, public API, lead ingest", () => {
       const res = await t.http().post(api("/leads")).set(bearer(leadKey.secret)).send({ leads: [{ externalId: "bos-1", email: "alan.turing@other.test", city: "Manchester" }] }).expect(200);
       const alan = await t.prisma.db.contact.findFirstOrThrow({ where: { workspaceId: w, email: "alan@bletchley.test" }, include: { identifiers: true } });
       expect(res.body.data.results[0]).toMatchObject({ status: "updated", matchedBy: "external", contactId: alan.id });
+      // A re-send of the same external record is an update, not a returning lead: no new lead.imported.
+      expect(await t.prisma.db.domainEvent.count({ where: { workspaceId: w, type: "lead.imported", subjectId: alan.id } })).toBe(1);
       expect(alan.city).toBe("Manchester");
       expect(alan.identifiers.map((i) => i.value).sort()).toEqual(["alan.turing@other.test", "alan@bletchley.test"]);
     });

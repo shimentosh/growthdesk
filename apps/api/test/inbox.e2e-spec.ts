@@ -92,7 +92,8 @@ describe("Unified inbox", () => {
     expect(row.preview).toMatchObject({ direction: "inbound", text: "Sounds interesting, tell me more." });
 
     const unread = await owner.get(`${base()}/unread-count`).expect(200);
-    expect(unread.body.data).toEqual({ total: 2, byChannel: { email: 2, whatsapp: 0, telegram: 0 } });
+    // Every inbox channel is counted, live chat ("web") included.
+    expect(unread.body.data).toEqual({ total: 2, byChannel: { email: 2, whatsapp: 0, telegram: 0, web: 0 } });
 
     const q = await owner.get(`${base()}/conversations?q=pricing`).expect(200);
     expect(q.body.data.items.map((c: { id: string }) => c.id)).toEqual([otherConvoId]);

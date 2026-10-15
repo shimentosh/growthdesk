@@ -144,7 +144,7 @@ export default function MailboxesPage() {
               title="No mailbox connected yet"
               description={
                 manage
-                  ? "Connect the address you want outreach to come from. Google and Microsoft 365 sign in directly; any other provider works over SMTP and IMAP."
+                  ? "Connect the address you want outreach to come from. Type it in — we recognise the provider, fill in its servers and show how to get the password it needs."
                   : "Nobody has connected a mailbox yet. Ask a workspace admin to connect one."
               }
               action={manage ? <ConnectMailboxMenu /> : undefined}

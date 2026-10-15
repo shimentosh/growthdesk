@@ -41,15 +41,28 @@ describe("Marketing engine", () => {
     await contact("denied", { fullName: "Dan Denied", email: "dan@readers.test", consentStatus: "denied" });
     await contact("suppressed", { fullName: "Sam Suppressed", email: "sam@readers.test", consentStatus: "granted" });
     await contact("other", { fullName: "Olga Other", email: "olga@readers.test", consentStatus: "granted" });
+    await contact("lead", { fullName: "Leo Lead", email: "leo@readers.test" });
     await owner.post(`/v1/workspaces/${w}/suppressions`).send({ kind: "email", value: "sam@readers.test", scope: "marketing" }).expect(201);
   });
   afterAll(async () => t.close());
 
   describe("lists and consent", () => {
-    it("adds only contacts with consent, and reports why the rest were skipped", async () => {
+    it("adds anyone who may be contacted, consent or not, and reports why the rest were skipped", async () => {
       listId = (await owner.post(api("/lists")).send({ name: "Newsletter", description: "Monthly news" }).expect(201)).body.data.id;
-      const res = await owner.post(api(`/lists/${listId}/members`)).send({ contactIds: [ids.granted, ids.unknown, ids.denied, ids.suppressed, ids.other] }).expect(200);
-      expect(res.body.data).toMatchObject({ added: 2, alreadyMember: 0, skipped: { no_consent: 1, consent_denied: 1, suppressed: 1 } });
+      // Lists hold leads too: Leo has no recorded consent and still joins (the marketing
+      // audience leaves him out). A refusal and a suppression are never added.
+      const res = await owner.post(api(`/lists/${listId}/members`)).send({ contactIds: [ids.granted, ids.lead, ids.denied, ids.suppressed, ids.other] }).expect(200);
+      expect(res.body.data).toEqual({
+        added: 3,
+        pending: 0,
+        alreadyMember: 0,
+        skipped: { not_found: 0, no_email: 0, do_not_contact: 0, no_consent: 0, consent_denied: 1, suppressed: 1, unsubscribed: 0 },
+      });
+      const joined = await t.prisma.db.domainEvent.findMany({ where: { workspaceId: w, type: "list.subscribed" } });
+      expect(joined.map((e) => e.subjectId).sort()).toEqual([ids.granted, ids.lead, ids.other].sort());
+      expect(joined[0]!.payload).toMatchObject({ listId, listName: "Newsletter", source: "manual" });
+      // No consent is recorded for Leo just by joining.
+      expect((await t.prisma.db.contact.findFirstOrThrow({ where: { workspaceId: w, id: ids.lead } })).consentStatus).toBe("unknown");
     });
 
     it("records consent when the person adding confirms it, but never overrides a refusal", async () => {
@@ -61,7 +74,7 @@ describe("Marketing engine", () => {
       const history = (await owner.get(`/v1/workspaces/${w}/contacts/${ids.unknown}/consent`).expect(200)).body.data;
       expect(history[0]).toMatchObject({ status: "granted", source: "Signed up at the booth", detail: { via: "list_add", listId } });
       const list = (await owner.get(api(`/lists/${listId}`)).expect(200)).body.data;
-      expect(list.counts).toEqual({ subscribed: 3, unsubscribed: 0, pending: 0 });
+      expect(list.counts).toEqual({ subscribed: 4, unsubscribed: 0, pending: 0 });
       const lists = (await owner.get(api(`/contacts/${ids.unknown}/lists`)).expect(200)).body.data;
       expect(lists).toMatchObject([{ status: "subscribed", list: { id: listId, name: "Newsletter" } }]);
     });
@@ -144,6 +157,7 @@ describe("Marketing engine", () => {
         })
         .expect(200);
       ready = (await owner.get(api(`/campaigns/${campaignId}/readiness`)).expect(200)).body.data;
+      // Four members, but Leo has no marketing consent: he is not in the audience.
       expect(ready).toEqual({ ready: true, problems: [], recipients: 3 });
       expect((await owner.post(api("/audience/count")).send({ listIds: [listId], excludeListIds: [] }).expect(200)).body.data).toEqual({ count: 3 });
     });
@@ -172,6 +186,7 @@ describe("Marketing engine", () => {
       expect(recipients.find((r: { email: string }) => r.email === "olga@readers.test")).toMatchObject({ status: "skipped", error: "No marketing consent" });
       const sent = recipients.filter((r: { status: string }) => r.status === "sent");
       expect(sent).toHaveLength(2);
+      expect(recipients.some((r: { email: string }) => r.email === "leo@readers.test")).toBe(false);
       ids.sendGrace = sent.find((r: { email: string }) => r.email === "grace@readers.test").id;
       ids.sendUma = sent.find((r: { email: string }) => r.email === "uma@readers.test").id;
 
@@ -293,10 +308,14 @@ describe("Marketing engine", () => {
   });
 
   describe("permissions and plans", () => {
-    it("needs the marketing feature", async () => {
+    it("needs the marketing feature to send, but not to keep lead lists", async () => {
       await setPlan(t, w, "free");
       await t.prisma.db.plan.update({ where: { key: "free" }, data: { features: { marketing: false } } });
-      await owner.post(api("/lists")).send({ name: "Blocked" }).expect(402);
+      await owner.post(api("/campaigns")).send({ name: "Blocked" }).expect(402);
+      await owner.post(api(`/campaigns/${campaignId}/test`)).send({ emails: ["me@readers.test"] }).expect(402);
+      // Lists are lead lists that outreach campaigns use too.
+      const leads = (await owner.post(api("/lists")).send({ name: "Leads" }).expect(201)).body.data.id;
+      await owner.post(api(`/lists/${leads}/members`)).send({ contactIds: [ids.lead] }).expect(200);
       await t.prisma.db.plan.update({ where: { key: "free" }, data: { features: { marketing: true, calling: true, ai: true } } });
       await setPlan(t, w, "growth");
     });

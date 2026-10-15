@@ -1,16 +1,16 @@
 "use client";
 
 import { useState } from "react";
-import { useRouter } from "next/navigation";
-import { Copy, MoreHorizontal, Pause, Play, Rocket, Square, Trash2 } from "lucide-react";
+import { usePathname, useRouter } from "next/navigation";
+import { CalendarClock, ChevronDown, Copy, ListOrdered, Mail, MoreHorizontal, Pause, Pencil, Play, Rocket, Square, Trash2, Type, Users } from "lucide-react";
 import { Button, IconButton } from "@/components/ui/Button";
 import { Callout } from "@/components/ui/Callout";
 import { ConfirmDialog, Modal } from "@/components/ui/Dialog";
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/DropdownMenu";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/DropdownMenu";
 import { useApiMutation, useApiQuery } from "@/lib/query";
 import { useFormat, useWorkspace } from "@/lib/session";
 import type { CampaignDetail, CampaignReadiness, LaunchResult } from "@/lib/types/campaigns";
-import { FixLink, SkippedList, plural, skippedTotal } from "./common";
+import { FixLink, SkippedList, isEditable, plural, skippedTotal } from "./common";
 
 type Dialog = "launch" | "stop" | "delete" | null;
 
@@ -26,6 +26,7 @@ export function CampaignActions({ campaign }: { campaign: CampaignDetail }) {
   const ws = useWorkspace();
   const f = useFormat();
   const router = useRouter();
+  const pathname = usePathname();
   const [dialog, setDialog] = useState<Dialog>(null);
   const [result, setResult] = useState<LaunchResult | null>(null);
   const canLaunch = ws.can("campaigns.launch");
@@ -75,9 +76,59 @@ export function CampaignActions({ campaign }: { campaign: CampaignDetail }) {
   // Launch only once the check has come back clean (the API refuses otherwise anyway).
   const launchBlocked = !r || readiness.isFetching || r.problems.length > 0;
   const canDelete = canWrite && s !== "running" && s !== "scheduled";
+  const live = s === "running" || s === "scheduled";
+  const openTab = (tab: string) => router.replace(`${pathname}?tab=${tab}`, { scroll: false });
 
   return (
     <>
+      {canWrite && (
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button icon={<Pencil />}>
+              Edit
+              <ChevronDown aria-hidden className="-mr-1 size-3.5 text-text-3" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            {live && canLaunch && (
+              <>
+                <DropdownMenuItem
+                  icon={<Pause />}
+                  onSelect={() =>
+                    pause.mutate(undefined, {
+                      onSuccess: () => openTab("steps"),
+                    })
+                  }
+                >
+                  Pause and edit steps
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+              </>
+            )}
+            {(isEditable(s) || live) && (
+              <>
+                {live && <DropdownMenuLabel>View (pause to change)</DropdownMenuLabel>}
+                <DropdownMenuItem icon={<ListOrdered />} onSelect={() => openTab("steps")}>
+                  Steps and messages
+                </DropdownMenuItem>
+                <DropdownMenuItem icon={<Users />} onSelect={() => openTab("audience")}>
+                  Audience
+                </DropdownMenuItem>
+                <DropdownMenuItem icon={<CalendarClock />} onSelect={() => openTab("schedule")}>
+                  Schedule and settings
+                </DropdownMenuItem>
+                <DropdownMenuItem icon={<Mail />} onSelect={() => openTab("mailboxes")}>
+                  Mailboxes
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+              </>
+            )}
+            <DropdownMenuItem icon={<Type />} onSelect={() => openTab("schedule")}>
+              Name and description
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      )}
       {canLaunch && s === "draft" && (
         <Button variant="primary" icon={<Rocket />} onClick={() => setDialog("launch")}>
           Launch

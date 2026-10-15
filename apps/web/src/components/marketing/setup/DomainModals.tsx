@@ -12,7 +12,7 @@ import { toast } from "@/components/ui/Toast";
 import { useMarketing } from "@/components/marketing/common";
 import { useApiMutation } from "@/lib/query";
 import type { ApiError } from "@/lib/api";
-import type { MarketingSetup, SendingDomain } from "@/lib/types/marketing";
+import type { EspConnection, MarketingSetup, SendingDomain } from "@/lib/types/marketing";
 import { formErrorOf } from "./errors";
 
 /** "s1, s2 s3" → ["s1", "s2", "s3"]. The API lower-cases and checks each one. */
@@ -32,7 +32,9 @@ const selectorError = (e: ApiError | null) => {
 const SELECTOR_HINT = "Up to five, separated by commas. For Amazon SES, the three Easy DKIM tokens from the identity's page.";
 
 /** Add a sending domain: the domain and, optionally, its DKIM selectors. */
-export function AddDomainModal({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
+export function AddDomainModal({ open, onOpenChange, esp }: { open: boolean; onOpenChange: (open: boolean) => void; esp: EspConnection | null }) {
+  // Resend creates the domain and its DKIM key itself: there are no selectors to ask for.
+  const managed = esp?.provider === "resend";
   const mk = useMarketing();
   const [domain, setDomain] = useState("");
   const [selectors, setSelectors] = useState("");
@@ -40,7 +42,7 @@ export function AddDomainModal({ open, onOpenChange }: { open: boolean; onOpenCh
   const add = useApiMutation<SendingDomain, { domain: string; dkimSelectors: string[] }>({
     path: mk.path("/domains"),
     invalidate: [mk.key("setup")],
-    success: (d) => `${d.domain} added. Publish its DNS records, then verify.`,
+    success: (d) => (d.esp ? `${d.domain} added to Resend. Publish the records it shows, then verify.` : `${d.domain} added. Publish its DNS records, then verify.`),
     errorToast: false,
     onSuccess: () => {
       setDomain("");
@@ -56,7 +58,7 @@ export function AddDomainModal({ open, onOpenChange }: { open: boolean; onOpenCh
   };
   const submit = (e: FormEvent) => {
     e.preventDefault();
-    add.mutate({ domain: domain.trim(), dkimSelectors: parseSelectors(selectors) });
+    add.mutate({ domain: domain.trim(), dkimSelectors: managed ? [] : parseSelectors(selectors) });
   };
 
   return (
@@ -71,7 +73,7 @@ export function AddDomainModal({ open, onOpenChange }: { open: boolean; onOpenCh
             Cancel
           </Button>
           <Button variant="primary" type="submit" form="add-domain" icon={<Plus />} loading={add.isPending}>
-            Add domain
+            {managed ? "Add to Resend" : "Add domain"}
           </Button>
         </>
       }
@@ -81,9 +83,13 @@ export function AddDomainModal({ open, onOpenChange }: { open: boolean; onOpenCh
         <Field label="Domain" required error={fields.domain}>
           <Input value={domain} onChange={(e) => setDomain(e.target.value)} placeholder="news.yourbrand.com" autoComplete="off" autoFocus className="font-mono" />
         </Field>
-        <Field label="DKIM selectors" hint={SELECTOR_HINT} error={selectorError(add.error)}>
-          <Input value={selectors} onChange={(e) => setSelectors(e.target.value)} placeholder="s1, s2" autoComplete="off" className="font-mono" />
-        </Field>
+        {managed ? (
+          <Callout tone="info">The domain is created in your Resend account, which generates its DKIM key. Its DNS records appear here right after, ready to copy.</Callout>
+        ) : (
+          <Field label="DKIM selectors" hint={SELECTOR_HINT} error={selectorError(add.error)}>
+            <Input value={selectors} onChange={(e) => setSelectors(e.target.value)} placeholder="s1, s2" autoComplete="off" className="font-mono" />
+          </Field>
+        )}
       </form>
     </Modal>
   );
