@@ -24,6 +24,7 @@ import {
   MailPlus,
   Megaphone,
   MessageCircle,
+  MessagesSquare,
   Palette,
   Phone,
   ScrollText,
@@ -123,6 +124,7 @@ export const CHANNEL: Record<Channel, { icon: LucideIcon; tint: Tint }> = {
   whatsapp: { icon: MessageCircle, tint: "green" },
   telegram: { icon: Send, tint: "cyan" },
   call: { icon: Phone, tint: "teal" },
+  web: { icon: MessagesSquare, tint: "purple" },
 };
 
 /** The channel's small coloured tile. */
