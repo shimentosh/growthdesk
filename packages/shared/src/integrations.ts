@@ -126,7 +126,12 @@ export const LeadInput = LeadContactFields.extend({
 export type LeadInputT = z.infer<typeof LeadInput>;
 
 export const LeadIngestInput = z.object({
-  leads: z.array(LeadInput).min(1, "Send at least one lead").max(MAX_LEADS_PER_REQUEST, `Send up to ${MAX_LEADS_PER_REQUEST} leads per request`),
+  /**
+   * Each lead is checked against LeadInput on its own, by the ingest service,
+   * so one lead with a bad field (a malformed email, a phone too long) fails
+   * alone in the results instead of refusing the whole request.
+   */
+  leads: z.array(z.unknown()).min(1, "Send at least one lead").max(MAX_LEADS_PER_REQUEST, `Send up to ${MAX_LEADS_PER_REQUEST} leads per request`),
   source: z.enum(LEAD_SOURCES).default("business_os"),
   /** A lead matching an existing contact: fill its blank fields ("update", never overwrites) or leave it ("skip"). */
   onDuplicate: z.enum(["update", "skip"]).default("update"),

@@ -458,6 +458,65 @@ export class AnalyticsService {
     };
   }
 
+  // ─── Lead sources ───────────────────────────────────────────────────────────
+
+  /**
+   * The contacts created in the range, grouped by where they came from
+   * (contact.leadSource, trimmed; case ignored, "" = not recorded). For each:
+   * how many, how many are qualified now, how many have a deal, how many have
+   * won one, and the value of their won deals — in the workspace currency
+   * only, like every value here. A cohort: a lead from the range whose deal
+   * closed later still counts as won.
+   */
+  async sources(ctx: RequestContext, q: AnalyticsRangeQueryT) {
+    const w = ws(ctx);
+    const r = resolveRange(q, w.timezone);
+    const s = sqlRange(r);
+    const uid = this.restrictedTo(ctx);
+    const wid = w.id;
+    const rows = await this.prisma.db.$queryRaw<{ source: string; leads: number; qualified: number; with_deal: number; won: number; won_value: number }[]>`
+      WITH cohort AS (
+        SELECT c.id, lower(trim(c."leadSource")) AS key, trim(c."leadSource") AS source, c.qualification::text AS qualification
+        FROM "Contact" c
+        WHERE c."workspaceId" = ${wid}::uuid AND c."deletedAt" IS NULL AND c."mergedIntoId" IS NULL
+          AND ${s.within(`c."createdAt"`)} ${this.own(`c."ownerId"`, uid)}
+      ),
+      deals AS (
+        SELECT d."contactId" AS contact,
+          bool_or(d.status::text = 'won') AS won,
+          coalesce(sum(d.value) FILTER (WHERE d.status::text = 'won' AND d.currency = ${w.currency}), 0) AS won_value
+        FROM "Deal" d JOIN cohort k ON k.id = d."contactId"
+        WHERE d."workspaceId" = ${wid}::uuid AND d."deletedAt" IS NULL ${this.own(`d."ownerId"`, uid)}
+        GROUP BY d."contactId"
+      )
+      SELECT min(k.source) AS source,
+        count(*)::int AS leads,
+        (count(*) FILTER (WHERE k.qualification = 'qualified'))::int AS qualified,
+        count(dl.contact)::int AS with_deal,
+        (count(*) FILTER (WHERE dl.won))::int AS won,
+        coalesce(sum(dl.won_value), 0)::float8 AS won_value
+      FROM cohort k LEFT JOIN deals dl ON dl.contact = k.id
+      GROUP BY k.key
+      ORDER BY 2 DESC, 1`;
+
+    const sources = rows.map((x) => ({
+      source: x.source,
+      leads: x.leads,
+      qualified: x.qualified,
+      withDeal: x.with_deal,
+      won: x.won,
+      wonValue: round2(x.won_value),
+      qualifiedRate: rate(x.qualified, x.leads),
+      winRate: rate(x.won, x.leads),
+    }));
+    const sum = (k: "leads" | "qualified" | "withDeal" | "won" | "wonValue") => sources.reduce((a, x) => a + x[k], 0);
+    return {
+      range: this.rangeDto(r, w.currency, uid),
+      sources,
+      totals: { leads: sum("leads"), qualified: sum("qualified"), withDeal: sum("withDeal"), won: sum("won"), wonValue: round2(sum("wonValue")) },
+    };
+  }
+
   // ─── Team leaderboard ───────────────────────────────────────────────────────
 
   /**

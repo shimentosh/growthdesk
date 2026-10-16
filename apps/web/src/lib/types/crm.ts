@@ -116,7 +116,8 @@ export type RelatedCall = {
 /** GET /contacts/:id — contacts.service.ts `get()` */
 export type ContactDetail = Contact & {
   identifiers: { id: string; kind: IdentifierKind; value: string; isPrimary: boolean }[];
-  sources: { id: string; source: string; externalId: string | null; importId: string | null; createdAt: string }[];
+  /** Where they came from; `details` is the sender's own account of it (form, campaign, page…), as label/value lines. */
+  sources: { id: string; source: string; externalId: string | null; importId: string | null; createdAt: string; details: { label: string; value: string }[] }[];
   /** Why the email/phone may not be contacted, or null. */
   suppressed: string | null;
   deals: RelatedDeal[];

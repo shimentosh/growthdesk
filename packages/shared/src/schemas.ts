@@ -199,7 +199,8 @@ export const ContactFilter = z.object({
   ownerId: z.union([uuid, z.literal("me"), z.literal("none")]).optional(),
   companyId: uuid.optional(),
   tag: z.array(z.string().max(50)).optional(),
-  leadSource: text(100).optional(),
+  /** Where they came from (contact.leadSource), ignoring case: one source, or any of several. */
+  leadSource: z.union([text(100), z.array(text(100)).max(50)]).optional(),
   hasEmail: z.boolean().optional(),
   hasPhone: z.boolean().optional(),
   noNextAction: z.boolean().optional(),

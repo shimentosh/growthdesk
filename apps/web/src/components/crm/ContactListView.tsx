@@ -74,6 +74,25 @@ function SortHeader({
   );
 }
 
+/** Where a contact came from, "Clientdesk · Website form" as "Clientdesk" (quiet) then "Website form". */
+export function SourceLabel({ source }: { source: string }) {
+  const text = source.trim();
+  if (!text) return <span className="text-text-3">—</span>;
+  const at = text.indexOf(" · ");
+  return (
+    <span className="block truncate" title={text}>
+      {at > 0 ? (
+        <>
+          <span className="text-text-3">{text.slice(0, at)} · </span>
+          <span className="text-text-2">{text.slice(at + 3)}</span>
+        </>
+      ) : (
+        <span className="text-text-2">{text}</span>
+      )}
+    </span>
+  );
+}
+
 /** The `filter` the page asks GET /contacts for (also used for the export link). */
 export function useContactQuery(state: ContactListState) {
   const ws = useWorkspace();
@@ -219,7 +238,7 @@ export function ContactListView({
   } else {
     body = (
       <div className={cn("overflow-x-auto transition-opacity", contacts.isFetching && contacts.isPlaceholderData && "opacity-60")}>
-        <table className="w-full min-w-[1080px] border-collapse text-sm">
+        <table className="w-full min-w-[1220px] border-collapse text-sm">
           <thead className="border-b border-line bg-s-2">
             <tr>
               {canWrite && (
@@ -234,6 +253,9 @@ export function ContactListView({
               <SortHeader field="fullName" label="Name" icon={COL.name} sort={state.sort} dir={state.dir} onSort={onSort} />
               <th scope="col" className={TH}>
                 <ColumnLabel icon={COL.company}>Company</ColumnLabel>
+              </th>
+              <th scope="col" className={TH}>
+                <ColumnLabel icon={COL.source}>Source</ColumnLabel>
               </th>
               {showStage && (
                 <th scope="col" className={TH}>
@@ -307,6 +329,9 @@ export function ContactListView({
                     ) : (
                       <span className="text-text-3">—</span>
                     )}
+                  </td>
+                  <td className={cn(TD, "max-w-52")}>
+                    <SourceLabel source={c.leadSource} />
                   </td>
                   {showStage && (
                     <td className={TD}>

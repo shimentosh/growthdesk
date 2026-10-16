@@ -32,6 +32,13 @@ export class AnalyticsController {
     return this.analytics.pipeline(ctx, q);
   }
 
+  /** Leads created in the range, by where they came from (contact.leadSource): qualified, with a deal, won, and revenue won. */
+  @Permission("analytics.read")
+  @Get("sources")
+  sources(@Ctx() ctx: RequestContext, @Query(AnalyticsRangeQuery) q: AnalyticsRangeQueryT) {
+    return this.analytics.sources(ctx, q);
+  }
+
   /** Per-member leaderboard. Needs analytics.team and a plan with advanced reporting. */
   @Permission("analytics.team")
   @Get("team")

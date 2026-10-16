@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useState, type ReactNode } from "react";
+import { Fragment, useState, type ReactNode } from "react";
 import { ListChecks, Plus, X } from "lucide-react";
 import { labelOf } from "@growthdesk/shared";
 import { AddToListModal } from "@/components/marketing/AddToListModal";
@@ -215,9 +215,31 @@ export function IdentityCard({ contact }: { contact: ContactDetail }) {
         {contact.sources.length > 0 && (
           <ul className="flex flex-col gap-1.5 border-t border-line pt-3">
             {contact.sources.map((s) => (
-              <li key={s.id} className="flex items-center justify-between gap-2 text-xs">
-                <span className="text-text-2">{labelOf(s.source)}</span>
-                <span className="text-text-3">{f.date(s.createdAt)}</span>
+              <li key={s.id} className="flex flex-col gap-1 text-xs">
+                <span className="flex items-center justify-between gap-2">
+                  <span className="font-medium text-text-2">{labelOf(s.source)}</span>
+                  <span className="text-text-3">{f.date(s.createdAt)}</span>
+                </span>
+                {s.details.length > 0 && (
+                  <dl className="grid grid-cols-[minmax(0,7rem)_minmax(0,1fr)] gap-x-2 gap-y-0.5">
+                    {s.details.map((d) => (
+                      <Fragment key={d.label}>
+                        <dt className="truncate text-text-3">{d.label}</dt>
+                        <dd className="min-w-0 truncate text-text-2" title={d.value}>
+                          {/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(d.value) && !Number.isNaN(Date.parse(d.value)) ? (
+                            f.dateTime(d.value)
+                          ) : /^https?:\/\//.test(d.value) ? (
+                            <a href={d.value} target="_blank" rel="noreferrer noopener" className="hover:text-accent-hi hover:underline">
+                              {d.value.replace(/^https?:\/\//, "")}
+                            </a>
+                          ) : (
+                            d.value
+                          )}
+                        </dd>
+                      </Fragment>
+                    ))}
+                  </dl>
+                )}
               </li>
             ))}
           </ul>

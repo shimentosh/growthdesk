@@ -109,7 +109,12 @@ Upserts up to **100** leads per request. Each lead goes through the same path as
 6. **History:** the request is recorded as an import (`source` `business_os`, `api` or `clientdesk`, name
    `API key: <key name>`), visible under Imports with its counts and per-lead errors.
 
-Leads are processed independently: one invalid lead fails alone and the rest are saved. A
+Leads are processed independently: one invalid lead fails alone and the rest are saved. That includes a
+lead whose fields break the rules below (a malformed email, a phone over 40 characters): it comes back as
+`failed` with `error.code` `validation_failed` and the field in the message, and the request still answers
+200 — only the request's own fields (`source`, `tags`, `listId`, …) and the number of leads refuse it whole.
+A re-send of a record whose contact was deleted in Growthdesk fails with `contact_deleted` rather than
+updating a contact nobody can see. A
 signed-in member with `contacts.import` may also call this endpoint with their session (enrolling then
 needs `campaigns.launch`).
 

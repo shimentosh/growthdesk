@@ -136,3 +136,21 @@ export type TeamMemberReport = {
 };
 
 export type AnalyticsTeam = { range: ReportRange; members: TeamMemberReport[] };
+
+/** GET /analytics/sources — leads created in the range, by contact.leadSource ("" = not recorded). */
+export type LeadSourceReport = {
+  source: string;
+  leads: number;
+  qualified: number;
+  withDeal: number;
+  won: number;
+  /** Won deals' value, in the workspace currency only. */
+  wonValue: number;
+  qualifiedRate: number | null;
+  winRate: number | null;
+};
+export type AnalyticsSources = {
+  range: ReportRange;
+  sources: LeadSourceReport[];
+  totals: { leads: number; qualified: number; withDeal: number; won: number; wonValue: number };
+};

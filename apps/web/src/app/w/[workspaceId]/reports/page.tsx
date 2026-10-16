@@ -21,6 +21,7 @@ import {
   Percent,
   Phone,
   Send,
+  Signpost,
   SquareKanban,
   Table2,
   Timer,
@@ -53,7 +54,7 @@ import { cn } from "@/lib/cn";
 import { formatNumber, formatPercent } from "@/lib/format";
 import { useApiQuery } from "@/lib/query";
 import { useFormat, useWorkspace } from "@/lib/session";
-import type { AnalyticsCampaigns, AnalyticsOverview, AnalyticsPipeline, AnalyticsTeam, SeriesPoint } from "@/lib/types/analytics";
+import type { AnalyticsCampaigns, AnalyticsOverview, AnalyticsPipeline, AnalyticsSources, AnalyticsTeam, SeriesPoint } from "@/lib/types/analytics";
 
 /*
  * Reports: outreach, pipeline and activity for a range of days in the
@@ -126,6 +127,7 @@ function Reports() {
             <Outreach o={o} />
             <TrendCard series={o.series} currency={o.range.currency} />
             <PipelineSection o={o} query={query} />
+            <SourcesSection query={query} />
             <ActivitySection o={o} />
             <CampaignsSection query={query} />
             {ws.can("analytics.team") && <TeamSection query={query} />}
@@ -362,6 +364,82 @@ function Th({ children, left, icon }: { children: ReactNode; left?: boolean; ico
 const Num = ({ v, dash }: { v: number | string; dash?: boolean }) => (
   <td className={cn("px-3 py-2 text-right tabular-nums", v && v !== "—" ? "text-text" : "text-text-3")}>{dash ? "—" : typeof v === "number" ? formatNumber(v) : v}</td>
 );
+
+/** Leads created in the range by where they came from, and how far each source's leads got. */
+function SourcesSection({ query }: { query: DayRange }) {
+  const ws = useWorkspace();
+  const f = useFormat();
+  const data = useApiQuery<AnalyticsSources>(ws.key("analytics", "sources"), ws.path("/analytics/sources"), { query, keepPrevious: true });
+  const linkTo = (source: string) => ws.href(`/contacts?stage=all&source=${encodeURIComponent(source || "-")}`);
+  return (
+    <Section
+      title="Leads by source"
+      icon={<Signpost />}
+      description="Contacts created in the range, grouped by where they came from. Won and revenue count their deals whenever they closed; revenue is in the workspace currency."
+    >
+      <QueryState query={data} loading={<SkeletonText lines={5} />}>
+        {(d) =>
+          d.sources.length === 0 ? (
+            <Card>
+              <EmptyState compact icon={<Signpost />} title="No new leads in this range" description="Leads appear here by source as they arrive — from Clientdesk, forms, imports or the API." />
+            </Card>
+          ) : (
+            <Card className="overflow-hidden">
+              <div className="overflow-x-auto">
+                <table className="w-full min-w-[760px] border-collapse text-sm">
+                  <thead className="border-b border-line bg-s-2">
+                    <tr>
+                      <Th left icon={COL.source}>
+                        Source
+                      </Th>
+                      <Th icon={COL.people}>Leads</Th>
+                      <Th icon={COL.qualification}>Qualified</Th>
+                      <Th icon={COL.rate}>Qualified %</Th>
+                      <Th icon={COL.deals}>With a deal</Th>
+                      <Th icon={COL.won}>Won</Th>
+                      <Th icon={COL.rate}>Win %</Th>
+                      <Th icon={COL.amount}>Revenue won</Th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-line">
+                    {d.sources.map((x) => (
+                      <tr key={x.source || "(none)"}>
+                        <td className="max-w-80 px-3 py-2">
+                          <Link href={linkTo(x.source)} className="block truncate font-medium text-text hover:underline" title={x.source || "No source recorded"}>
+                            {x.source || <span className="text-text-3 italic">No source recorded</span>}
+                          </Link>
+                        </td>
+                        <Num v={x.leads} />
+                        <Num v={x.qualified} />
+                        <Num v={pct(x.qualifiedRate)} />
+                        <Num v={x.withDeal} />
+                        <Num v={x.won} />
+                        <Num v={pct(x.winRate)} />
+                        <Num v={x.wonValue ? f.money(x.wonValue, d.range.currency) : 0} />
+                      </tr>
+                    ))}
+                  </tbody>
+                  <tfoot className="border-t border-line bg-s-2 font-medium">
+                    <tr>
+                      <td className="px-3 py-2 text-text">All sources</td>
+                      <Num v={d.totals.leads} />
+                      <Num v={d.totals.qualified} />
+                      <Num v={pct(d.totals.leads ? d.totals.qualified / d.totals.leads : null)} />
+                      <Num v={d.totals.withDeal} />
+                      <Num v={d.totals.won} />
+                      <Num v={pct(d.totals.leads ? d.totals.won / d.totals.leads : null)} />
+                      <Num v={d.totals.wonValue ? f.money(d.totals.wonValue, d.range.currency) : 0} />
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
+            </Card>
+          )
+        }
+      </QueryState>
+    </Section>
+  );
+}
 
 function CampaignsSection({ query }: { query: DayRange }) {
   const ws = useWorkspace();

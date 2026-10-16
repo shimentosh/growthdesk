@@ -115,6 +115,55 @@ function consentSourceOf(source: string): string {
 
 const blank = (v: unknown) => v === undefined || v === null || (typeof v === "string" && v.trim() === "");
 
+/** Labels for the keys senders put in a source's `data` (Clientdesk, docs/BUSINESS_OS_API.md); others are spelled out. */
+const SOURCE_DETAIL_LABELS: Record<string, string> = {
+  formName: "Form",
+  service: "Service",
+  audience: "Audience",
+  channel: "Channel",
+  adPlatform: "Ad platform",
+  utmSource: "UTM source",
+  utmMedium: "UTM medium",
+  utmCampaign: "UTM campaign",
+  utmTerm: "UTM term",
+  utmContent: "UTM content",
+  landingUrl: "Landing page",
+  pageUrl: "Page",
+  referrer: "Referrer",
+  emailAsGiven: "Email as typed",
+  phoneAsGiven: "Phone as typed",
+  websiteAsGiven: "Website as typed",
+  marketingConsentAt: "Opted in",
+};
+/** Bookkeeping a person doesn't need to read. */
+const SOURCE_DETAIL_HIDDEN = new Set(["clientdeskLeadId", "createdAt", "source", "status", "valueCents", "currency"]);
+
+/**
+ * A source's `data` as label/value lines for the contact page: the sender's
+ * own words for where the person came from (the form, the campaign, the page).
+ * Only plain values, at most twenty, each kept short.
+ */
+function sourceDetails(data: unknown): { label: string; value: string }[] {
+  if (!data || typeof data !== "object" || Array.isArray(data)) return [];
+  const out: { label: string; value: string }[] = [];
+  // Known keys in the order people read them (form, service, campaign…), then the sender's others.
+  const known = Object.keys(SOURCE_DETAIL_LABELS);
+  const rank = (k: string) => (known.includes(k) ? known.indexOf(k) : known.length);
+  const entries = Object.entries(data as Record<string, unknown>).sort(([a], [b]) => rank(a) - rank(b));
+  for (const [key, raw] of entries) {
+    if (SOURCE_DETAIL_HIDDEN.has(key)) continue;
+    if (typeof raw !== "string" && typeof raw !== "number" && typeof raw !== "boolean") continue;
+    let value = String(raw).trim();
+    if (!value) continue;
+    // A sender's code word ("paid_search") as words.
+    if (key === "channel" || key === "adPlatform") value = value.replace(/[_-]+/g, " ").replace(/^./, (c) => c.toUpperCase());
+    const label = SOURCE_DETAIL_LABELS[key] ?? key.replace(/([a-z])([A-Z])/g, "$1 $2").replace(/[_-]+/g, " ").replace(/^./, (c) => c.toUpperCase());
+    out.push({ label, value: value.length > 300 ? `${value.slice(0, 299)}…` : value });
+    if (out.length === 20) break;
+  }
+  return out;
+}
+
 @Injectable()
 export class ContactsService {
   constructor(
@@ -154,7 +203,9 @@ export class ContactsService {
     else if (f.ownerId) and.push({ ownerId: f.ownerId });
     if (f.companyId) and.push({ companyId: f.companyId });
     if (f.tag?.length) and.push({ tags: { some: { tag: { name: { in: f.tag } } } } });
-    if (f.leadSource) and.push({ leadSource: { equals: f.leadSource, mode: "insensitive" } });
+    const sources = f.leadSource === undefined ? [] : Array.isArray(f.leadSource) ? f.leadSource : [f.leadSource];
+    // "" is "no source recorded", so a filter can ask for the contacts nobody attributed.
+    if (sources.length) and.push({ OR: sources.map((src) => ({ leadSource: { equals: src, mode: "insensitive" as const } })) });
     if (f.hasEmail !== undefined) and.push(f.hasEmail ? { email: { not: null } } : { email: null });
     if (f.hasPhone !== undefined) and.push(f.hasPhone ? { phone: { not: null } } : { phone: null });
     if (f.noNextAction) and.push({ nextActionAt: null });
@@ -168,6 +219,22 @@ export class ContactsService {
     const scope = ownershipScope(ctx);
     if (Object.keys(scope).length) and.push(scope as Prisma.ContactWhereInput);
     return { workspaceId: w.id, deletedAt: null, ...(and.length ? { AND: and } : {}) };
+  }
+
+  /** Every lead source among the contacts this filter reaches, with how many — the Source filter's choices. */
+  async leadSources(ctx: RequestContext, filter: ContactFilterT) {
+    const { leadSource: _ignored, ...rest } = filter;
+    const rows = await this.prisma.db.contact.groupBy({ by: ["leadSource"], where: this.where(ctx, rest), _count: { _all: true } });
+    // Sources differing only in case or spacing are one source (the filter ignores case too).
+    const merged = new Map<string, { source: string; count: number }>();
+    for (const r of rows) {
+      const source = r.leadSource.trim();
+      const key = source.toLowerCase();
+      const at = merged.get(key);
+      if (at) at.count += r._count._all;
+      else merged.set(key, { source, count: r._count._all });
+    }
+    return [...merged.values()].sort((a, b) => b.count - a.count || a.source.localeCompare(b.source));
   }
 
   async list(ctx: RequestContext, filter: ContactFilterT, page: number, pageSize: number, sort?: string, dir: "asc" | "desc" = "desc") {
@@ -267,7 +334,7 @@ export class ContactsService {
       scoreBreakdown: c.scoreBreakdown,
       scoreUpdatedAt: c.scoreUpdatedAt,
       identifiers: c.identifiers.map((i) => ({ id: i.id, kind: i.kind, value: i.value, isPrimary: i.isPrimary })),
-      sources: c.sources.map((s) => ({ id: s.id, source: s.source, externalId: s.externalId, importId: s.importId, createdAt: s.createdAt })),
+      sources: c.sources.map((s) => ({ id: s.id, source: s.source, externalId: s.externalId, importId: s.importId, createdAt: s.createdAt, details: sourceDetails(s.data) })),
       suppressed,
       deals: deals.map((d) => ({ id: d.id, name: d.name, value: Number(d.value), currency: d.currency, status: d.status, stage: d.stage })),
       tasks,
@@ -354,6 +421,11 @@ export class ContactsService {
           const src = await tx.contactSource.findFirst({ where: { workspaceId, source: opts.source, externalId: opts.externalId } });
           if (src) {
             const c = await tx.contact.findFirst({ where: { workspaceId, id: src.contactId } });
+            // Someone deleted this record here: a re-send of it is refused rather than reported as an
+            // update of a contact nobody can see. (A merged contact is deleted too, but forwards.)
+            if (c && c.deletedAt && !c.mergedIntoId) {
+              throw new ApiError(409, "contact_deleted", "This record's contact was deleted in Growthdesk, so a re-send of it isn't added again. A new submission from the same person is.");
+            }
             if (c) {
               // A merged contact forwards to the one it was merged into.
               match = { id: c.mergedIntoId ?? c.id };

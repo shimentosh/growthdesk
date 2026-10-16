@@ -15,6 +15,7 @@ import {
   Mail,
   Phone,
   Search,
+  Signpost,
   Tag,
   Trash2,
   UserRound,
@@ -43,6 +44,7 @@ import { useWorkspace } from "@/lib/session";
 import type { SavedView } from "@/lib/types/crm";
 import { DEFAULT_SORT, activeFilterCount, fromFilter, toFilter, type ContactListState, type SortField, type YesNo } from "./contactListState";
 import { useTags } from "./Tags";
+import { useLeadSources } from "./useLeadSources";
 
 type Update = (patch: Partial<ContactListState>, opts?: { replace?: boolean }) => void;
 
@@ -66,6 +68,7 @@ function Group({ title, icon, children }: { title: string; icon?: ReactNode; chi
 export function FilterPopover({ state, update }: { state: ContactListState; update: Update }) {
   const ws = useWorkspace();
   const tags = useTags();
+  const sources = useLeadSources(state);
   const members = useMembers();
   const count = activeFilterCount(state);
   const yesNo = [
@@ -138,6 +141,37 @@ export function FilterPopover({ state, update }: { state: ContactListState; upda
         </div>
 
         <div className="mt-5">
+          <Group title="Source" icon={<Signpost />}>
+            {sources.isPending ? (
+              <p className="text-xs text-text-3">Loading sources…</p>
+            ) : !sources.data?.length ? (
+              <p className="text-xs text-text-3">No sources recorded yet.</p>
+            ) : (
+              <div className="grid max-h-40 grid-cols-1 gap-1.5 overflow-y-auto sm:grid-cols-2">
+                {sources.data.map((src) => (
+                  <Checkbox
+                    key={src.source || "(none)"}
+                    checked={state.source.some((x) => x.toLowerCase() === src.source.toLowerCase())}
+                    onCheckedChange={() =>
+                      update({
+                        source: state.source.some((x) => x.toLowerCase() === src.source.toLowerCase())
+                          ? state.source.filter((x) => x.toLowerCase() !== src.source.toLowerCase())
+                          : [...state.source, src.source],
+                      })
+                    }
+                    label={
+                      <span>
+                        {src.source || <span className="italic">No source</span>} <span className="text-xs text-text-3 tabular-nums">({src.count})</span>
+                      </span>
+                    }
+                  />
+                ))}
+              </div>
+            )}
+          </Group>
+        </div>
+
+        <div className="mt-5">
           <Group title="Tags" icon={<Tag />}>
             {tags.isPending ? (
               <p className="text-xs text-text-3">Loading tags…</p>
@@ -203,6 +237,9 @@ export function FilterChips({ state, update, clear }: { state: ContactListState;
       {state.priority.length > 0 && <Chip icon={<Flag />} label={`Priority: ${state.priority.map(labelOf).join(", ")}`} onRemove={() => update({ priority: [] })} />}
       {state.owner && <Chip icon={<UserRound />} label={`Owner: ${ownerLabel}`} onRemove={() => update({ owner: "" })} />}
       {state.tag.length > 0 && <Chip icon={<Tag />} label={`Tag: ${state.tag.join(", ")}`} onRemove={() => update({ tag: [] })} />}
+      {state.source.length > 0 && (
+        <Chip icon={<Signpost />} label={`Source: ${state.source.map((x) => x || "none").join(", ")}`} onRemove={() => update({ source: [] })} />
+      )}
       {state.hasEmail && <Chip icon={<Mail />} label={`Has email: ${yn(state.hasEmail)}`} onRemove={() => update({ hasEmail: "" })} />}
       {state.hasPhone && <Chip icon={<Phone />} label={`Has phone: ${yn(state.hasPhone)}`} onRemove={() => update({ hasPhone: "" })} />}
       {state.noNextAction && <Chip icon={<CalendarOff />} label="No next action" onRemove={() => update({ noNextAction: false })} />}

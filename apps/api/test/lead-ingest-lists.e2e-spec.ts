@@ -62,6 +62,9 @@ describe("Lead ingest: lists by name, connection check", () => {
     expect(byName["Website check"]).toMatchObject({ created: true, added: 2 });
     expect(byName["Added manually"]).toMatchObject({ created: true, added: 1 });
     expect(d.list).toBeNull();
+    // The membership names the app that sent it, not "a team member".
+    const member = await t.prisma.db.listMembership.findFirstOrThrow({ where: { workspaceId: w, listId: byName["Website check"].listId } });
+    expect(member.source).toBe("From Clientdesk");
 
     // A second request reuses the lists it made, and a re-sent lead is already a member.
     const again = (await t.http().post(api("/leads")).set(bearer(key)).send({ source: "clientdesk", leads: [lead(2, { listName: "Website check" })] }).expect(200)).body.data;

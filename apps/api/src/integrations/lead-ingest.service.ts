@@ -1,5 +1,6 @@
 import { Injectable, Logger } from "@nestjs/common";
-import { type ContactInputT, type LeadIngestInputT, type LeadInputT, isUnlimited } from "@growthdesk/shared";
+import type { z } from "zod";
+import { LeadInput, type ContactInputT, type LeadIngestInputT, type LeadInputT, isUnlimited } from "@growthdesk/shared";
 import type { CampaignStatus } from "../generated/prisma/client.js";
 import { PrismaService } from "../prisma/prisma.service.js";
 import { EntitlementsService } from "../billing/entitlements.service.js";
@@ -63,6 +64,20 @@ const listKey = (name: string) => name.trim().replace(/\s+/g, " ").toLowerCase()
 
 const blank = (v: string | null | undefined) => !v || !v.trim();
 
+/** Why a lead failed its checks, field by field ("phone: Too big…; email: Invalid email address"). */
+function invalidLead(error: z.ZodError): string {
+  return error.issues
+    .slice(0, 3)
+    .map((i) => (i.path.length ? `${i.path.join(".")}: ${i.message}` : i.message))
+    .join("; ");
+}
+
+/** The sender's id for a lead that failed its checks, when it gave a usable one. */
+const rawExternalId = (raw: unknown): string | null => {
+  const v = raw && typeof raw === "object" ? (raw as Record<string, unknown>).externalId : undefined;
+  return typeof v === "string" && v.trim() ? v.trim().slice(0, 200) : null;
+};
+
 /*
  * Business OS (and any API client) lead ingest. Each lead goes through
  * ContactsService.upsert — the single way a contact enters the CRM — so it is
@@ -96,8 +111,11 @@ export class LeadIngestService {
     await this.entitlements.assertFullAccess(w.billingAccountId, "Importing leads");
     if (input.campaignId) await this.checkCampaign(ctx, input.campaignId);
     if (input.listId) await this.checkList(ctx, input.listId);
+    // Each lead is checked on its own: one with a bad field fails alone, the others are saved.
+    const checked = input.leads.map((raw) => LeadInput.safeParse(raw));
+    const leads = checked.map((c) => (c.success ? c.data : null));
     // Lists named by the request or its leads are found (or made) before any lead is saved.
-    const named = await this.resolveLists(ctx, [input.listName, ...input.leads.map((l) => l.listName)]);
+    const named = await this.resolveLists(ctx, [input.listName, ...leads.map((l) => l?.listName)]);
 
     const defaultCountry = await this.contacts.defaultCountry(w.id);
     const keyName = ctx.apiKey?.name;
@@ -125,7 +143,13 @@ export class LeadIngestService {
     try {
       // Capacity is checked for the batch, then counted down as contacts are created (as ImportsService does).
       let remaining = await this.entitlements.remaining(w.billingAccountId, "contacts");
-      for (const [index, lead] of input.leads.entries()) {
+      for (const [index, lead] of leads.entries()) {
+        if (!lead) {
+          const check = checked[index]!;
+          const message = check.success ? "Not a lead." : invalidLead(check.error);
+          results.push({ index, externalId: rawExternalId(input.leads[index]), contactId: null, status: "failed", matchedBy: null, error: { code: "validation_failed", message } });
+          continue;
+        }
         const externalId = lead.externalId ?? null;
         try {
           const contact = await this.toContact(w.id, lead, input.tags, ctx);
@@ -193,6 +217,9 @@ export class LeadIngestService {
     });
     await this.events.kick();
 
+    // List memberships say where they came from: the app or key that sent them, not "a team member".
+    const via = ctx.apiKey ? `From ${ctx.apiKey.name}` : undefined;
+
     let enrollment: IngestResult["enrollment"] = null;
     if (input.campaignId) {
       const ids = [...new Set(results.map((r) => r.contactId).filter((id): id is string => Boolean(id)))];
@@ -217,7 +244,7 @@ export class LeadIngestService {
         list = { listId: input.listId, added: 0, pending: 0, alreadyMember: 0, skipped: null, error: null };
       } else {
         try {
-          const res = await this.lists.addMembers(ctx, input.listId, { contactIds: ids, ...(input.consent ? { consent: input.consent } : {}) });
+          const res = await this.lists.addMembers(ctx, input.listId, { contactIds: ids, ...(input.consent ? { consent: input.consent } : {}) }, via);
           list = { listId: input.listId, added: res.added, pending: res.pending, alreadyMember: res.alreadyMember, skipped: res.skipped, error: null };
         } catch (e) {
           // The contacts are saved either way; say why subscribing them did not happen (plan limit, archived list).
@@ -231,7 +258,7 @@ export class LeadIngestService {
     const lists: IngestResult["lists"] = [];
     const members = new Map<string, Set<string>>();
     for (const r of results) {
-      const name = input.leads[r.index]?.listName ?? input.listName;
+      const name = leads[r.index]?.listName ?? input.listName;
       const target = name ? named.get(listKey(name)) : undefined;
       if (!target || !r.contactId) continue;
       if (!members.has(target.id)) members.set(target.id, new Set());
@@ -246,7 +273,7 @@ export class LeadIngestService {
       }
       try {
         // Through ListsService, so double opt-in, suppression, plan limits and list.subscribed all hold.
-        const res = await this.lists.addMembers(ctx, target.id, { contactIds: ids, ...(input.consent ? { consent: input.consent } : {}) });
+        const res = await this.lists.addMembers(ctx, target.id, { contactIds: ids, ...(input.consent ? { consent: input.consent } : {}) }, via);
         lists.push({ ...base, added: res.added, pending: res.pending, alreadyMember: res.alreadyMember, skipped: res.skipped, error: null });
       } catch (e) {
         if (!isApiError(e)) throw e;

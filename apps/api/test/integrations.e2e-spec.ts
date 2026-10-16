@@ -248,6 +248,41 @@ describe("Integrations: API keys, public API, lead ingest", () => {
     });
   });
 
+  describe("lead ingest: one bad lead fails alone", () => {
+    it("saves the good leads and reports the bad one field by field", async () => {
+      const res = await t
+        .http()
+        .post(api("/leads"))
+        .set(bearer(leadKey.secret))
+        .send({
+          source: "clientdesk",
+          leads: [
+            { externalId: "led_ok1", fullName: "Grace Hopper", email: "grace.ingest@navy.test" },
+            { externalId: "led_bad", fullName: "Long Phone", phone: "+1 555 0100 ext 1234 (ask for the front desk, please)" },
+            { externalId: "led_bad2", fullName: "Bad Email", email: "not-an-email" },
+            { externalId: "led_ok2", fullName: "Katherine Johnson", email: "kj.ingest@nasa.test" },
+          ],
+        })
+        .expect(200);
+      const d = res.body.data;
+      expect(d.summary).toMatchObject({ received: 4, created: 2, failed: 2 });
+      expect(d.results.map((r: { status: string }) => r.status)).toEqual(["created", "failed", "failed", "created"]);
+      expect(d.results[1]).toMatchObject({ externalId: "led_bad", error: { code: "validation_failed" } });
+      expect(d.results[1].error.message).toContain("phone");
+      expect(d.results[2].error.message).toContain("email");
+
+      const imp = await t.prisma.db.import.findFirstOrThrow({ where: { id: d.importId, workspaceId: w } });
+      expect(imp).toMatchObject({ createdCount: 2, failedCount: 2 });
+    });
+
+    it("refuses a re-send of a record whose contact was deleted, instead of updating it unseen", async () => {
+      const first = await t.http().post(api("/leads")).set(bearer(leadKey.secret)).send({ source: "clientdesk", leads: [{ externalId: "led_gone", fullName: "Gone Soon", email: "gone@x.test" }] }).expect(200);
+      await owner.delete(api(`/contacts/${first.body.data.results[0].contactId}`)).expect(200);
+      const again = await t.http().post(api("/leads")).set(bearer(leadKey.secret)).send({ source: "clientdesk", leads: [{ externalId: "led_gone", fullName: "Gone Soon", email: "gone@x.test" }] }).expect(200);
+      expect(again.body.data.results[0]).toMatchObject({ status: "failed", error: { code: "contact_deleted" } });
+    });
+  });
+
   describe("app connections (Settings → Integrations)", () => {
     it("gives an app's key that app's scopes, whatever the request asked for, and names the app", async () => {
       const res = await other.post(api("/api-keys", w2)).send({ name: "Clientdesk", scopes: ["contacts:read"], app: "clientdesk" }).expect(201);

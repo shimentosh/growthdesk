@@ -5,6 +5,7 @@
  * pasted link all land on the same rows:
  *
  *   ?q=acme&status=new,contacted&owner=me&tag=vip&hasEmail=yes&noNextAction=1
+ *    &source=Clientdesk%20%C2%B7%20Website&source=-   (one per source; "-" = none recorded)
  *    &view=<savedViewId>&sort=fullName&dir=asc&page=2&pageSize=50
  *    &stage=lead,sales&list=<listId>&archived=only
  *
@@ -41,6 +42,8 @@ export type ContactListState = {
   /** "me", "none", a user id, or "" for anyone. */
   owner: string;
   tag: string[];
+  /** Lead sources (contact.leadSource, case ignored); "" = no source recorded. */
+  source: string[];
   hasEmail: YesNo;
   hasPhone: YesNo;
   noNextAction: boolean;
@@ -63,7 +66,7 @@ export const DEFAULT_PAGE_SIZE = 50;
 export const PAGE_SIZES = [25, 50, 100, 200];
 
 /** The keys that narrow the rows (changing one drops the active saved view). */
-export const FILTER_KEYS = ["q", "status", "qualification", "priority", "owner", "tag", "hasEmail", "hasPhone", "noNextAction", "companyId", "stage", "listId", "archived"] as const;
+export const FILTER_KEYS = ["q", "status", "qualification", "priority", "owner", "tag", "source", "hasEmail", "hasPhone", "noNextAction", "companyId", "stage", "listId", "archived"] as const;
 
 /** Per-page defaults: which stages a page shows when the URL does not say. */
 export type ListDefaults = { stage: readonly LifecycleStage[] };
@@ -74,6 +77,9 @@ const list = <T extends string>(raw: string | null, allowed: readonly T[]): T[] 
     .split(",")
     .map((s) => s.trim())
     .filter((s): s is T => (allowed as readonly string[]).includes(s));
+
+/** A source in the URL: one `source` parameter each (sources may hold commas); "-" stands for "none recorded". */
+const NO_SOURCE = "-";
 
 const yesNo = (raw: string | null): YesNo => (raw === "yes" || raw === "no" ? raw : "");
 
@@ -89,6 +95,7 @@ export function parseState(sp: URLSearchParams, defaults: ListDefaults = NO_DEFA
     priority: list(sp.get("priority"), PRIORITIES),
     owner: sp.get("owner") ?? "",
     tag: (sp.get("tag") ?? "").split(",").map((t) => t.trim()).filter(Boolean),
+    source: [...new Set(sp.getAll("source").map((v) => (v === NO_SOURCE ? "" : v.trim())))],
     hasEmail: yesNo(sp.get("hasEmail")),
     hasPhone: yesNo(sp.get("hasPhone")),
     noNextAction: sp.get("noNextAction") === "1",
@@ -113,6 +120,7 @@ export function toFilter(s: ContactListState): ContactFilterT | undefined {
   if (s.priority.length) f.priority = s.priority;
   if (s.owner) f.ownerId = s.owner;
   if (s.tag.length) f.tag = s.tag;
+  if (s.source.length) f.leadSource = s.source;
   if (s.hasEmail) f.hasEmail = s.hasEmail === "yes";
   if (s.hasPhone) f.hasPhone = s.hasPhone === "yes";
   if (s.noNextAction) f.noNextAction = true;
@@ -134,6 +142,7 @@ export function fromFilter(filters: Record<string, unknown>): Partial<ContactLis
     priority: list(arr(filters.priority).join(","), PRIORITIES),
     owner: typeof filters.ownerId === "string" ? filters.ownerId : "",
     tag: arr(filters.tag),
+    source: typeof filters.leadSource === "string" ? [filters.leadSource] : arr(filters.leadSource),
     hasEmail: bool(filters.hasEmail),
     hasPhone: bool(filters.hasPhone),
     noNextAction: filters.noNextAction === true,
@@ -153,6 +162,7 @@ export function activeFilterCount(s: ContactListState): number {
     (s.priority.length ? 1 : 0) +
     (s.owner ? 1 : 0) +
     (s.tag.length ? 1 : 0) +
+    (s.source.length ? 1 : 0) +
     (s.hasEmail ? 1 : 0) +
     (s.hasPhone ? 1 : 0) +
     (s.noNextAction ? 1 : 0) +
@@ -173,6 +183,7 @@ function serialize(s: ContactListState, defaults: ListDefaults): string {
   set("priority", s.priority.join(","));
   set("owner", s.owner);
   set("tag", s.tag.join(","));
+  for (const src of s.source) p.append("source", src || NO_SOURCE);
   set("hasEmail", s.hasEmail);
   set("hasPhone", s.hasPhone);
   if (s.noNextAction) p.set("noNextAction", "1");
@@ -228,6 +239,7 @@ export function useContactListState(defaults: ListDefaults = NO_DEFAULTS) {
         priority: [],
         owner: "",
         tag: [],
+        source: [],
         hasEmail: "",
         hasPhone: "",
         noNextAction: false,

@@ -163,7 +163,11 @@ export class ListsService {
    * waits for their confirmation. Re-adding someone still pending sends the
    * email again, at most once a day.
    */
-  async addMembers(ctx: RequestContext, id: string, input: z.infer<typeof ListMembersAdd>): Promise<AddResult> {
+  /**
+   * `via` names who added them on the membership when it was not a person —
+   * "From Clientdesk" for leads an API key sent — instead of "Added by a team member".
+   */
+  async addMembers(ctx: RequestContext, id: string, input: z.infer<typeof ListMembersAdd>, via?: string): Promise<AddResult> {
     const w = ws(ctx);
     const list = await this.find(ctx, id);
     if (list.archivedAt) throw conflict("This list is archived. Restore it before adding people.");
@@ -219,7 +223,8 @@ export class ListsService {
     }
 
     const now = new Date();
-    const source = input.consent ? `Added by a team member (${input.consent.source})` : "Added by a team member";
+    const who = via ?? "Added by a team member";
+    const source = input.consent ? `${who} (${input.consent.source})` : who;
     let subscribed = 0;
     for (const c of toAdd) {
       if (needsConfirm(c)) {

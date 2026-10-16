@@ -72,6 +72,15 @@ export class CrmController {
     return this.contacts.list(ctx, filter, q.page, q.pageSize, q.sort, q.dir);
   }
 
+  /** The Source filter's choices: each lead source among the contacts the rest of the filter reaches, with a count. Before contacts/:id. */
+  @ApiKeyScope("contacts:read")
+  @Permission("contacts.read")
+  @Get("contacts/lead-sources")
+  async leadSources(@Ctx() ctx: RequestContext, @Query(ContactListQuery) q: z.infer<typeof ContactListQuery>) {
+    const filter = await this.filterFrom(ctx, q.filter, q.viewId);
+    return this.contacts.leadSources(ctx, filter);
+  }
+
   @ApiKeyScope("contacts:write")
   @Permission("contacts.write")
   @Post("contacts")
