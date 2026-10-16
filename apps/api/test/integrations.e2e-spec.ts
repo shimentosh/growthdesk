@@ -248,6 +248,20 @@ describe("Integrations: API keys, public API, lead ingest", () => {
     });
   });
 
+  describe("app connections (Settings → Integrations)", () => {
+    it("gives an app's key that app's scopes, whatever the request asked for, and names the app", async () => {
+      const res = await other.post(api("/api-keys", w2)).send({ name: "Clientdesk", scopes: ["contacts:read"], app: "clientdesk" }).expect(201);
+      expect(res.body.data).toMatchObject({ app: "clientdesk", scopes: ["leads:write", "products:write"], status: "active" });
+
+      const list = await other.get(api("/api-keys", w2)).expect(200);
+      expect(list.body.data.find((k: { id: string }) => k.id === res.body.data.id).app).toBe("clientdesk");
+      expect(list.body.data.find((k: { id: string }) => k.id === otherKey.id).app).toBeNull();
+
+      await other.post(api("/api-keys", w2)).send({ name: "Zapier", scopes: ["leads:write"], app: "zapier" }).expect(400);
+      await other.delete(api(`/api-keys/${res.body.data.id}`, w2)).expect(200);
+    });
+  });
+
   describe("revocation, expiry and plan changes", () => {
     it("refuses a revoked key at once and keeps it listed", async () => {
       await t.http().get(api("/contacts")).set(bearer(readKey.secret)).expect(200);

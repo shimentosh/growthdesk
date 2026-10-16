@@ -734,10 +734,14 @@ export const WorkflowInput = z.object({
 // ─── Integrations: API keys, webhooks ───────────────────────────────────────
 
 export const API_SCOPES = ["leads:write", "contacts:read", "contacts:write", "campaigns:read", "products:write"] as const;
+/** Apps connected from Settings → Integrations; their key's scopes come from INTEGRATION_APP_INFO. */
+export const INTEGRATION_APPS = ["clientdesk", "business_os"] as const;
 export const ApiKeyInput = z.object({
   name: requiredText(80),
   scopes: z.array(z.enum(API_SCOPES)).min(1),
   expiresAt: isoDate.nullable().optional(),
+  /** Set when the key connects one of INTEGRATION_APPS; the server then grants that app's scopes. */
+  app: z.enum(INTEGRATION_APPS).optional(),
 });
 export const WEBHOOK_EVENTS = [
   "contact.created",

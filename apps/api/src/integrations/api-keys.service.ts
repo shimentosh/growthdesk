@@ -1,5 +1,5 @@
 import { Injectable } from "@nestjs/common";
-import { MAX_API_KEYS, type ApiKeyInput } from "@growthdesk/shared";
+import { INTEGRATION_APP_INFO, MAX_API_KEYS, type ApiKeyInput } from "@growthdesk/shared";
 import type { z } from "zod";
 import type { ApiKey } from "../generated/prisma/client.js";
 import { PrismaService } from "../prisma/prisma.service.js";
@@ -29,6 +29,7 @@ function keyDto(k: ApiKey, createdBy: { id: string; name: string } | null) {
     name: k.name,
     prefix: k.prefix,
     scopes: k.scopes,
+    app: k.app || null,
     status: statusOf(k),
     createdBy,
     lastUsedAt: k.lastUsedAt,
@@ -89,7 +90,9 @@ export class ApiKeysService {
         name: input.name,
         prefix: secret.slice(0, SHOWN_PREFIX),
         keyHash: hashToken(secret),
-        scopes: [...new Set(input.scopes)],
+        // An app's key holds that app's scopes, whatever the request asked for.
+        scopes: input.app ? [...INTEGRATION_APP_INFO[input.app].scopes] : [...new Set(input.scopes)],
+        app: input.app ?? "",
         createdById: actorId(ctx),
         expiresAt: input.expiresAt ?? null,
       },
@@ -98,7 +101,7 @@ export class ApiKeysService {
       action: "api_key.created",
       targetType: "api_key",
       targetId: row.id,
-      metadata: { name: row.name, prefix: row.prefix, scopes: row.scopes, expiresAt: row.expiresAt },
+      metadata: { name: row.name, prefix: row.prefix, scopes: row.scopes, app: row.app || null, expiresAt: row.expiresAt },
     });
     const creator = ctx.identity ? { id: ctx.identity.userId, name: ctx.identity.name } : null;
     // The only time the key is readable.

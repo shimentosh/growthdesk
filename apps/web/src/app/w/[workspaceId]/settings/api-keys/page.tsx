@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useSyncExternalStore } from "react";
+import { useState } from "react";
 import { Ban, KeyRound, Plug, Plus } from "lucide-react";
 import { API_SCOPE_INFO, MAX_LEADS_PER_REQUEST } from "@growthdesk/shared";
 import { Badge, type Tone } from "@/components/ui/Badge";
@@ -18,6 +18,7 @@ import { UpgradePrompt } from "@/components/ui/UpgradePrompt";
 import { ApiKeyFormModal } from "@/components/integrations/ApiKeyFormModal";
 import { ApiKeySecretModal } from "@/components/integrations/ApiKeySecretModal";
 import { CopyValue } from "@/components/integrations/Copy";
+import { useOrigin } from "@/lib/hooks";
 import { useApiMutation, useApiQuery } from "@/lib/query";
 import { useFormat, useWorkspace } from "@/lib/session";
 import type { ApiKey, ApiKeyStatus, ApiKeyWithSecret } from "@/lib/types/api-keys";
@@ -27,10 +28,6 @@ const STATUS: Record<ApiKeyStatus, { label: string; tone: Tone }> = {
   expired: { label: "Expired", tone: "warn" },
   revoked: { label: "Revoked", tone: "mute" },
 };
-
-// The page's own origin: integrations call the API through it at /api (the web app proxies /api/* to the API).
-const noSubscribe = () => () => {};
-const useOrigin = () => useSyncExternalStore(noSubscribe, () => window.location.origin, () => "");
 
 function KeyRow({ row }: { row: ApiKey }) {
   const ws = useWorkspace();

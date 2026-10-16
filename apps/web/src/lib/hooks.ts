@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
 
 /** The value, once it has stopped changing for `delay` ms (search boxes). */
 export function useDebouncedValue<T>(value: T, delay = 300): T {
@@ -23,4 +23,11 @@ export function useMediaQuery(query: string): boolean {
     return () => mql.removeEventListener("change", update);
   }, [query]);
   return matches;
+}
+
+const noSubscribe = () => () => {};
+
+/** The page's own origin ("" during SSR). Integrations call the API through it at /api (the web app proxies /api/* to the API). */
+export function useOrigin(): string {
+  return useSyncExternalStore(noSubscribe, () => window.location.origin, () => "");
 }

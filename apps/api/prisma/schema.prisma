@@ -2143,6 +2143,8 @@ model ApiKey {
   prefix      String
   keyHash     String    @unique
   scopes      String[]
+  /// "" for a general key; else the app it connects (INTEGRATION_APPS: "clientdesk", "business_os").
+  app         String    @default("")
   createdById String?   @db.Uuid
   lastUsedAt  DateTime?
   expiresAt   DateTime?
