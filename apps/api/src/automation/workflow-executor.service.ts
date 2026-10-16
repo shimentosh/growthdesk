@@ -704,6 +704,9 @@ export function snapshot(contact: ContactRow | null, deal: DealRow | null, paylo
           leadSource: contact.leadSource,
           tags: contact.tags.map((t) => t.tag.name),
           country: contact.country,
+          ordersCount: contact.ordersCount,
+          paidOrdersCount: contact.paidOrdersCount,
+          totalSpent: Number(contact.totalSpent),
           custom: (contact.customFields ?? {}) as Record<string, unknown>,
         }
       : null,

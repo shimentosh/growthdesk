@@ -45,9 +45,13 @@ export type ContactListState = {
   /** Lead sources (contact.leadSource, case ignored); "" = no source recorded. */
   source: string[];
   /** Orders from the connected client portal: none placed, bought (one paid or more), bought again (two or more). */
-  orders: "" | "none" | "buyer" | "repeat";
+  orders: "" | "none" | "buyer" | "one" | "repeat";
   /** A client in the connected portal, or not. */
   client: YesNo;
+  /** A client for at least this many days; 0 = any. */
+  clientForDays: number;
+  /** Ordered before, but not in this many days; 0 = any. */
+  noOrderForDays: number;
   hasEmail: YesNo;
   hasPhone: YesNo;
   noNextAction: boolean;
@@ -70,7 +74,7 @@ export const DEFAULT_PAGE_SIZE = 50;
 export const PAGE_SIZES = [25, 50, 100, 200];
 
 /** The keys that narrow the rows (changing one drops the active saved view). */
-export const FILTER_KEYS = ["q", "status", "qualification", "priority", "owner", "tag", "source", "orders", "client", "hasEmail", "hasPhone", "noNextAction", "companyId", "stage", "listId", "archived"] as const;
+export const FILTER_KEYS = ["q", "status", "qualification", "priority", "owner", "tag", "source", "orders", "client", "clientForDays", "noOrderForDays", "hasEmail", "hasPhone", "noNextAction", "companyId", "stage", "listId", "archived"] as const;
 
 /** Per-page defaults: which stages a page shows when the URL does not say. */
 export type ListDefaults = { stage: readonly LifecycleStage[] };
@@ -82,7 +86,13 @@ const list = <T extends string>(raw: string | null, allowed: readonly T[]): T[] 
     .map((s) => s.trim())
     .filter((s): s is T => (allowed as readonly string[]).includes(s));
 
-const ORDER_FILTERS = ["none", "buyer", "repeat"] as const;
+const ORDER_FILTERS = ["none", "buyer", "one", "repeat"] as const;
+
+/** A whole number of days, 1–3650; anything else is "any" (0). */
+const days = (v: unknown): number => {
+  const n = typeof v === "number" ? v : Number(v);
+  return Number.isInteger(n) && n >= 1 && n <= 3650 ? n : 0;
+};
 
 /** A source in the URL: one `source` parameter each (sources may hold commas); "-" stands for "none recorded". */
 const NO_SOURCE = "-";
@@ -104,6 +114,8 @@ export function parseState(sp: URLSearchParams, defaults: ListDefaults = NO_DEFA
     source: [...new Set(sp.getAll("source").map((v) => (v === NO_SOURCE ? "" : v.trim())))],
     orders: ORDER_FILTERS.includes(sp.get("orders") as (typeof ORDER_FILTERS)[number]) ? (sp.get("orders") as ContactListState["orders"]) : "",
     client: yesNo(sp.get("client")),
+    clientForDays: days(sp.get("clientForDays")),
+    noOrderForDays: days(sp.get("noOrderForDays")),
     hasEmail: yesNo(sp.get("hasEmail")),
     hasPhone: yesNo(sp.get("hasPhone")),
     noNextAction: sp.get("noNextAction") === "1",
@@ -131,6 +143,8 @@ export function toFilter(s: ContactListState): ContactFilterT | undefined {
   if (s.source.length) f.leadSource = s.source;
   if (s.orders) f.orders = s.orders;
   if (s.client) f.client = s.client === "yes";
+  if (s.clientForDays) f.clientForDays = s.clientForDays;
+  if (s.noOrderForDays) f.noOrderForDays = s.noOrderForDays;
   if (s.hasEmail) f.hasEmail = s.hasEmail === "yes";
   if (s.hasPhone) f.hasPhone = s.hasPhone === "yes";
   if (s.noNextAction) f.noNextAction = true;
@@ -155,6 +169,8 @@ export function fromFilter(filters: Record<string, unknown>): Partial<ContactLis
     source: typeof filters.leadSource === "string" ? [filters.leadSource] : arr(filters.leadSource),
     orders: ORDER_FILTERS.includes(filters.orders as (typeof ORDER_FILTERS)[number]) ? (filters.orders as ContactListState["orders"]) : "",
     client: bool(filters.client),
+    clientForDays: days(filters.clientForDays),
+    noOrderForDays: days(filters.noOrderForDays),
     hasEmail: bool(filters.hasEmail),
     hasPhone: bool(filters.hasPhone),
     noNextAction: filters.noNextAction === true,
@@ -177,6 +193,8 @@ export function activeFilterCount(s: ContactListState): number {
     (s.source.length ? 1 : 0) +
     (s.orders ? 1 : 0) +
     (s.client ? 1 : 0) +
+    (s.clientForDays ? 1 : 0) +
+    (s.noOrderForDays ? 1 : 0) +
     (s.hasEmail ? 1 : 0) +
     (s.hasPhone ? 1 : 0) +
     (s.noNextAction ? 1 : 0) +
@@ -200,6 +218,8 @@ function serialize(s: ContactListState, defaults: ListDefaults): string {
   for (const src of s.source) p.append("source", src || NO_SOURCE);
   set("orders", s.orders);
   set("client", s.client);
+  if (s.clientForDays) p.set("clientForDays", String(s.clientForDays));
+  if (s.noOrderForDays) p.set("noOrderForDays", String(s.noOrderForDays));
   set("hasEmail", s.hasEmail);
   set("hasPhone", s.hasPhone);
   if (s.noNextAction) p.set("noNextAction", "1");
@@ -258,6 +278,8 @@ export function useContactListState(defaults: ListDefaults = NO_DEFAULTS) {
         source: [],
         orders: "",
         client: "",
+        clientForDays: 0,
+        noOrderForDays: 0,
         hasEmail: "",
         hasPhone: "",
         noNextAction: false,

@@ -23,6 +23,12 @@ export const TRIGGER_KIND: Record<WorkflowTrigger, WorkflowKind> = {
   "deal.stale": "sales",
   "quote.accepted": "sales",
   "task.overdue": "sales",
+  // Clients and orders from a connected client portal (src/commerce): following up a purchase is selling.
+  "client.added": "sales",
+  "order.created": "sales",
+  "order.paid": "sales",
+  "order.completed": "sales",
+  "order.cancelled": "sales",
   "list.subscribed": "marketing",
   "marketing.opened": "marketing",
   "marketing.clicked": "marketing",
@@ -55,6 +61,18 @@ export const TRIGGER_EVENT_FIELDS: Partial<Record<WorkflowTrigger, { key: string
     { key: "campaignName", label: "Campaign name" },
   ],
   "lead.imported": [{ key: "source", label: "Import source" }],
+  ...Object.fromEntries(
+    (["order.created", "order.paid", "order.completed", "order.cancelled"] as const).map((t) => [
+      t,
+      [
+        { key: "orderNumber", label: "Order number" },
+        { key: "total", label: "Order total" },
+        { key: "currency", label: "Currency" },
+        { key: "status", label: "Order status (the portal's words)" },
+        { key: "items", label: "What was ordered" },
+      ],
+    ]),
+  ),
 };
 
 export type WorkflowTemplateAction = { type: WorkflowActionType; delayMinutes?: number; config: Record<string, unknown> };
@@ -77,6 +95,76 @@ const DAY = 24 * 60;
 
 /** Ready-made workflows: pick one, fill in what `todo` names, turn it on. */
 export const WORKFLOW_TEMPLATES: WorkflowTemplate[] = [
+  // ─── Clients and orders (a connected client portal) ───────────────────────
+  {
+    id: "clients-optin",
+    kind: "sales",
+    name: "New client → ask to join your mailing list",
+    summary: "Each new client is tagged Client and added to a double opt-in list, which emails them to confirm — so you may market to them.",
+    description:
+      "Use a list with double opt-in turned on: people who haven't agreed to marketing get a confirmation email and join once they click it. Those who already agreed join at once.",
+    trigger: "client.added",
+    conditions: [],
+    actions: [
+      { type: "add_tag", config: { tags: ["Client"] } },
+      { type: "add_to_list", config: { listId: "" } },
+    ],
+    todo: "Choose a double opt-in list",
+  },
+  {
+    id: "clients-first-order",
+    kind: "sales",
+    name: "First paid order → welcome sequence",
+    summary: "A client's first paid order starts your welcome / onboarding sequence and tags them First order.",
+    description: "Use an outreach campaign with “Always on” turned on. Only the first paid order starts it; later orders don't.",
+    trigger: "order.paid",
+    conditions: [{ field: "contact.paidOrdersCount", op: "lt", value: "2" }],
+    actions: [
+      { type: "add_tag", config: { tags: ["First order"] } },
+      { type: "enroll_campaign", config: { campaignId: "" } },
+    ],
+    todo: "Choose an always-on welcome campaign",
+  },
+  {
+    id: "clients-repeat-buyer",
+    kind: "sales",
+    name: "Repeat buyer → VIP",
+    summary: "A client's second paid order (or later) tags them Repeat buyer, makes them high priority and starts your loyalty sequence.",
+    description: "Use an always-on campaign for offers you keep for returning clients.",
+    trigger: "order.paid",
+    conditions: [{ field: "contact.paidOrdersCount", op: "gt", value: "1" }],
+    actions: [
+      { type: "add_tag", config: { tags: ["Repeat buyer"] } },
+      { type: "update_contact", config: { field: "priority", value: "high" } },
+      { type: "enroll_campaign", config: { campaignId: "" } },
+    ],
+    todo: "Choose an always-on loyalty campaign",
+  },
+  {
+    id: "clients-review",
+    kind: "sales",
+    name: "Order completed → ask for a review and the next order",
+    summary: "Three days after an order is completed, the client starts your review / upsell sequence.",
+    description: "Give the work a few days to land, then ask how it went and what's next.",
+    trigger: "order.completed",
+    conditions: [],
+    actions: [{ type: "enroll_campaign", delayMinutes: 3 * DAY, config: { campaignId: "" } }],
+    todo: "Choose an always-on review / upsell campaign",
+  },
+  {
+    id: "clients-cancelled",
+    kind: "sales",
+    name: "Order cancelled → win-back call",
+    summary: "When an order is cancelled, the client's owner is told and gets a call task for the next day.",
+    description: "A cancelled order is a conversation waiting to happen — find out why while it's fresh.",
+    trigger: "order.cancelled",
+    conditions: [],
+    actions: [
+      { type: "notify", config: { contactOwner: true, title: "An order was cancelled", email: true } },
+      { type: "create_task", config: { title: "Call about the cancelled order", type: "call", priority: "high", dueInMinutes: DAY, assignTo: "owner" } },
+    ],
+  },
+
   // ─── Sales ────────────────────────────────────────────────────────────────
   {
     id: "sales-speed-to-lead",

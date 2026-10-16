@@ -1,7 +1,7 @@
-import { Controller, Get, HttpCode, Param, Post } from "@nestjs/common";
+import { Controller, Get, HttpCode, Param, Post, Put } from "@nestjs/common";
 import { ApiTags } from "@nestjs/swagger";
 import type { z } from "zod";
-import { CustomersSyncInput, OrdersSyncInput } from "@growthdesk/shared";
+import { CommerceSettingsInput, CustomersSyncInput, OrdersSyncInput } from "@growthdesk/shared";
 import { ApiKeyScope, Body, Ctx, Permission } from "../common/decorators.js";
 import type { RequestContext } from "../common/context.js";
 import { CommerceService } from "./commerce.service.js";
@@ -36,6 +36,19 @@ export class CommerceController {
   @Post("commerce/orders")
   orders(@Ctx() ctx: RequestContext, @Body(OrdersSyncInput) body: z.infer<typeof OrdersSyncInput>) {
     return this.commerce.syncOrders(ctx, body);
+  }
+
+  /** How synced clients stand on marketing email (Settings → Integrations → Clientdesk). */
+  @Permission("integrations.read")
+  @Get("commerce/settings")
+  settings(@Ctx() ctx: RequestContext) {
+    return this.commerce.settings(ctx);
+  }
+
+  @Permission("settings.manage")
+  @Put("commerce/settings")
+  updateSettings(@Ctx() ctx: RequestContext, @Body(CommerceSettingsInput) body: z.infer<typeof CommerceSettingsInput>) {
+    return this.commerce.updateSettings(ctx, body);
   }
 
   /** A contact's orders, newest first. */

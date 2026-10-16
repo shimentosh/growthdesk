@@ -91,6 +91,18 @@ export const OrderInput = z.object({
 });
 export type OrderInputT = z.infer<typeof OrderInput>;
 
+/**
+ * How synced clients stand on marketing email. "ask" (the default): their
+ * consent is left as it is, so marketing reaches them only once they agree —
+ * e.g. a double opt-in list's confirmation email. "existing_customers": a
+ * client whose consent is unknown is marked as agreed, on the strength of the
+ * customer relationship; whether that is enough is the workspace's legal call.
+ * Neither ever overrides someone who said no.
+ */
+export const CLIENT_CONSENT_MODES = ["ask", "existing_customers"] as const;
+export const CommerceSettingsInput = z.object({ clientConsent: z.enum(CLIENT_CONSENT_MODES) });
+export type CommerceSettings = z.infer<typeof CommerceSettingsInput>;
+
 /** Records are checked one by one (CustomerInput / OrderInput) so a bad one fails alone. */
 export const CustomersSyncInput = z.object({
   source: z.enum(COMMERCE_SOURCES),
@@ -122,3 +134,48 @@ export type ContactOrder = {
   completedAt: string | null;
   cancelledAt: string | null;
 };
+
+/**
+ * Ready-made contact audiences for marketing to clients by what they bought
+ * (a saved, shared contact view each — usable as a marketing campaign's
+ * audience). The filters are ContactFilter's; "days" ones are relative, so a
+ * view stays current.
+ */
+export const AUDIENCE_PRESETS: { key: string; name: string; description: string; filters: Record<string, unknown> }[] = [
+  {
+    key: "website-leads",
+    name: "Website leads, not yet clients",
+    description: "People who wrote in through your website, a form, a service page or a website check, and haven't become clients.",
+    filters: { leadSource: ["Clientdesk · Website", "Clientdesk · Website form", "Clientdesk · Service page", "Clientdesk · Website check"], client: false, stage: ["lead", "sales", "contact"] },
+  },
+  {
+    key: "signed-up-never-bought",
+    name: "Signed up, never bought (14+ days)",
+    description: "Clients for two weeks or more who haven't placed an order — a nudge, an offer, a call.",
+    filters: { client: true, orders: "none", clientForDays: 14, stage: ["lead", "sales", "contact"] },
+  },
+  {
+    key: "first-time-buyers",
+    name: "First-time buyers",
+    description: "Exactly one paid order: the moment to turn them into regulars.",
+    filters: { orders: "one", stage: ["lead", "sales", "contact"] },
+  },
+  {
+    key: "repeat-customers",
+    name: "Repeat customers",
+    description: "Two paid orders or more: your best clients, for loyalty offers and referrals.",
+    filters: { orders: "repeat", stage: ["lead", "sales", "contact"] },
+  },
+  {
+    key: "lapsed-customers",
+    name: "Lapsed customers (no order in 90 days)",
+    description: "Bought before, nothing in three months — win them back.",
+    filters: { orders: "buyer", noOrderForDays: 90, stage: ["lead", "sales", "contact"] },
+  },
+  {
+    key: "all-customers",
+    name: "All customers",
+    description: "Everyone with at least one paid order.",
+    filters: { orders: "buyer", stage: ["lead", "sales", "contact"] },
+  },
+];

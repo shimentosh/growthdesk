@@ -213,8 +213,12 @@ export class ContactsService {
     // Orders from a connected client portal: none placed, bought at least once (paid), or bought again.
     if (f.orders === "none") and.push({ ordersCount: 0 });
     else if (f.orders === "buyer") and.push({ paidOrdersCount: { gte: 1 } });
+    else if (f.orders === "one") and.push({ paidOrdersCount: 1 });
     else if (f.orders === "repeat") and.push({ paidOrdersCount: { gte: 2 } });
     if (f.client !== undefined) and.push(f.client ? { customerSince: { not: null } } : { customerSince: null });
+    const daysAgo = (n: number) => new Date(Date.now() - n * 86_400_000);
+    if (f.clientForDays) and.push({ customerSince: { lte: daysAgo(f.clientForDays) } });
+    if (f.noOrderForDays) and.push({ lastOrderAt: { lte: daysAgo(f.noOrderForDays) } });
     if (f.hasPhone !== undefined) and.push(f.hasPhone ? { phone: { not: null } } : { phone: null });
     if (f.noNextAction) and.push({ nextActionAt: null });
     if (f.createdAfter) and.push({ createdAt: { gte: f.createdAfter } });

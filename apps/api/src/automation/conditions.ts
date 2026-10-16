@@ -13,7 +13,7 @@
  */
 
 export const CONDITION_PATH =
-  /^(contact\.(status|qualification|priority|leadSource|tags|country|custom\.[A-Za-z0-9_]{1,60})|deal\.(value|stage|status)|event\.[A-Za-z0-9_]{1,60})$/;
+  /^(contact\.(status|qualification|priority|leadSource|tags|country|ordersCount|paidOrdersCount|totalSpent|custom\.[A-Za-z0-9_]{1,60})|deal\.(value|stage|status)|event\.[A-Za-z0-9_]{1,60})$/;
 
 export type ConditionOp = "is" | "is_not" | "contains" | "gt" | "lt" | "exists";
 export type Condition = { field: string; op: ConditionOp; value: string };
@@ -26,6 +26,10 @@ export type SubjectSnapshot = {
     leadSource: string;
     tags: string[];
     country: string;
+    /** Orders from a connected client portal (src/commerce): placed and not cancelled, paid, and what the paid ones came to. */
+    ordersCount: number;
+    paidOrdersCount: number;
+    totalSpent: number;
     custom: Record<string, unknown>;
   } | null;
   deal: { value: number; stage: string; status: string } | null;

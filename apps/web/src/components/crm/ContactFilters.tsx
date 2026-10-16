@@ -7,6 +7,7 @@ import {
   BookmarkPlus,
   Briefcase,
   Building2,
+  CalendarClock,
   CalendarOff,
   Check,
   ChevronDown,
@@ -18,12 +19,13 @@ import {
   Search,
   ShoppingBag,
   Signpost,
+  Sparkles,
   Tag,
   Trash2,
   UserRound,
   X,
 } from "lucide-react";
-import { CONTACT_STATUSES, PRIORITIES, QUALIFICATIONS, labelOf } from "@growthdesk/shared";
+import { AUDIENCE_PRESETS, CONTACT_STATUSES, PRIORITIES, QUALIFICATIONS, labelOf } from "@growthdesk/shared";
 import { useMembers } from "@/components/pickers/Pickers";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
@@ -49,6 +51,9 @@ import { useTags } from "./Tags";
 import { useLeadSources } from "./useLeadSources";
 
 type Update = (patch: Partial<ContactListState>, opts?: { replace?: boolean }) => void;
+
+/** Day choices for the "Client for at least" and "No order for" filters. */
+const DAY_CHOICES = [7, 14, 30, 60, 90, 180, 365];
 
 function toggle<T extends string>(list: T[], value: T): T[] {
   return list.includes(value) ? list.filter((v) => v !== value) : [...list, value];
@@ -144,12 +149,31 @@ export function FilterPopover({ state, update }: { state: ContactListState; upda
                 { value: "", label: "Any" },
                 { value: "none", label: "No orders" },
                 { value: "buyer", label: "Bought (1+ paid)" },
+                { value: "one", label: "First-time buyer (1 paid)" },
                 { value: "repeat", label: "Repeat buyer (2+ paid)" },
               ]}
             />
           </Field>
           <Field label="Client in Clientdesk">
             <NativeSelect size="sm" value={state.client} icon={<Briefcase />} onChange={(e) => update({ client: e.target.value as YesNo })} options={yesNo} />
+          </Field>
+          <Field label="Client for at least">
+            <NativeSelect
+              size="sm"
+              value={String(state.clientForDays || "")}
+              icon={<CalendarClock />}
+              onChange={(e) => update({ clientForDays: Number(e.target.value) || 0 })}
+              options={[{ value: "", label: "Any time" }, ...DAY_CHOICES.map((d) => ({ value: String(d), label: `${d} days` }))]}
+            />
+          </Field>
+          <Field label="No order for">
+            <NativeSelect
+              size="sm"
+              value={String(state.noOrderForDays || "")}
+              icon={<CalendarOff />}
+              onChange={(e) => update({ noOrderForDays: Number(e.target.value) || 0 })}
+              options={[{ value: "", label: "Any time" }, ...DAY_CHOICES.map((d) => ({ value: String(d), label: `${d} days` }))]}
+            />
           </Field>
         </div>
 
@@ -265,11 +289,13 @@ export function FilterChips({ state, update, clear }: { state: ContactListState;
       {state.orders && (
         <Chip
           icon={<ShoppingBag />}
-          label={`Orders: ${{ none: "none", buyer: "bought", repeat: "repeat buyer" }[state.orders]}`}
+          label={`Orders: ${{ none: "none", buyer: "bought", one: "first-time buyer", repeat: "repeat buyer" }[state.orders]}`}
           onRemove={() => update({ orders: "" })}
         />
       )}
       {state.client && <Chip icon={<Briefcase />} label={`Client: ${yn(state.client)}`} onRemove={() => update({ client: "" })} />}
+      {state.clientForDays > 0 && <Chip icon={<CalendarClock />} label={`Client for ${state.clientForDays}+ days`} onRemove={() => update({ clientForDays: 0 })} />}
+      {state.noOrderForDays > 0 && <Chip icon={<CalendarOff />} label={`No order for ${state.noOrderForDays}+ days`} onRemove={() => update({ noOrderForDays: 0 })} />}
       {state.hasEmail && <Chip icon={<Mail />} label={`Has email: ${yn(state.hasEmail)}`} onRemove={() => update({ hasEmail: "" })} />}
       {state.hasPhone && <Chip icon={<Phone />} label={`Has phone: ${yn(state.hasPhone)}`} onRemove={() => update({ hasPhone: "" })} />}
       {state.noNextAction && <Chip icon={<CalendarOff />} label="No next action" onRemove={() => update({ noNextAction: false })} />}
@@ -292,6 +318,8 @@ export function SavedViewsMenu({ state, update }: { state: ContactListState; upd
   const [shared, setShared] = useState(false);
 
   const active = views.data?.find((v) => v.id === state.view) ?? null;
+  // The ready-made audiences not saved yet (by name); adding one saves it shared and applies it.
+  const presets = AUDIENCE_PRESETS.filter((p) => !views.data?.some((v) => v.name.toLowerCase() === p.name.toLowerCase()));
 
   const create = useApiMutation<SavedView, { entity: "contact"; name: string; filters: Record<string, unknown>; sort: Record<string, unknown>; shared: boolean }>({
     path: ws.path("/views"),
@@ -302,7 +330,7 @@ export function SavedViewsMenu({ state, update }: { state: ContactListState; upd
       setSaving(false);
       setName("");
       setShared(false);
-      update({ view: v.id });
+      apply(v);
     },
   });
   const remove = useApiMutation<unknown, string>({
@@ -352,6 +380,26 @@ export function SavedViewsMenu({ state, update }: { state: ContactListState; upd
             </DropdownMenuItem>
           ))}
           {views.isError && <p className="px-2 py-1.5 text-xs text-bad-ink">Could not load saved views.</p>}
+          {views.data && presets.length > 0 && (
+            <>
+              <DropdownMenuSeparator />
+              <DropdownMenuLabel>Ready-made audiences</DropdownMenuLabel>
+              {presets.map((p) => (
+                <DropdownMenuItem
+                  key={p.key}
+                  className="h-auto items-start py-1.5 [&>svg]:mt-0.5"
+                  icon={<Sparkles />}
+                  disabled={create.isPending}
+                  onSelect={() => create.mutate({ entity: "contact", name: p.name, filters: p.filters, sort: { field: DEFAULT_SORT, dir: "desc" }, shared: true })}
+                >
+                  <span className="flex min-w-0 flex-col">
+                    <span className="truncate">{p.name}</span>
+                    <span className="truncate text-xs text-text-3">{p.description}</span>
+                  </span>
+                </DropdownMenuItem>
+              ))}
+            </>
+          )}
           <DropdownMenuSeparator />
           <DropdownMenuItem icon={<BookmarkPlus />} onSelect={() => setSaving(true)}>
             Save current filters as a view…

@@ -204,10 +204,14 @@ export const ContactFilter = z.object({
   hasEmail: z.boolean().optional(),
   hasPhone: z.boolean().optional(),
   noNextAction: z.boolean().optional(),
-  /** Orders from a connected client portal: "none" placed, a "buyer" (one paid or more), a "repeat" buyer (two or more). */
-  orders: z.enum(["none", "buyer", "repeat"]).optional(),
+  /** Orders from a connected client portal: "none" placed, a "buyer" (one paid or more), exactly "one" paid, a "repeat" buyer (two or more). */
+  orders: z.enum(["none", "buyer", "one", "repeat"]).optional(),
   /** A client in the connected portal (signed up or added there), or not. */
   client: z.boolean().optional(),
+  /** A client for at least this many days (customerSince that long ago or longer). */
+  clientForDays: z.number().int().min(1).max(3650).optional(),
+  /** Ordered before, but not in this many days (lastOrderAt that long ago or longer). */
+  noOrderForDays: z.number().int().min(1).max(3650).optional(),
   createdAfter: isoDate.optional(),
   createdBefore: isoDate.optional(),
   campaignId: uuid.optional(),
@@ -696,6 +700,11 @@ export const WORKFLOW_TRIGGERS = [
   "deal.stale",
   "quote.accepted",
   "task.overdue",
+  "client.added",
+  "order.created",
+  "order.paid",
+  "order.completed",
+  "order.cancelled",
   "list.subscribed",
   "marketing.opened",
   "marketing.clicked",

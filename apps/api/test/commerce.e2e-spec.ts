@@ -1,3 +1,6 @@
+import { WORKFLOW_TEMPLATES } from "@growthdesk/shared";
+import { DispatcherService } from "../src/automation/dispatcher.service.js";
+import { WorkflowExecutor } from "../src/automation/workflow-executor.service.js";
 import { bootApp, createWorkspace, setPlan, signUp, type Agent, type TestApp } from "./helpers.js";
 
 /*
@@ -21,7 +24,7 @@ describe("Commerce: clients and orders", () => {
     t = await bootApp();
     owner = await signUp(t, "commerce-owner@acme.test");
     w = await createWorkspace(owner, "Commerce Co");
-    await setPlan(t, w, "growth");
+    await setPlan(t, w, "agency");
     key = (await owner.post(api("/api-keys")).send({ name: "Clientdesk", scopes: ["contacts:read"], app: "clientdesk" }).expect(201)).body.data.secret;
     // Grace wrote in through the website before she became a client.
     await post("/leads", { source: "clientdesk", leads: [{ externalId: "led_1", fullName: "Grace Hopper", email: "grace@navy.test", leadSource: "Clientdesk · Website form" }] }).expect(200);
@@ -114,13 +117,69 @@ describe("Commerce: clients and orders", () => {
     expect(Number(grace.totalSpent)).toBe(1070.5);
   });
 
+  it("finds clients by what they bought: none, first-time, repeat, lapsed, and how long they've been clients", async () => {
+    const names = async (filter: Record<string, unknown>) =>
+      ((await owner.get(api("/contacts")).query({ filter: JSON.stringify({ stage: ["lead", "sales", "contact"], ...filter }) }).expect(200)).body.data.items as { fullName: string }[]).map((c) => c.fullName).sort();
+    expect(await names({ orders: "repeat" })).toEqual(["Grace Hopper"]);
+    expect(await names({ client: true, orders: "none" })).toEqual(["Alan Turing"]);
+    expect(await names({ client: true, clientForDays: 30 })).toEqual(["Grace Hopper"]);
+    // Grace's last order was in April 2026: not in 90 days by now.
+    expect(await names({ orders: "buyer", noOrderForDays: 90 })).toEqual(["Grace Hopper"]);
+  });
+
+  it("runs the 'first paid order' workflow for a first order only", async () => {
+    const tpl = WORKFLOW_TEMPLATES.find((x) => x.id === "clients-first-order")!;
+    await owner
+      .post(api("/workflows"))
+      .send({ name: tpl.name, trigger: tpl.trigger, conditions: tpl.conditions, actions: [{ type: "add_tag", delayMinutes: 0, config: { tags: ["First order"] } }], enabled: true })
+      .expect(201);
+    await post("/commerce/orders", {
+      source: "clientdesk",
+      orders: [{ externalId: "ord_alan_1", number: "ORD-200001", customerExternalId: "per_alan", status: "Paid", state: "open", paid: true, currency: "USD", total: 50, placedAt: new Date().toISOString() }],
+    }).expect(200);
+    // Grace's later paid order fires the same trigger, but she has three paid orders.
+    await post("/commerce/orders", {
+      source: "clientdesk",
+      orders: [{ externalId: "ord_5", number: "ORD-100005", customerExternalId: "per_grace", status: "Paid", state: "open", paid: true, currency: "USD", total: 10, placedAt: new Date().toISOString() }],
+    }).expect(200);
+    for (let i = 0; i < 5; i++) {
+      await t.app.get(DispatcherService).drain();
+      const runs = await t.prisma.db.workflowRun.findMany({ where: { workspaceId: w, status: "pending" }, select: { id: true } });
+      if (!runs.length) break;
+      for (const r of runs) await t.app.get(WorkflowExecutor).execute(w, r.id);
+    }
+    const tagsOf = async (email: string) =>
+      (await t.prisma.db.contact.findFirstOrThrow({ where: { workspaceId: w, email }, include: { tags: { include: { tag: true } } } })).tags.map((x) => x.tag.name);
+    expect(await tagsOf("alan@bletchley.test")).toContain("First order");
+    expect(await tagsOf("grace@navy.test")).not.toContain("First order");
+  });
+
+  it("leaves clients' consent alone by default, and marks unknown ones subscribed when told to — never one who said no", async () => {
+    await post("/commerce/customers", { source: "clientdesk", customers: [{ externalId: "per_ask", fullName: "Ask First", email: "ask@x.test" }] }).expect(200);
+    expect((await t.prisma.db.contact.findFirstOrThrow({ where: { workspaceId: w, email: "ask@x.test" } })).consentStatus).toBe("unknown");
+
+    const no = (await owner.post(api("/contacts")).send({ fullName: "Said No", email: "no@x.test", consentStatus: "denied" }).expect(201)).body.data.id;
+    await owner.put(api("/commerce/settings")).send({ clientConsent: "existing_customers" }).expect(200);
+    await post("/commerce/customers", {
+      source: "clientdesk",
+      customers: [
+        { externalId: "per_ask", fullName: "Ask First", email: "ask@x.test" },
+        { externalId: "per_no", fullName: "Said No", email: "no@x.test" },
+      ],
+    }).expect(200);
+    expect(await t.prisma.db.contact.findFirstOrThrow({ where: { workspaceId: w, email: "ask@x.test" } })).toMatchObject({ consentStatus: "granted", consentSource: "Existing customer (Clientdesk)" });
+    expect((await t.prisma.db.contact.findFirstOrThrow({ where: { workspaceId: w, id: no } })).consentStatus).toBe("denied");
+    await owner.put(api("/commerce/settings")).send({ clientConsent: "ask" }).expect(200);
+    expect((await owner.get(api("/commerce/settings")).expect(200)).body.data).toEqual({ clientConsent: "ask" });
+  });
+
   it("lists a contact's orders on its page, newest first", async () => {
     const grace = await t.prisma.db.contact.findFirstOrThrow({ where: { workspaceId: w, email: "grace@navy.test" } });
     const res = await owner.get(api(`/contacts/${grace.id}/orders`)).expect(200);
-    expect(res.body.data.map((o: { number: string }) => o.number)).toEqual(["ORD-100004", "ORD-100003", "ORD-100002", "ORD-100001"]);
-    expect(res.body.data[3]).toMatchObject({ state: "completed", paid: true, total: 600, items: [{ name: "SEO audit · Pro", quantity: 1, total: 600 }] });
+    expect(res.body.data.map((o: { number: string }) => o.number)).toEqual(["ORD-100005", "ORD-100004", "ORD-100003", "ORD-100002", "ORD-100001"]);
+    expect(res.body.data[4]).toMatchObject({ state: "completed", paid: true, total: 600, items: [{ name: "SEO audit · Pro", quantity: 1, total: 600 }] });
 
     const status = await t.http().get(api("/commerce/status")).set(bearer(key)).expect(200);
-    expect(status.body.data).toMatchObject({ clients: 2, orders: 4 });
+    expect(status.body.data).toMatchObject({ clients: 4, orders: 6 });
   });
 });

@@ -2,8 +2,10 @@ import { Injectable, Logger } from "@nestjs/common";
 import type { z } from "zod";
 import { Prisma } from "../generated/prisma/client.js";
 import {
+  CommerceSettingsInput,
   CustomerInput,
   OrderInput,
+  type CommerceSettings,
   isUnlimited,
   type CommerceSyncResult,
   type ContactOrder,
@@ -17,6 +19,8 @@ import { PrismaService, type Tx } from "../prisma/prisma.service.js";
 import { EntitlementsService } from "../billing/entitlements.service.js";
 import { EventsService } from "../core/events.service.js";
 import { ContactsService } from "../crm/contacts.service.js";
+import { ConsentService } from "../crm/consent.service.js";
+import { AuditService } from "../core/audit.service.js";
 import { actorId, ws, type RequestContext } from "../common/context.js";
 import { isApiError, notFound } from "../common/errors.js";
 
@@ -79,6 +83,8 @@ export class CommerceService {
     private readonly entitlements: EntitlementsService,
     private readonly events: EventsService,
     private readonly contacts: ContactsService,
+    private readonly consent: ConsentService,
+    private readonly audit: AuditService,
   ) {}
 
   // ─── Clients ──────────────────────────────────────────────────────────────
@@ -88,6 +94,7 @@ export class CommerceService {
     await this.entitlements.assertFeature(w.billingAccountId, "apiAccess");
     await this.entitlements.assertFullAccess(w.billingAccountId, "Syncing clients");
     const defaultCountry = await this.contacts.defaultCountry(w.id);
+    const { clientConsent } = await this.settings(ctx);
     let remaining = await this.entitlements.remaining(w.billingAccountId, "contacts");
     const results: Result[] = [];
 
@@ -128,6 +135,7 @@ export class CommerceService {
         );
         if (res.created) remaining -= 1;
         const promoted = await this.becameClient(w.id, res.contactId, c, companyId, actorId(ctx));
+        if (clientConsent === "existing_customers" && c.email) await this.consentAsCustomer(w.id, res.contactId, actorId(ctx));
         results.push({ index, externalId: c.externalId, status: res.created ? "created" : res.updated || promoted ? "updated" : "unchanged", contactId: res.contactId, error: null });
       } catch (e) {
         if (!isApiError(e)) this.log.warn(`client ${c.externalId}: ${e instanceof Error ? e.message : String(e)}`);
@@ -136,6 +144,30 @@ export class CommerceService {
     }
     await this.events.kick();
     return { summary: summarize(results, input.customers.length), results };
+  }
+
+  /** The workspace's commerce settings (Settings → Integrations → Clientdesk). */
+  async settings(ctx: RequestContext): Promise<CommerceSettings> {
+    const row = await this.prisma.db.workspace.findUniqueOrThrow({ where: { id: ws(ctx).id }, select: { settings: true } });
+    const parsed = CommerceSettingsInput.safeParse((row.settings as { commerce?: unknown } | null)?.commerce);
+    return parsed.success ? parsed.data : { clientConsent: "ask" };
+  }
+
+  async updateSettings(ctx: RequestContext, input: CommerceSettings): Promise<CommerceSettings> {
+    const w = ws(ctx);
+    const row = await this.prisma.db.workspace.findUniqueOrThrow({ where: { id: w.id }, select: { settings: true } });
+    await this.prisma.db.workspace.update({ where: { id: w.id }, data: { settings: { ...((row.settings as object) ?? {}), commerce: input } as never } });
+    await this.audit.record(ctx, { action: "workspace.commerce_settings_changed", targetType: "workspace", targetId: w.id, metadata: { ...input } });
+    return input;
+  }
+
+  /** "Existing customers may be marketed to": a client whose consent is unknown is marked as agreed — never one who said no. */
+  private async consentAsCustomer(workspaceId: string, contactId: string, actor: string | null) {
+    await this.prisma.db.$transaction(async (tx) => {
+      const row = await tx.contact.findFirst({ where: { id: contactId, workspaceId }, select: { consentStatus: true } });
+      if (row?.consentStatus !== "unknown") return;
+      await this.consent.setIn(tx, { workspaceId, contactId, status: "granted", source: "Existing customer (Clientdesk)", detail: { via: "commerce_sync" }, actorId: actor });
+    });
   }
 
   /** The sender's company, by its id; else matched by domain or name (and claimed); else made. */

@@ -2,7 +2,7 @@
 
 import { useState, type ReactNode } from "react";
 import { Briefcase, Check, PanelsTopLeft, Plug, RefreshCw, Unplug } from "lucide-react";
-import { API_SCOPE_INFO, INTEGRATION_APP_INFO, type IntegrationApp } from "@growthdesk/shared";
+import { API_SCOPE_INFO, INTEGRATION_APP_INFO, type CommerceSettings, type IntegrationApp } from "@growthdesk/shared";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { Callout } from "@/components/ui/Callout";
@@ -11,6 +11,7 @@ import { ConfirmDialog, Modal } from "@/components/ui/Dialog";
 import { FormError } from "@/components/ui/Field";
 import { IconTile, type Tint } from "@/components/ui/IconTile";
 import { SkeletonText } from "@/components/ui/Skeleton";
+import { Switch } from "@/components/ui/Switch";
 import { del, messageOf } from "@/lib/api";
 import { useOrigin } from "@/lib/hooks";
 import { useApiMutation, useApiQuery, useInvalidate } from "@/lib/query";
@@ -64,6 +65,36 @@ function ConnectedModal({ app, apiKey, onClose }: { app: IntegrationApp; apiKey:
         </div>
       )}
     </Modal>
+  );
+}
+
+/**
+ * Whether Clientdesk's clients may get marketing email without confirming
+ * first. Off ("ask"): their consent is left alone, so a double opt-in list
+ * asks them. On: a client whose consent is unknown counts as agreed, on the
+ * customer relationship — never one who said no.
+ */
+function ClientConsentSetting() {
+  const ws = useWorkspace();
+  const key = ws.key("commerce", "settings");
+  const settings = useApiQuery<CommerceSettings>(key, ws.path("/commerce/settings"));
+  const save = useApiMutation<CommerceSettings, CommerceSettings>({ method: "PUT", path: ws.path("/commerce/settings"), invalidate: [key], success: "Saved" });
+  const on = (save.isPending ? save.variables?.clientConsent : settings.data?.clientConsent) === "existing_customers";
+  return (
+    <div className="rounded-md border border-line p-3">
+      <Switch
+        size="sm"
+        checked={on}
+        disabled={!ws.can("settings.manage") || !settings.data || save.isPending}
+        onCheckedChange={(v) => save.mutate({ clientConsent: v ? "existing_customers" : "ask" })}
+        label="Clients may get marketing email"
+        description={
+          on
+            ? "Clients count as subscribed because they're your customers (unless they said no). Check that's allowed where you and they are."
+            : "Off: clients get marketing only after they agree — e.g. add them to a double opt-in list, which emails them to confirm."
+        }
+      />
+    </div>
   );
 }
 
@@ -151,6 +182,8 @@ export function AppConnection({ app, keys, canManage }: { app: IntegrationApp; k
           )}
         </div>
       )}
+
+      {connected && app === "clientdesk" && <ClientConsentSetting />}
 
       {canManage && keys !== undefined && (
         <div className="mt-auto flex flex-wrap gap-2 pt-1">
