@@ -170,6 +170,11 @@ export class DiscordApi {
 
   // ─── As the bot ────────────────────────────────────────────────────────────
 
+  /** The application the bot token belongs to (its id is the OAuth2 client id). */
+  application(bot: string) {
+    return this.request<{ id: string; name: string }>("GET", "/applications/@me", { auth: { bot } });
+  }
+
   botUser(bot: string) {
     return this.request<{ id: string; username: string }>("GET", "/users/@me", { auth: { bot } });
   }

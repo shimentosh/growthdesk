@@ -17,6 +17,7 @@ const SECTION_TILE: Record<string, Entity> = {
   "/settings/roles": "roles",
   "/settings/lead-routing": "leads",
   "/settings/integrations": "integrations",
+  "/settings/discord": "discord",
   "/settings/billing": "billing",
   "/settings/mailboxes": "mailboxes",
   "/settings/channels": "channels",

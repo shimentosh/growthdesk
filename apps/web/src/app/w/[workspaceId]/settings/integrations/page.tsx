@@ -14,16 +14,81 @@ import { useWorkspace } from "@/lib/session";
 import type { ApiKey } from "@/lib/types/api-keys";
 
 /** Everything else that connects to the workspace, each managed on its own settings page. */
-const CONNECTIONS: { href: string; label: string; description: string; tile: Entity; permission?: string }[] = [
-  { href: "/settings/mailboxes", label: "Mailboxes", description: "The mailboxes outreach sends from and replies arrive in.", tile: "mailboxes", permission: "integrations.read" },
-  { href: "/settings/channels", label: "WhatsApp & Telegram", description: "Message leads and get their replies in the inbox.", tile: "channels", permission: "integrations.read" },
-  { href: "/settings/live-chat", label: "Live chat", description: "A chat widget for your website, answered from the inbox.", tile: "liveChat", permission: "integrations.read" },
-  { href: "/settings/calling", label: "Calling", description: "Phone numbers for calls and AI agents.", tile: "calling", permission: "integrations.read" },
-  { href: "/settings/calendar", label: "Calendar", description: "Your own calendar, for meetings and booking pages.", tile: "meetings" },
-  { href: "/settings/sending-domains", label: "Sending domains", description: "Domains marketing email is sent from.", tile: "sendingDomains", permission: "marketing.read" },
-  { href: "/settings/mcp", label: "MCP / Claude", description: "Let Claude work in this workspace as you.", tile: "mcp" },
-  { href: "/settings/webhooks", label: "Webhooks", description: "Tell your systems when things happen here.", tile: "webhooks", permission: "webhooks.manage" },
-  { href: "/settings/api-keys", label: "API keys", description: "Any other system with an API: leads in, CRM records in and out.", tile: "apiKeys", permission: "apikeys.manage" },
+const CONNECTIONS: {
+  href: string;
+  label: string;
+  description: string;
+  tile: Entity;
+  permission?: string;
+}[] = [
+  {
+    href: "/settings/mailboxes",
+    label: "Mailboxes",
+    description: "The mailboxes outreach sends from and replies arrive in.",
+    tile: "mailboxes",
+    permission: "integrations.read",
+  },
+  {
+    href: "/settings/channels",
+    label: "WhatsApp & Telegram",
+    description: "Message leads and get their replies in the inbox.",
+    tile: "channels",
+    permission: "integrations.read",
+  },
+  {
+    href: "/settings/live-chat",
+    label: "Live chat",
+    description: "A chat widget for your website, answered from the inbox.",
+    tile: "liveChat",
+    permission: "integrations.read",
+  },
+  {
+    href: "/settings/calling",
+    label: "Calling",
+    description: "Phone numbers for calls and AI agents.",
+    tile: "calling",
+    permission: "integrations.read",
+  },
+  {
+    href: "/settings/discord",
+    label: "Discord",
+    description: "Post deals won, new leads and other events into your team's channels.",
+    tile: "discord",
+    permission: "integrations.read",
+  },
+  {
+    href: "/settings/calendar",
+    label: "Calendar",
+    description: "Your own calendar, for meetings and booking pages.",
+    tile: "meetings",
+  },
+  {
+    href: "/settings/sending-domains",
+    label: "Sending domains",
+    description: "Domains marketing email is sent from.",
+    tile: "sendingDomains",
+    permission: "marketing.read",
+  },
+  {
+    href: "/settings/mcp",
+    label: "MCP / Claude",
+    description: "Let Claude work in this workspace as you.",
+    tile: "mcp",
+  },
+  {
+    href: "/settings/webhooks",
+    label: "Webhooks",
+    description: "Tell your systems when things happen here.",
+    tile: "webhooks",
+    permission: "webhooks.manage",
+  },
+  {
+    href: "/settings/api-keys",
+    label: "API keys",
+    description: "Any other system with an API: leads in, CRM records in and out.",
+    tile: "apiKeys",
+    permission: "apikeys.manage",
+  },
 ];
 
 export default function IntegrationsPage() {
@@ -34,11 +99,7 @@ export default function IntegrationsPage() {
 
   return (
     <RequirePermission permission={["integrations.read", "apikeys.manage"]}>
-      <PageHeader
-        icon={<EntityTile of="integrations" />}
-        title="Integrations"
-        description="Connect Clientdesk and the other systems and channels this workspace works with."
-      />
+      <PageHeader icon={<EntityTile of="integrations" />} title="Integrations" description="Connect Clientdesk and the other systems and channels this workspace works with." />
 
       <section className="mb-8 flex flex-col gap-3">
         <h2 className="text-sm font-semibold text-text-hi">Apps</h2>

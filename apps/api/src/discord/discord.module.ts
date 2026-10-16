@@ -1,5 +1,6 @@
 import { Module } from "@nestjs/common";
 import { DiscordApi } from "./discord-api.js";
+import { DiscordAppResolver } from "./discord-app.service.js";
 import { DiscordContextService } from "./discord-context.service.js";
 import { DiscordController, DiscordOAuthCallbackController } from "./discord.controller.js";
 import { DiscordDeliveryService } from "./discord-delivery.service.js";
@@ -14,7 +15,7 @@ import { DiscordService } from "./discord.service.js";
  */
 @Module({
   controllers: [DiscordController, DiscordOAuthCallbackController],
-  providers: [DiscordApi, DiscordContextService, DiscordService, DiscordRoutingService, DiscordDeliveryService],
-  exports: [DiscordApi, DiscordContextService, DiscordService, DiscordRoutingService, DiscordDeliveryService],
+  providers: [DiscordApi, DiscordAppResolver, DiscordContextService, DiscordService, DiscordRoutingService, DiscordDeliveryService],
+  exports: [DiscordApi, DiscordAppResolver, DiscordContextService, DiscordService, DiscordRoutingService, DiscordDeliveryService],
 })
 export class DiscordModule {}

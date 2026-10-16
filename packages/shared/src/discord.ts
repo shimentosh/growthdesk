@@ -264,6 +264,16 @@ export const DiscordSettingsInput = z
   })
   .refine((s) => s.unrouted !== "fallback" || s.fallbackDestinationId, { message: "Choose the fallback channel", path: ["fallbackDestinationId"] });
 
+/**
+ * A workspace's own Discord application (bring your own bot). The secrets are
+ * write-only: omitted keeps the saved one when the application id is unchanged.
+ */
+export const DiscordAppInput = z.object({
+  clientId: snowflake,
+  clientSecret: z.string().trim().max(200).optional(),
+  botToken: z.string().trim().max(200).optional(),
+});
+
 export const DiscordConnectStartInput = z.object({ manageChannels: z.boolean().default(true) });
 export const DiscordDisconnectInput = z.object({ leaveServer: z.boolean().default(false) });
 

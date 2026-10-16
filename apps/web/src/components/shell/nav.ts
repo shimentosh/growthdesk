@@ -134,6 +134,7 @@ export const SETTINGS_NAV: SettingsGroup[] = [
       { href: "/settings/roles", label: "Roles & permissions", permission: "members.read" },
       { href: "/settings/lead-routing", label: "Lead routing", permission: "members.read" },
       { href: "/settings/integrations", label: "Integrations", permission: ["integrations.read", "apikeys.manage"] },
+      { href: "/settings/discord", label: "Discord", permission: "integrations.read" },
       { href: "/settings/billing", label: "Plan & billing", permission: "billing.read" },
     ],
   },

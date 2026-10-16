@@ -12,6 +12,7 @@ import {
   permissionsFor,
   snowflake,
   type DiscordChannelKind,
+  type DiscordAppInput,
   type DiscordCreateChannelInput,
   type DiscordDestinationInput,
   type RolePermissionOverrides,
@@ -21,10 +22,11 @@ import { PrismaService } from "../prisma/prisma.service.js";
 import type { DiscordConnection, DiscordDestination } from "../generated/prisma/client.js";
 import { AuditService } from "../core/audit.service.js";
 import { PlatformSettingsService, type DiscordApp } from "../core/platform-settings.service.js";
-import { derivedKey, hmac, safeEqual } from "../common/crypto.js";
+import { derivedKey, hmac, open, safeEqual, seal } from "../common/crypto.js";
 import { actorId, me, ws, type RequestContext } from "../common/context.js";
 import { badRequest, conflict, isApiError, notFound, unavailable } from "../common/errors.js";
 import { DISCORD_AUTHORIZE_URL, DiscordApi, DiscordApiError, explainDiscordError, type DiscordChannel, type DiscordGuild } from "./discord-api.js";
+import { DiscordAppResolver } from "./discord-app.service.js";
 
 const STATE_TTL_MS = 10 * 60_000;
 /** Manage Server or Administrator: what Discord itself requires to add a bot. */
@@ -101,7 +103,9 @@ export type StructureChannel = {
  * person's own server list (the `guilds` scope) must show them owning or
  * managing that server, and the bot must actually be in it. The person's token
  * is revoked straight after; only the server id and names are kept. The bot
- * token is the installation's, never stored per workspace.
+ * is the workspace's own Discord application when it saved one (bring your
+ * own bot, sealed in DiscordSettings), else the installation's
+ * (DiscordAppResolver).
  *
  * Reads always go to Discord (nothing is cached but names for the log), so
  * the channel list is exactly what the bot can see now. Creating or renaming
@@ -119,6 +123,7 @@ export class DiscordService {
     private readonly platform: PlatformSettingsService,
     private readonly audit: AuditService,
     private readonly api: DiscordApi,
+    private readonly apps: DiscordAppResolver,
     @Inject(APP_CONFIG) private readonly config: AppConfig,
   ) {}
 
@@ -130,9 +135,9 @@ export class DiscordService {
     return `${this.base()}/api/discord/oauth/callback`;
   }
 
-  async requireApp(): Promise<DiscordApp> {
-    const app = await this.platform.discordApp();
-    if (!app) throw unavailable("Discord is not set up on this installation. A platform admin adds the Discord application (client id, client secret and bot token) under admin → Settings → Discord.");
+  async requireApp(workspaceId: string): Promise<DiscordApp> {
+    const app = await this.apps.forWorkspace(workspaceId);
+    if (!app) throw unavailable("No Discord bot is set up for this workspace. Add your bot's Client ID, Client Secret and Bot Token under Settings → Discord first.");
     return app;
   }
 
@@ -159,13 +164,22 @@ export class DiscordService {
 
   async overview(ctx: RequestContext) {
     const w = ws(ctx).id;
-    const [app, connections, settings] = await Promise.all([
+    const [app, platformApp, connections, settings] = await Promise.all([
+      this.apps.forWorkspace(w),
       this.platform.discordApp(),
       this.prisma.db.discordConnection.findMany({ where: { workspaceId: w }, orderBy: { createdAt: "asc" } }),
       this.prisma.db.discordSettings.findUnique({ where: { workspaceId: w } }),
     ]);
     return {
       configured: Boolean(app),
+      /** Whose bot this workspace uses; null = none set up. */
+      appSource: app?.source ?? null,
+      /** The workspace's own application, when it saved one (secrets never returned). */
+      ownApp: settings?.appClientId
+        ? { clientId: settings.appClientId, clientSecretSet: Boolean(open(settings.appClientSecretSealed)), botTokenSet: Boolean(open(settings.appBotTokenSealed)) }
+        : null,
+      /** The installation offers its own bot, so a workspace can connect without one of its own. */
+      platformAvailable: Boolean(platformApp),
       redirectUri: this.redirectUri(),
       connections: connections.map(connectionDto),
       settings: { unrouted: (settings?.unrouted ?? "ignore") as "ignore" | "log" | "fallback", fallbackDestinationId: settings?.fallbackDestinationId ?? null },
@@ -176,6 +190,64 @@ export class DiscordService {
     const row = await this.prisma.db.discordConnection.findFirst({ where: { id, workspaceId } });
     if (!row) throw notFound("That Discord server");
     return row;
+  }
+
+  // ─── The workspace's own bot ──────────────────────────────────────────────
+
+  /**
+   * Saves the workspace's own Discord application. The bot token is checked
+   * with Discord (it must belong to that application); the client secret is
+   * first used when someone connects a server. Switching to a different
+   * application is refused while servers are connected through the current
+   * bot, since the new one is not in them.
+   */
+  async saveApp(ctx: RequestContext, input: z.infer<typeof DiscordAppInput>) {
+    const w = ws(ctx).id;
+    const settings = await this.prisma.db.discordSettings.findUnique({ where: { workspaceId: w } });
+    const same = settings?.appClientId === input.clientId;
+    const clientSecret = input.clientSecret || (same ? (open(settings?.appClientSecretSealed) ?? "") : "");
+    const botToken = input.botToken || (same ? (open(settings?.appBotTokenSealed) ?? "") : "");
+    if (!clientSecret) throw badRequest("Paste the Client Secret", { clientSecret: "Required" });
+    if (!botToken) throw badRequest("Paste the Bot Token", { botToken: "Required" });
+
+    const current = await this.apps.forWorkspace(w);
+    if (current && current.clientId !== input.clientId) await this.assertNoServers(w, "switching to another bot");
+
+    try {
+      const application = await this.api.application(botToken);
+      if (application.id !== input.clientId) {
+        throw badRequest("This Bot Token belongs to a different Discord application than the Client ID.", { botToken: "From another application" });
+      }
+    } catch (e) {
+      if (e instanceof DiscordApiError && e.badToken) throw badRequest("Discord did not accept this Bot Token. Reset it under Bot and paste the new one.", { botToken: "Not accepted by Discord" });
+      if (e instanceof DiscordApiError) return this.refuse(e);
+      throw e;
+    }
+
+    const data = { appClientId: input.clientId, appClientSecretSealed: seal(clientSecret), appBotTokenSealed: seal(botToken) };
+    await this.prisma.db.discordSettings.upsert({ where: { workspaceId: w }, create: { workspaceId: w, ...data }, update: data });
+    await this.audit.record(ctx, {
+      action: "discord.app_saved",
+      targetType: "discord_settings",
+      metadata: { clientId: input.clientId, secretChanged: Boolean(input.clientSecret), tokenChanged: Boolean(input.botToken) },
+    });
+    return this.overview(ctx);
+  }
+
+  /** Forgets the workspace's own bot (back to the installation's, if any). Refused while servers are connected through it. */
+  async removeApp(ctx: RequestContext) {
+    const w = ws(ctx).id;
+    const clientId = await this.apps.ownClientId(w);
+    if (!clientId) return this.overview(ctx);
+    await this.assertNoServers(w, "removing your bot");
+    await this.prisma.db.discordSettings.update({ where: { workspaceId: w }, data: { appClientId: "", appClientSecretSealed: "", appBotTokenSealed: "" } });
+    await this.audit.record(ctx, { action: "discord.app_removed", targetType: "discord_settings", metadata: { clientId } });
+    return this.overview(ctx);
+  }
+
+  private async assertNoServers(workspaceId: string, doing: string) {
+    const n = await this.prisma.db.discordConnection.count({ where: { workspaceId, status: { not: "disconnected" } } });
+    if (n) throw conflict(`Disconnect your ${n === 1 ? "server" : `${n} servers`} before ${doing}: ${n === 1 ? "it was" : "they were"} added with the current bot.`);
   }
 
   // ─── Connect (OAuth2 bot install) ─────────────────────────────────────────
@@ -199,7 +271,7 @@ export class DiscordService {
   }
 
   async start(ctx: RequestContext, manageChannels: boolean) {
-    const app = await this.requireApp();
+    const app = await this.requireApp(ws(ctx).id);
     const state = this.signState({ w: ws(ctx).id, u: me(ctx).userId, m: manageChannels, exp: Date.now() + STATE_TTL_MS, n: randomBytes(9).toString("base64url") });
     const params = new URLSearchParams({
       client_id: app.clientId,
@@ -241,7 +313,7 @@ export class DiscordService {
       throw new FlowError("Your role can no longer connect integrations in this workspace.");
     }
 
-    const app = await this.requireApp();
+    const app = await this.requireApp(state.w);
     const token = await this.api.exchangeCode(app, query.code, this.redirectUri()).catch((e: unknown) => {
       throw new FlowError(`Discord refused the sign-in: ${e instanceof DiscordApiError ? e.message : "no answer"}.`);
     });
@@ -303,9 +375,11 @@ export class DiscordService {
     await this.prisma.db.discordConnection.update({ where: { id: row.id, workspaceId: w }, data: { status: "disconnected" } });
     let left = false;
     if (leaveServer) {
-      // Unscoped by necessity: another workspace may use the same server through the same bot; it stays then.
-      const others = await this.prisma.unscoped.discordConnection.count({ where: { guildId: row.guildId, status: "connected", NOT: { id: row.id } } });
-      const app = await this.platform.discordApp();
+      const app = await this.apps.forWorkspace(w);
+      // The installation's bot may serve the same server for another workspace (unscoped by necessity); it stays then.
+      // A workspace's own bot is its alone.
+      const others =
+        app?.source === "platform" ? await this.prisma.unscoped.discordConnection.count({ where: { guildId: row.guildId, status: "connected", NOT: { id: row.id } } }) : 0;
       if (!others && app) {
         await this.api.leaveGuild(app.botToken, row.guildId).then(
           () => (left = true),
@@ -329,7 +403,7 @@ export class DiscordService {
     const w = ws(ctx).id;
     const row = await this.connection(w, id);
     if (row.status === "disconnected") throw conflict("This server is disconnected. Connect it again to see its channels.");
-    const app = await this.requireApp();
+    const app = await this.requireApp(w);
     let guild: DiscordGuild;
     let channels: DiscordChannel[];
     let base: bigint;
@@ -421,7 +495,7 @@ export class DiscordService {
   async createChannel(ctx: RequestContext, id: string, input: z.infer<typeof DiscordCreateChannelInput>) {
     const w = ws(ctx).id;
     const row = await this.connected(w, id);
-    const app = await this.requireApp();
+    const app = await this.requireApp(w);
     if (!hasDiscordPermission(row.permissions, DISCORD_PERMISSION.MANAGE_CHANNELS)) {
       throw badRequest("The bot does not have Manage Channels in this server. Connect the server again with “Allow creating and renaming channels” on, or give the bot's role Manage Channels in Discord.");
     }
@@ -456,7 +530,7 @@ export class DiscordService {
     const w = ws(ctx).id;
     if (!snowflake.safeParse(channelId).success) throw notFound("That channel");
     const row = await this.connected(w, id);
-    const app = await this.requireApp();
+    const app = await this.requireApp(w);
     const channel = (await this.liveChannels(app, row)).find((c) => c.id === channelId);
     const kind = channel ? KIND_BY_TYPE[channel.type] : undefined;
     if (!channel || !kind) throw notFound("That channel in this server");

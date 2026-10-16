@@ -16,12 +16,12 @@ import {
 } from "@growthdesk/shared";
 import { PrismaService } from "../prisma/prisma.service.js";
 import type { DiscordDelivery } from "../generated/prisma/client.js";
-import { PlatformSettingsService } from "../core/platform-settings.service.js";
 import { NotificationsService } from "../notifications/notifications.service.js";
 import { Queues } from "../queues/queues.js";
 import { ws, type RequestContext } from "../common/context.js";
 import { conflict, notFound } from "../common/errors.js";
 import { DiscordApi, DiscordApiError, explainDiscordError } from "./discord-api.js";
+import { DiscordAppResolver } from "./discord-app.service.js";
 import { DiscordContextService } from "./discord-context.service.js";
 
 /** A delivery still not through after this long is failed, whatever the reason (rate limits included). */
@@ -89,7 +89,7 @@ export class DiscordDeliveryService {
 
   constructor(
     private readonly prisma: PrismaService,
-    private readonly platform: PlatformSettingsService,
+    private readonly apps: DiscordAppResolver,
     private readonly notifications: NotificationsService,
     private readonly queues: Queues,
     private readonly api: DiscordApi,
@@ -120,8 +120,8 @@ export class DiscordDeliveryService {
       return this.finish(workspaceId, d.id, "failed", dest.connection.status === "lost" ? "The bot is no longer in this Discord server." : "This Discord server was disconnected.", "server_disconnected");
     }
     if (dest.status === "missing") return this.finish(workspaceId, d.id, "failed", "The channel was deleted in Discord.", "unknown_channel");
-    const app = await this.platform.discordApp();
-    if (!app) return this.finish(workspaceId, d.id, "failed", "Discord is not set up on this installation (admin → Settings → Discord).", "not_configured");
+    const app = await this.apps.forWorkspace(workspaceId);
+    if (!app) return this.finish(workspaceId, d.id, "failed", "No Discord bot is set up for this workspace (Settings → Discord).", "not_configured");
 
     // What to send: a test carries its rendered message; an event is rendered now, from current data.
     let message: DiscordMessage;

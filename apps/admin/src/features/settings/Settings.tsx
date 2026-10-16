@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, type FormEvent, type ReactNode } from "react";
-import { ArrowRight, Archive, CircleCheck, CircleX, CreditCard, KeyRound, MailCheck, OctagonPause, Sparkles, Trash2, UserPlus, Wallet, Wrench } from "lucide-react";
+import { ArrowRight, Archive, Bot, CircleCheck, CircleX, CreditCard, KeyRound, MailCheck, OctagonPause, Sparkles, Trash2, UserPlus, Wallet, Wrench } from "lucide-react";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { Callout } from "@/components/ui/Callout";
@@ -26,7 +26,7 @@ import { PlatformTile, platformKey, usePlatform } from "@/features/common/platfo
  * worker processes pick a change up within a few seconds.
  */
 
-type SecretName = "aiApiKey" | "googleClientSecret" | "microsoftClientSecret" | "stripeSecretKey" | "stripeWebhookSecret";
+type SecretName = "aiApiKey" | "googleClientSecret" | "microsoftClientSecret" | "discordClientSecret" | "discordBotToken" | "stripeSecretKey" | "stripeWebhookSecret";
 type Patch = Partial<Omit<AdminSettings, "plans" | "env" | "urls" | `${string}Set` | `${string}FromEnv`>> & Partial<Record<SecretName, string>>;
 
 function useSave(success = "Settings saved") {
@@ -388,6 +388,83 @@ function Integrations({ s }: { s: AdminSettings }) {
   );
 }
 
+function Discord({ s }: { s: AdminSettings }) {
+  const { canChange } = usePlatform();
+  const [form, setForm] = useState({ discordClientId: s.discordClientId, discordClientSecret: "", discordBotToken: "" });
+  const save = useSave("Discord application saved");
+  const fields = save.error?.fields ?? {};
+  const submit = (e: FormEvent) => {
+    e.preventDefault();
+    const id = form.discordClientId.trim();
+    save.mutate(
+      {
+        discordClientId: id,
+        // A cleared application id drops its saved secrets too: the three then come from the environment, if anywhere.
+        ...(form.discordClientSecret.trim() ? { discordClientSecret: form.discordClientSecret.trim() } : id ? {} : { discordClientSecret: "" }),
+        ...(form.discordBotToken.trim() ? { discordBotToken: form.discordBotToken.trim() } : id ? {} : { discordBotToken: "" }),
+      },
+      { onSuccess: () => setForm((f) => ({ ...f, discordClientSecret: "", discordBotToken: "" })) },
+    );
+  };
+  // A saved application id never borrows the environment's secrets (PlatformSettingsService.discordApp).
+  const fromEnv = !s.discordClientId;
+  return (
+    <form onSubmit={submit}>
+      <Section
+        icon={<Bot />}
+        title="Discord"
+        description="Optional: a shared Discord bot for every workspace, so customers connect with one click. Without it, each workspace sets up its own bot under Settings → Discord."
+        footer={
+          canChange && (
+            <Button type="submit" variant="primary" loading={save.isPending}>
+              Save
+            </Button>
+          )
+        }
+      >
+        <FormError error={save.error && !Object.keys(fields).length ? save.error.message : null} />
+        {s.discordConfigured ? (
+          <Callout tone="ok" title="Discord is ready">
+            Workspaces without their own bot connect with this one{fromEnv ? " (the DISCORD_* values from the server)" : ""}.
+          </Callout>
+        ) : (
+          <Callout tone="info" title="No shared bot">
+            Discord Developer Portal → Applications → New Application. From <b>OAuth2</b> copy the Client ID and reset the Client Secret, and add this redirect:
+          </Callout>
+        )}
+        <div className="flex flex-col gap-1">
+          <span className="text-xs font-medium text-text-2">OAuth2 redirect</span>
+          <CopyValue value={s.urls.discordRedirectUri} />
+        </div>
+        <p className="text-xs text-text-3">Then open <b>Bot</b>, reset the token and paste it below. The bot needs no privileged gateway intents.</p>
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <Field label="Application (client) ID" error={fields.discordClientId} hint={s.env.discordClientId ? "Empty: DISCORD_CLIENT_ID from the server." : "Empty: Discord is off."}>
+            <Input value={form.discordClientId} onChange={(e) => setForm({ ...form, discordClientId: e.target.value })} placeholder={s.env.discordClientId || "123456789012345678"} disabled={!canChange} className="font-mono" inputMode="numeric" />
+          </Field>
+          <SecretInput
+            label="Client secret"
+            set={s.discordClientSecretSet}
+            fromEnv={s.discordClientSecretFromEnv}
+            envName="DISCORD_CLIENT_SECRET"
+            value={form.discordClientSecret}
+            onChange={(v) => setForm({ ...form, discordClientSecret: v })}
+            error={fields.discordClientSecret}
+          />
+          <SecretInput
+            label="Bot token"
+            set={s.discordBotTokenSet}
+            fromEnv={s.discordBotTokenFromEnv}
+            envName="DISCORD_BOT_TOKEN"
+            value={form.discordBotToken}
+            onChange={(v) => setForm({ ...form, discordBotToken: v })}
+            error={fields.discordBotToken}
+          />
+        </div>
+      </Section>
+    </form>
+  );
+}
+
 function Stripe({ s }: { s: AdminSettings }) {
   const { canChange } = usePlatform();
   const [secretKey, setSecretKey] = useState("");
@@ -613,6 +690,7 @@ export function PlatformSettings() {
             <Billing key={`b-${s.defaultPlanKey}-${s.expiredPlanKey}-${s.graceDays}-${s.trialsPerIpPerDay}`} s={s} />
             <Ai key={`a-${s.aiProvider}-${s.aiModel}-${s.aiBaseUrl}`} s={s} />
             <Integrations key={`i-${s.googleClientId}-${s.microsoftClientId}-${s.microsoftTenant}`} s={s} />
+            <Discord key={`d-${s.discordClientId}`} s={s} />
             <Stripe s={s} />
             <Retention key={`r-${JSON.stringify(s.retentionDays)}`} s={s} />
           </div>

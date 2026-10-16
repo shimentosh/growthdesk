@@ -149,6 +149,16 @@ export class DiscordContextService {
     }
 
     const subjectOf = (kind: string, key: string) => (e.subjectType === kind && isId(e.subjectId) ? e.subjectId : isId(payload[key]) ? (payload[key] as string) : null);
+    // Dates as people read them, in the workspace's time zone ("17 Oct 2026, 15:00 (Asia/Dhaka)").
+    const tz = ws?.timezone ?? "UTC";
+    const when = (d: Date | null | undefined) => {
+      if (!d) return null;
+      try {
+        return `${new Intl.DateTimeFormat("en-GB", { dateStyle: "medium", timeStyle: "short", timeZone: tz }).format(d)} (${tz})`;
+      } catch {
+        return d.toISOString();
+      }
+    };
     const money = (n: number, currency: string) => {
       try {
         return new Intl.NumberFormat("en-US", { style: "currency", currency }).format(n);
@@ -161,7 +171,7 @@ export class DiscordContextService {
     if (e.subjectType === "meeting" && isId(e.subjectId)) {
       const m = await this.prisma.db.meeting.findFirst({ where: { id: e.subjectId, workspaceId }, select: { title: true, startsAt: true, endsAt: true, location: true, conferenceUrl: true, attendeeName: true, attendeeEmail: true, status: true, contactId: true, dealId: true } });
       if (m) {
-        ctx.meeting = { ...m, startsAt: m.startsAt.toISOString(), endsAt: m.endsAt?.toISOString() ?? null };
+        ctx.meeting = { ...m, startsAt: m.startsAt.toISOString(), endsAt: m.endsAt?.toISOString() ?? null, when: when(m.startsAt) };
         payload.contactId ??= m.contactId;
         payload.dealId ??= m.dealId;
         event.link = `${app}/meetings`;
@@ -169,7 +179,7 @@ export class DiscordContextService {
     } else if (e.subjectType === "task" && isId(e.subjectId)) {
       const t = await this.prisma.db.task.findFirst({ where: { id: e.subjectId, workspaceId }, select: { title: true, type: true, dueAt: true, status: true, priority: true, contactId: true, dealId: true, assignee: { select: { name: true } } } });
       if (t) {
-        ctx.task = { title: t.title, type: t.type, status: t.status, priority: t.priority, dueAt: t.dueAt?.toISOString() ?? null, assignee: t.assignee ? { name: t.assignee.name } : null };
+        ctx.task = { title: t.title, type: t.type, status: t.status, priority: t.priority, dueAt: t.dueAt?.toISOString() ?? null, due: when(t.dueAt), assignee: t.assignee ? { name: t.assignee.name } : null };
         payload.contactId ??= t.contactId;
         payload.dealId ??= t.dealId;
         event.link = `${app}/tasks`;

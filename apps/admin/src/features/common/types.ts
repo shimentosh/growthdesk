@@ -220,6 +220,13 @@ export type AdminSettings = {
   microsoftClientSecretSet: boolean;
   microsoftClientSecretFromEnv: boolean;
   microsoftTenant: string;
+  discordClientId: string;
+  discordClientSecretSet: boolean;
+  discordClientSecretFromEnv: boolean;
+  discordBotTokenSet: boolean;
+  discordBotTokenFromEnv: boolean;
+  /** All three Discord values are present (saved here, or all from the environment). */
+  discordConfigured: boolean;
   stripeSecretKeySet: boolean;
   stripeSecretKeyFromEnv: boolean;
   stripeWebhookSecretSet: boolean;
@@ -233,12 +240,13 @@ export type AdminSettings = {
     googleClientId: string;
     microsoftClientId: string;
     microsoftTenant: string;
+    discordClientId: string;
     aiBaseUrl: string;
     trialsPerIpPerDay: number;
     retentionDays: Record<RetentionKey, number>;
   };
-  /** What to paste into Google Cloud, Microsoft Entra and Stripe. */
-  urls: { googleRedirectUris: string[]; microsoftRedirectUri: string; stripeWebhookUrl: string };
+  /** What to paste into Google Cloud, Microsoft Entra, Discord and Stripe. */
+  urls: { googleRedirectUris: string[]; microsoftRedirectUri: string; discordRedirectUri: string; stripeWebhookUrl: string };
   plans: { key: string; name: string; isActive: boolean }[];
 };
 

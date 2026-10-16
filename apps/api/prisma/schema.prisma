@@ -2349,6 +2349,12 @@ model DiscordSettings {
   /// ignore | log (count events no rule takes) | fallback (post them to fallbackDestinationId)
   unrouted              String   @default("ignore")
   fallbackDestinationId String?  @db.Uuid
+  /// The workspace's own Discord application (bring your own bot). "" = the installation's (admin → Settings → Discord).
+  appClientId           String   @default("")
+  /// Sealed; never returned to a client.
+  appClientSecretSealed String   @default("")
+  /// Sealed; never returned to a client.
+  appBotTokenSealed     String   @default("")
   updatedAt             DateTime @updatedAt
 
   workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)

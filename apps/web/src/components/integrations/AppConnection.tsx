@@ -86,7 +86,12 @@ export function AppConnection({ app, keys, canManage }: { app: IntegrationApp; k
   const active = (keys ?? []).filter((k) => k.app === app && k.status === "active");
   const connected = active.length > 0;
   const newest = active[0];
-  const lastUsed = active.map((k) => k.lastUsedAt).filter((v): v is string => Boolean(v)).sort().at(-1) ?? null;
+  const lastUsed =
+    active
+      .map((k) => k.lastUsedAt)
+      .filter((v): v is string => Boolean(v))
+      .sort()
+      .at(-1) ?? null;
 
   // Products the app keeps in step (Clientdesk's services), when it holds that scope.
   const syncsProducts = info.scopes.includes("products:write") && ws.can("quotes.read");

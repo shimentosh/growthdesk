@@ -3,6 +3,7 @@ import { ApiTags } from "@nestjs/swagger";
 import type { Response } from "express";
 import { z } from "zod";
 import {
+  DiscordAppInput,
   DiscordConnectStartInput,
   DiscordCreateChannelInput,
   DiscordDeliveriesQuery,
@@ -45,6 +46,20 @@ export class DiscordController {
   @Get()
   overview(@Ctx() ctx: RequestContext) {
     return this.discord.overview(ctx);
+  }
+
+  // ─── The workspace's own bot ──────────────────────────────────────────────
+
+  @Permission("integrations.manage")
+  @Put("app")
+  saveApp(@Ctx() ctx: RequestContext, @Body(DiscordAppInput) body: z.infer<typeof DiscordAppInput>) {
+    return this.discord.saveApp(ctx, body);
+  }
+
+  @Permission("integrations.manage")
+  @Delete("app")
+  removeApp(@Ctx() ctx: RequestContext) {
+    return this.discord.removeApp(ctx);
   }
 
   // ─── Servers ──────────────────────────────────────────────────────────────
