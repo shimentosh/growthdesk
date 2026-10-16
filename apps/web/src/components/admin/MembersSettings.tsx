@@ -26,6 +26,7 @@ import { ME_KEY, useFormat, useMe, useWorkspace, workspaceDetailKey } from "@/li
 import type { Member, MembersResponse } from "@/lib/types";
 import type { BulkInviteResult, ChangeRoleResult, EditableRole, InvitationRow, InviteOutcome } from "@/lib/types/admin";
 import { assignableRoles, outranks, ROLE_DESCRIPTIONS, table } from "./labels";
+import { PEOPLE_TITLE, PeopleTabs } from "./PeopleTabs";
 import { RemoveMemberModal } from "./RemoveMemberModal";
 
 /** Every address in what was typed or pasted: separated by commas, semicolons, spaces or new lines; repeats dropped. */
@@ -432,7 +433,7 @@ export function MembersSettings() {
     <RequirePermission permission="members.read">
       <PageHeader
         icon={<EntityTile of="members" />}
-        title="Members"
+        title={PEOPLE_TITLE}
         description="Everyone who can sign in to this workspace. You can manage people below your own role."
         actions={
           canInvite ? (
@@ -442,6 +443,7 @@ export function MembersSettings() {
           ) : undefined
         }
       />
+      <PeopleTabs />
       <QueryState query={list} loading={<SkeletonText lines={6} />}>
         {(data) => (
           <div className="flex flex-col gap-5">

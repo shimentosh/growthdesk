@@ -23,6 +23,7 @@ import { cn } from "@/lib/cn";
 import { formatNumber } from "@/lib/format";
 import { useApiMutation, useApiQuery } from "@/lib/query";
 import { useWorkspace } from "@/lib/session";
+import { PEOPLE_TITLE, PeopleTabs } from "./PeopleTabs";
 
 /* GET /teams — apps/api/src/teams/teams.service.ts */
 type TeamMemberRow = { userId: string; name: string; email: string; title: string; away: boolean; openLeads: number; openDeals: number; openTasks: number };
@@ -249,7 +250,7 @@ export function TeamsSettings() {
     <RequirePermission permission="members.read">
       <PageHeader
         icon={<EntityTile of="members" />}
-        title="Teams"
+        title={PEOPLE_TITLE}
         description="Group people into teams — Sales, Marketing, SDR. Teams set who sees whose records, take leads in turn, and show where work piles up."
         actions={
           canEdit ? (
@@ -259,6 +260,7 @@ export function TeamsSettings() {
           ) : undefined
         }
       />
+      <PeopleTabs />
       <QueryState
         query={list}
         loading={

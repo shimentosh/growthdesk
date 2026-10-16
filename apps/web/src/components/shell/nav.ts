@@ -130,8 +130,7 @@ export const SETTINGS_NAV: SettingsGroup[] = [
     items: [
       { href: "/settings/general", label: "General" },
       { href: "/settings/company", label: "Company profile", permission: "settings.manage" },
-      { href: "/settings/members", label: "Members", permission: "members.read" },
-      { href: "/settings/teams", label: "Teams", permission: "members.read" },
+      { href: "/settings/members", label: "Members & teams", permission: "members.read" },
       { href: "/settings/roles", label: "Roles & permissions", permission: "members.read" },
       { href: "/settings/lead-routing", label: "Lead routing", permission: "members.read" },
       { href: "/settings/integrations", label: "Integrations", permission: ["integrations.read", "apikeys.manage"] },
