@@ -320,3 +320,33 @@ The key check reads the workspace's plan on every request. When a plan loses API
 refused with **402** until the plan includes it again; keys stay listed and can still be revoked.
 Lead ingest also respects the plan's contact limit: once it is reached, new leads fail individually
 with `plan_limit` while matches to existing contacts still update.
+
+## Commerce: clients and orders (Clientdesk)
+
+A client portal keeps Growthdesk told about its clients and their orders, so a
+contact shows what they bought and the team can market by it. API key with
+`customers:write` ("Sync clients and orders"); the Clientdesk app key made on
+Settings → Integrations has it.
+
+- `POST /api/workspaces/:id/commerce/customers` — `{ source: "clientdesk", customers: [...] }`, up to 100.
+  Each: `externalId` (the portal's person id), `fullName` / `firstName` / `lastName`, `email`, `phone`,
+  `country`, `company: { externalId, name, domain? }`, `since` (when they became a client), `status`
+  (the portal's word for them), `data`. Upserted like a lead (external id, then email, then phone; blanks
+  filled, never overwritten); the contact moves on to the **Contact** stage (never back), takes the company
+  (matched by its external id, else domain or name), and is stamped `customerSince` — once, which is the
+  `client.added` event.
+- `POST /api/workspaces/:id/commerce/orders` — `{ source: "clientdesk", orders: [...] }`, up to 100.
+  Each: `externalId`, `number`, `customerExternalId`, `company`, `status` (the portal's words), `state`
+  (`open` | `completed` | `cancelled`), `paid`, `currency`, `total`, `placedAt`, `paidAt`, `completedAt`,
+  `items: [{ name, quantity, unitPrice, total, productExternalId? }]` (linked to the Product the catalog sync
+  made with that id), `data`. After each request the contacts it touched have their totals counted again:
+  orders (not cancelled), paid orders, total spent (in the latest paid order's currency), first and last
+  order, last purchase; a paid order makes the contact a **Customer**. Events, once each: `order.created`,
+  `order.paid`, `order.completed`, `order.cancelled` — for workflows, webhooks and Discord.
+- `GET /api/workspaces/:id/commerce/status` — the connection check: `{ clients, orders, lastSyncedAt }`.
+
+Both answer 200 with a summary and one result per record (`created` | `updated` | `unchanged` | `failed`
+with the reason); one bad record fails alone. Sending a record again changes nothing.
+
+In the app: the contact page's **Orders** card, and the Contacts and Leads filters **Orders** (none, bought,
+repeat buyer) and **Client in Clientdesk** — save them as views to use as marketing audiences.

@@ -17,6 +17,7 @@ import { BookingModule } from "./booking/booking.module.js";
 import { ForecastModule } from "./forecast/forecast.module.js";
 import { QuotesModule } from "./quotes/quotes.module.js";
 import { CatalogSyncModule } from "./catalog-sync/catalog-sync.module.js";
+import { CommerceModule } from "./commerce/commerce.module.js";
 import { ScoringModule } from "./scoring/scoring.module.js";
 import { AttachmentsModule } from "./attachments/attachments.module.js";
 import { CampaignsModule } from "./campaigns/campaigns.module.js";
@@ -61,6 +62,7 @@ export const FEATURE_MODULES = [
   ForecastModule,
   QuotesModule,
   CatalogSyncModule,
+  CommerceModule,
   ScoringModule,
   AttachmentsModule,
   CampaignsModule,

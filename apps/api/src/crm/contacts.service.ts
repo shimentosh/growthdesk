@@ -98,6 +98,9 @@ export function contactDto(c: ContactRow) {
     consentStatus: c.consentStatus,
     consentSource: c.consentSource,
     consentAt: c.consentAt,
+    // Orders from a connected client portal (src/commerce), kept up to date by its sync.
+    orders: { count: c.ordersCount, paid: c.paidOrdersCount, spent: Number(c.totalSpent), currency: c.spentCurrency, firstAt: c.firstOrderAt, lastAt: c.lastOrderAt, lastPurchase: c.lastPurchase },
+    customerSince: c.customerSince,
     createdAt: c.createdAt,
     updatedAt: c.updatedAt,
   };
@@ -207,6 +210,11 @@ export class ContactsService {
     // "" is "no source recorded", so a filter can ask for the contacts nobody attributed.
     if (sources.length) and.push({ OR: sources.map((src) => ({ leadSource: { equals: src, mode: "insensitive" as const } })) });
     if (f.hasEmail !== undefined) and.push(f.hasEmail ? { email: { not: null } } : { email: null });
+    // Orders from a connected client portal: none placed, bought at least once (paid), or bought again.
+    if (f.orders === "none") and.push({ ordersCount: 0 });
+    else if (f.orders === "buyer") and.push({ paidOrdersCount: { gte: 1 } });
+    else if (f.orders === "repeat") and.push({ paidOrdersCount: { gte: 2 } });
+    if (f.client !== undefined) and.push(f.client ? { customerSince: { not: null } } : { customerSince: null });
     if (f.hasPhone !== undefined) and.push(f.hasPhone ? { phone: { not: null } } : { phone: null });
     if (f.noNextAction) and.push({ nextActionAt: null });
     if (f.createdAfter) and.push({ createdAt: { gte: f.createdAfter } });

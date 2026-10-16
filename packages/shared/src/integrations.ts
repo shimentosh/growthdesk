@@ -30,6 +30,10 @@ export const API_SCOPE_INFO: Record<ApiScope, { label: string; description: stri
     label: "Read campaigns",
     description: "List campaigns, fetch one, and list its enrollments.",
   },
+  "customers:write": {
+    label: "Sync clients and orders",
+    description: "Keep clients and their orders in step with another system (the client portal): creates and updates contacts, companies and orders.",
+  },
   "products:write": {
     label: "Sync products",
     description: "Keep the product catalog in step with another system (the client portal's services): creates, updates and archives the products that system owns.",
@@ -46,8 +50,8 @@ export type IntegrationApp = (typeof INTEGRATION_APPS)[number];
 export const INTEGRATION_APP_INFO: Record<IntegrationApp, { label: string; description: string; scopes: readonly ApiScope[] }> = {
   clientdesk: {
     label: "Clientdesk",
-    description: "Your client portal. Sends its website and portal leads here, and keeps Products in step with its services.",
-    scopes: ["leads:write", "products:write"],
+    description: "Your client portal. Sends its leads, clients and orders here, and keeps Products in step with its services.",
+    scopes: ["leads:write", "products:write", "customers:write"],
   },
   business_os: {
     label: "Business OS",

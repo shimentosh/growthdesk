@@ -51,6 +51,7 @@ export const PURGE_ORDER = [
   "CallAgent",
   "QuoteLineItem",
   "Quote",
+  "Order",
   "Product",
   "SalesTarget",
   "ScoringRule",

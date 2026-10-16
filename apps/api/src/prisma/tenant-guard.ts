@@ -102,6 +102,7 @@ export const TENANT_MODELS = new Set<string>([
   "DiscordDelivery",
   "DiscordSettings",
   "DiscordUnroutedEvent",
+  "Order",
 ]);
 
 const WHERE_OPERATIONS = new Set([

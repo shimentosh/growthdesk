@@ -13,6 +13,7 @@ import { ContactPrivacyMenu } from "@/components/crm/ContactPrivacyMenu";
 import { CustomFieldsCard } from "@/components/crm/CustomFieldsCard";
 import { ArchivedBanner, ContactLifecycleMenu, StageBadge } from "@/components/crm/lifecycle";
 import { NotesPanel } from "@/components/crm/NotesPanel";
+import { OrdersCard } from "@/components/crm/OrdersCard";
 import { ConsentCard, ContactActivityCards, DealsCard, IdentityCard, MarketingListsCard } from "@/components/crm/RelatedCards";
 import { TagEditor } from "@/components/crm/Tags";
 import { Timeline } from "@/components/crm/Timeline";
@@ -274,6 +275,7 @@ function Loaded({ contact: c, onDeleted }: { contact: ContactDetail; onDeleted: 
               ) : undefined
             }
           />
+          <OrdersCard contact={c} />
           <ContactActivityCards contact={c} />
           <ConsentCard contact={c} />
           <MarketingListsCard contact={c} />

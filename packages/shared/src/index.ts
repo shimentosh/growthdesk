@@ -9,6 +9,7 @@ export * from "./schemas.js";
 export * from "./ai.js";
 export * from "./admin.js";
 export * from "./integrations.js";
+export * from "./commerce.js";
 export * from "./tracking.js";
 export * from "./analytics.js";
 export * from "./calls.js";

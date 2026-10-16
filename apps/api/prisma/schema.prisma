@@ -441,6 +441,7 @@ model Workspace {
   bookingPages        BookingPage[]
   salesTargets        SalesTarget[]
   products            Product[]
+  orders              Order[]
   quotes              Quote[]
   quoteLineItems      QuoteLineItem[]
   scoringRules        ScoringRule[]
@@ -644,6 +645,7 @@ model Company {
   workspace  Workspace    @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   owner      User?        @relation("CompanyOwner", fields: [ownerId], references: [id], onDelete: SetNull)
   contacts   Contact[]
+  orders     Order[]
   deals      Deal[]
   tags       CompanyTag[]
   notes      Note[]
@@ -699,6 +701,18 @@ model Contact {
   consentStatus   ConsentStatus  @default(unknown)
   consentSource   String         @default("")
   consentAt       DateTime?
+  /// Orders from a connected store or client portal (Order, src/commerce), kept up to date by the sync:
+  /// placed and not cancelled, of those paid, what the paid ones came to (in spentCurrency), and when.
+  ordersCount     Int            @default(0)
+  paidOrdersCount Int            @default(0)
+  totalSpent      Decimal        @default(0) @db.Decimal(14, 2)
+  spentCurrency   String         @default("")
+  firstOrderAt    DateTime?
+  lastOrderAt     DateTime?
+  /// What the latest order was for ("SEO audit · Pro"), for lists and segments.
+  lastPurchase    String         @default("")
+  /// When they became a client (signed up or were added in the portal), else their first order.
+  customerSince   DateTime?
   /// Set when this record was merged into another; it is then soft-deleted.
   mergedIntoId    String?        @db.Uuid
   createdById     String?        @db.Uuid
@@ -723,9 +737,11 @@ model Contact {
   consentEvents   ConsentEvent[]
   listMemberships ListMembership[]
   marketingSends  MarketingSend[]
+  orders          Order[]
 
   @@index([workspaceId, createdAt])
   @@index([workspaceId, email])
+  @@index([workspaceId, paidOrdersCount])
   @@index([workspaceId, phone])
   @@index([workspaceId, ownerId])
   @@index([workspaceId, status])
@@ -3459,4 +3475,44 @@ model Attachment {
   workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
 
   @@index([workspaceId, entityType, entityId])
+}
+
+/// An order from a connected store or client portal (Clientdesk), upserted by (source, externalId) — src/commerce.
+/// The sender owns it: its number, status words, items and money are as the sender last said. Ours are
+/// `state` and `paid`, the normalised facts the contact's totals and the order.* events are built on.
+model Order {
+  id          String    @id @default(uuid(7)) @db.Uuid
+  workspaceId String    @db.Uuid
+  source      String
+  externalId  String
+  /// The sender's number, as people see it ("ORD-482913").
+  number      String    @default("")
+  contactId   String?   @db.Uuid
+  companyId   String?   @db.Uuid
+  /// The sender's own status words ("In progress"); `state` is ours.
+  status      String    @default("")
+  /// open | completed | cancelled
+  state       String    @default("open")
+  paid        Boolean   @default(false)
+  currency    String
+  total       Decimal   @db.Decimal(14, 2)
+  /// [{ name, quantity, unitPrice, total, productExternalId?, productId? }]
+  items       Json      @default("[]")
+  placedAt    DateTime
+  paidAt      DateTime?
+  completedAt DateTime?
+  cancelledAt DateTime?
+  /// Whatever else the sender keeps with it (subscription, coupon …), verbatim.
+  data        Json      @default("{}")
+  syncedAt    DateTime  @default(now())
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  contact   Contact?  @relation(fields: [contactId], references: [id], onDelete: SetNull)
+  company   Company?  @relation(fields: [companyId], references: [id], onDelete: SetNull)
+
+  @@unique([workspaceId, source, externalId])
+  @@index([workspaceId, contactId, placedAt])
+  @@index([workspaceId, companyId])
 }

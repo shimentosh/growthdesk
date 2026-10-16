@@ -44,6 +44,10 @@ export type ContactListState = {
   tag: string[];
   /** Lead sources (contact.leadSource, case ignored); "" = no source recorded. */
   source: string[];
+  /** Orders from the connected client portal: none placed, bought (one paid or more), bought again (two or more). */
+  orders: "" | "none" | "buyer" | "repeat";
+  /** A client in the connected portal, or not. */
+  client: YesNo;
   hasEmail: YesNo;
   hasPhone: YesNo;
   noNextAction: boolean;
@@ -66,7 +70,7 @@ export const DEFAULT_PAGE_SIZE = 50;
 export const PAGE_SIZES = [25, 50, 100, 200];
 
 /** The keys that narrow the rows (changing one drops the active saved view). */
-export const FILTER_KEYS = ["q", "status", "qualification", "priority", "owner", "tag", "source", "hasEmail", "hasPhone", "noNextAction", "companyId", "stage", "listId", "archived"] as const;
+export const FILTER_KEYS = ["q", "status", "qualification", "priority", "owner", "tag", "source", "orders", "client", "hasEmail", "hasPhone", "noNextAction", "companyId", "stage", "listId", "archived"] as const;
 
 /** Per-page defaults: which stages a page shows when the URL does not say. */
 export type ListDefaults = { stage: readonly LifecycleStage[] };
@@ -77,6 +81,8 @@ const list = <T extends string>(raw: string | null, allowed: readonly T[]): T[] 
     .split(",")
     .map((s) => s.trim())
     .filter((s): s is T => (allowed as readonly string[]).includes(s));
+
+const ORDER_FILTERS = ["none", "buyer", "repeat"] as const;
 
 /** A source in the URL: one `source` parameter each (sources may hold commas); "-" stands for "none recorded". */
 const NO_SOURCE = "-";
@@ -96,6 +102,8 @@ export function parseState(sp: URLSearchParams, defaults: ListDefaults = NO_DEFA
     owner: sp.get("owner") ?? "",
     tag: (sp.get("tag") ?? "").split(",").map((t) => t.trim()).filter(Boolean),
     source: [...new Set(sp.getAll("source").map((v) => (v === NO_SOURCE ? "" : v.trim())))],
+    orders: ORDER_FILTERS.includes(sp.get("orders") as (typeof ORDER_FILTERS)[number]) ? (sp.get("orders") as ContactListState["orders"]) : "",
+    client: yesNo(sp.get("client")),
     hasEmail: yesNo(sp.get("hasEmail")),
     hasPhone: yesNo(sp.get("hasPhone")),
     noNextAction: sp.get("noNextAction") === "1",
@@ -121,6 +129,8 @@ export function toFilter(s: ContactListState): ContactFilterT | undefined {
   if (s.owner) f.ownerId = s.owner;
   if (s.tag.length) f.tag = s.tag;
   if (s.source.length) f.leadSource = s.source;
+  if (s.orders) f.orders = s.orders;
+  if (s.client) f.client = s.client === "yes";
   if (s.hasEmail) f.hasEmail = s.hasEmail === "yes";
   if (s.hasPhone) f.hasPhone = s.hasPhone === "yes";
   if (s.noNextAction) f.noNextAction = true;
@@ -143,6 +153,8 @@ export function fromFilter(filters: Record<string, unknown>): Partial<ContactLis
     owner: typeof filters.ownerId === "string" ? filters.ownerId : "",
     tag: arr(filters.tag),
     source: typeof filters.leadSource === "string" ? [filters.leadSource] : arr(filters.leadSource),
+    orders: ORDER_FILTERS.includes(filters.orders as (typeof ORDER_FILTERS)[number]) ? (filters.orders as ContactListState["orders"]) : "",
+    client: bool(filters.client),
     hasEmail: bool(filters.hasEmail),
     hasPhone: bool(filters.hasPhone),
     noNextAction: filters.noNextAction === true,
@@ -163,6 +175,8 @@ export function activeFilterCount(s: ContactListState): number {
     (s.owner ? 1 : 0) +
     (s.tag.length ? 1 : 0) +
     (s.source.length ? 1 : 0) +
+    (s.orders ? 1 : 0) +
+    (s.client ? 1 : 0) +
     (s.hasEmail ? 1 : 0) +
     (s.hasPhone ? 1 : 0) +
     (s.noNextAction ? 1 : 0) +
@@ -184,6 +198,8 @@ function serialize(s: ContactListState, defaults: ListDefaults): string {
   set("owner", s.owner);
   set("tag", s.tag.join(","));
   for (const src of s.source) p.append("source", src || NO_SOURCE);
+  set("orders", s.orders);
+  set("client", s.client);
   set("hasEmail", s.hasEmail);
   set("hasPhone", s.hasPhone);
   if (s.noNextAction) p.set("noNextAction", "1");
@@ -240,6 +256,8 @@ export function useContactListState(defaults: ListDefaults = NO_DEFAULTS) {
         owner: "",
         tag: [],
         source: [],
+        orders: "",
+        client: "",
         hasEmail: "",
         hasPhone: "",
         noNextAction: false,

@@ -5,6 +5,7 @@ import {
   BadgeCheck,
   Bookmark,
   BookmarkPlus,
+  Briefcase,
   Building2,
   CalendarOff,
   Check,
@@ -15,6 +16,7 @@ import {
   Mail,
   Phone,
   Search,
+  ShoppingBag,
   Signpost,
   Tag,
   Trash2,
@@ -131,6 +133,26 @@ export function FilterPopover({ state, update }: { state: ContactListState; upda
           </Field>
         </div>
 
+        <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-3">
+          <Field label="Orders">
+            <NativeSelect
+              size="sm"
+              value={state.orders}
+              icon={<ShoppingBag />}
+              onChange={(e) => update({ orders: e.target.value as ContactListState["orders"] })}
+              options={[
+                { value: "", label: "Any" },
+                { value: "none", label: "No orders" },
+                { value: "buyer", label: "Bought (1+ paid)" },
+                { value: "repeat", label: "Repeat buyer (2+ paid)" },
+              ]}
+            />
+          </Field>
+          <Field label="Client in Clientdesk">
+            <NativeSelect size="sm" value={state.client} icon={<Briefcase />} onChange={(e) => update({ client: e.target.value as YesNo })} options={yesNo} />
+          </Field>
+        </div>
+
         <div className="mt-4">
           <Checkbox
             checked={state.noNextAction}
@@ -240,6 +262,14 @@ export function FilterChips({ state, update, clear }: { state: ContactListState;
       {state.source.length > 0 && (
         <Chip icon={<Signpost />} label={`Source: ${state.source.map((x) => x || "none").join(", ")}`} onRemove={() => update({ source: [] })} />
       )}
+      {state.orders && (
+        <Chip
+          icon={<ShoppingBag />}
+          label={`Orders: ${{ none: "none", buyer: "bought", repeat: "repeat buyer" }[state.orders]}`}
+          onRemove={() => update({ orders: "" })}
+        />
+      )}
+      {state.client && <Chip icon={<Briefcase />} label={`Client: ${yn(state.client)}`} onRemove={() => update({ client: "" })} />}
       {state.hasEmail && <Chip icon={<Mail />} label={`Has email: ${yn(state.hasEmail)}`} onRemove={() => update({ hasEmail: "" })} />}
       {state.hasPhone && <Chip icon={<Phone />} label={`Has phone: ${yn(state.hasPhone)}`} onRemove={() => update({ hasPhone: "" })} />}
       {state.noNextAction && <Chip icon={<CalendarOff />} label="No next action" onRemove={() => update({ noNextAction: false })} />}

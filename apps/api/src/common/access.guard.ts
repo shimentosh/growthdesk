@@ -33,6 +33,7 @@ const SCOPE_PERMISSIONS: Record<string, string[]> = {
   "contacts:write": ["contacts.read", "contacts.write"],
   "campaigns:read": ["campaigns.read"],
   "products:write": ["quotes.read", "products.manage"],
+  "customers:write": ["contacts.read", "contacts.write", "contacts.import"],
 };
 
 /*

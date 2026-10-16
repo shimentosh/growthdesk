@@ -65,6 +65,10 @@ export type Contact = {
   stageChangedAt: string | null;
   /** Archived people are left out of lists, pickers and audiences unless asked for. */
   archivedAt: string | null;
+  /** Orders from a connected client portal (Clientdesk): placed (not cancelled), paid, what the paid ones came to. */
+  orders: { count: number; paid: number; spent: number; currency: string; firstAt: string | null; lastAt: string | null; lastPurchase: string };
+  /** When they became a client in the portal; null for a contact who isn't one. */
+  customerSince: string | null;
   createdAt: string;
   updatedAt: string;
 };

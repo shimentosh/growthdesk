@@ -204,6 +204,10 @@ export const ContactFilter = z.object({
   hasEmail: z.boolean().optional(),
   hasPhone: z.boolean().optional(),
   noNextAction: z.boolean().optional(),
+  /** Orders from a connected client portal: "none" placed, a "buyer" (one paid or more), a "repeat" buyer (two or more). */
+  orders: z.enum(["none", "buyer", "repeat"]).optional(),
+  /** A client in the connected portal (signed up or added there), or not. */
+  client: z.boolean().optional(),
   createdAfter: isoDate.optional(),
   createdBefore: isoDate.optional(),
   campaignId: uuid.optional(),
@@ -734,7 +738,7 @@ export const WorkflowInput = z.object({
 
 // ─── Integrations: API keys, webhooks ───────────────────────────────────────
 
-export const API_SCOPES = ["leads:write", "contacts:read", "contacts:write", "campaigns:read", "products:write"] as const;
+export const API_SCOPES = ["leads:write", "contacts:read", "contacts:write", "campaigns:read", "products:write", "customers:write"] as const;
 /** Apps connected from Settings → Integrations; their key's scopes come from INTEGRATION_APP_INFO. */
 export const INTEGRATION_APPS = ["clientdesk", "business_os"] as const;
 export const ApiKeyInput = z.object({
@@ -746,6 +750,11 @@ export const ApiKeyInput = z.object({
 });
 export const WEBHOOK_EVENTS = [
   "contact.created",
+  "client.added",
+  "order.created",
+  "order.paid",
+  "order.completed",
+  "order.cancelled",
   "contact.updated",
   "lead.imported",
   "reply.received",
