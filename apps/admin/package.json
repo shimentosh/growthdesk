@@ -13,11 +13,11 @@
   },
   "dependencies": {
     "@growthdesk/shared": "workspace:*",
-    "@tanstack/react-query": "5.104.1",
+    "@tanstack/react-query": "5.104.2",
     "clsx": "2.1.1",
-    "lucide-react": "1.47.0",
+    "lucide-react": "1.56.0",
     "next": "16.4.0",
-    "radix-ui": "1.7.0",
+    "radix-ui": "1.8.1",
     "react": "19.3.0",
     "react-dom": "19.3.0"
   },
