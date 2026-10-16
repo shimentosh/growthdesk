@@ -16,6 +16,7 @@ import { useMarketingLists } from "@/components/marketing/common";
 import { Button, IconButton } from "@/components/ui/Button";
 import { Callout } from "@/components/ui/Callout";
 import { Card, CardBody, CardFooter, CardHeader } from "@/components/ui/Card";
+import { COL, ColumnLabel } from "@/components/ui/columns";
 import { Field, FormError } from "@/components/ui/Field";
 import { Input, NativeSelect } from "@/components/ui/Input";
 import { EntityTile } from "@/components/ui/icons";
@@ -310,9 +311,15 @@ function MapStep({ loaded, initialListId, onBack }: { loaded: Loaded; initialLis
           </div>
           <div className="overflow-hidden rounded-md border border-line">
             <div className="hidden grid-cols-[minmax(0,1fr)_minmax(0,1.3fr)_minmax(200px,1fr)] gap-4 border-b border-line bg-s-2 px-3 py-2 text-xs font-medium text-text-3 sm:grid">
-              <span>Column in file</span>
-              <span>Sample values</span>
-              <span>Import as</span>
+              <span>
+                <ColumnLabel icon={COL.file}>Column in file</ColumnLabel>
+              </span>
+              <span>
+                <ColumnLabel icon={COL.rows}>Sample values</ColumnLabel>
+              </span>
+              <span>
+                <ColumnLabel icon={COL.target}>Import as</ColumnLabel>
+              </span>
             </div>
             <ul className="divide-y divide-line">
               {preview.headers.map((h) => {

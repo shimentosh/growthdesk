@@ -2,13 +2,14 @@
 
 import Link from "next/link";
 import { useState, type ReactNode } from "react";
-import { Building2, Copy, GitMerge, Mail, Phone, X } from "lucide-react";
+import { Building2, Copy, GitMerge, Mail, Phone, X, type LucideIcon } from "lucide-react";
 import { labelOf } from "@growthdesk/shared";
 import { contactLabel } from "@/components/pickers/Pickers";
 import { Avatar } from "@/components/ui/Avatar";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { Card, CardFooter } from "@/components/ui/Card";
+import { COL, ColumnLabel } from "@/components/ui/columns";
 import { ConfirmDialog } from "@/components/ui/Dialog";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { ENTITY, EntityTile } from "@/components/ui/icons";
@@ -77,6 +78,7 @@ function reasonIcon(reason: string) {
 
 type Row = {
   label: string;
+  icon?: LucideIcon;
   value: (c: Contact) => ReactNode;
   text: (c: Contact) => string;
 };
@@ -107,30 +109,35 @@ function PairCard({ pair }: { pair: DuplicatePair }) {
   const rows: Row[] = [
     {
       label: "Name",
+      icon: COL.name,
       value: (c) => contactLabel(c),
       text: (c) => contactLabel(c),
     },
-    { label: "Email", value: (c) => c.email, text: (c) => c.email ?? "" },
-    { label: "Phone", value: (c) => c.phone, text: (c) => c.phone ?? "" },
+    { label: "Email", icon: COL.email, value: (c) => c.email, text: (c) => c.email ?? "" },
+    { label: "Phone", icon: COL.phone, value: (c) => c.phone, text: (c) => c.phone ?? "" },
     {
       label: "Company",
+      icon: COL.company,
       value: (c) => c.company?.name,
       text: (c) => c.company?.id ?? "",
     },
     { label: "Job title", value: (c) => c.jobTitle, text: (c) => c.jobTitle },
     {
       label: "Owner",
+      icon: COL.owner,
       value: (c) => c.owner?.name,
       text: (c) => c.owner?.id ?? "",
     },
-    { label: "Status", value: (c) => labelOf(c.status), text: (c) => c.status },
+    { label: "Status", icon: COL.status, value: (c) => labelOf(c.status), text: (c) => c.status },
     {
       label: "Qualification",
+      icon: COL.qualification,
       value: (c) => labelOf(c.qualification),
       text: (c) => c.qualification,
     },
     {
       label: "Tags",
+      icon: COL.tags,
       value: (c) => c.tags.map((t) => t.name).join(", "),
       text: (c) =>
         c.tags
@@ -140,11 +147,13 @@ function PairCard({ pair }: { pair: DuplicatePair }) {
     },
     {
       label: "Last contacted",
+      icon: COL.updated,
       value: (c) => (c.lastContactedAt ? f.date(c.lastContactedAt) : "Never"),
       text: (c) => c.lastContactedAt ?? "",
     },
     {
       label: "Created",
+      icon: COL.created,
       value: (c) => f.dateTime(c.createdAt),
       text: (c) => c.createdAt,
     },
@@ -201,7 +210,7 @@ function PairCard({ pair }: { pair: DuplicatePair }) {
               return (
                 <tr key={r.label}>
                   <th scope="row" className="px-3 py-2 text-left text-xs font-normal text-text-3">
-                    {r.label}
+                    <ColumnLabel icon={r.icon}>{r.label}</ColumnLabel>
                     {differs && <span className="sr-only"> (differs)</span>}
                   </th>
                   {(["a", "b"] as const).map((k) => {

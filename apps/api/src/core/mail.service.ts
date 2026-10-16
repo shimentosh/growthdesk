@@ -137,8 +137,15 @@ export class MailService {
     return this.sendTemplate("account_exists", to, { name, action_url: this.link("/login") }, { userId });
   }
 
-  invitation(to: string, inviter: string, workspace: string, token: string) {
-    return this.sendTemplate("invitation", to, { inviter, workspace, action_url: this.link(`/invite/${encodeURIComponent(token)}`) });
+  /** `role` is already in plain words ("a manager — …"); `message` is the inviter's note, "" for none. */
+  invitation(to: string, inviter: string, workspace: string, token: string, extra: { role?: string; message?: string } = {}) {
+    return this.sendTemplate("invitation", to, {
+      inviter,
+      workspace,
+      role: extra.role ?? "",
+      message: extra.message ?? "",
+      action_url: this.link(`/invite/${encodeURIComponent(token)}`),
+    });
   }
 
   notification(to: string, title: string, body: string, path: string) {

@@ -20,6 +20,8 @@ export const TRIGGER_KIND: Record<WorkflowTrigger, WorkflowKind> = {
   "call.completed": "sales",
   "meeting.booked": "sales",
   "deal.stage_changed": "sales",
+  "deal.stale": "sales",
+  "quote.accepted": "sales",
   "task.overdue": "sales",
   "list.subscribed": "marketing",
   "marketing.opened": "marketing",
@@ -89,6 +91,22 @@ export const WORKFLOW_TEMPLATES: WorkflowTemplate[] = [
       { type: "create_task", config: { title: "Call the new lead now", type: "call", priority: "urgent", dueInMinutes: 15, assignTo: "owner" } },
       { type: "notify", config: { contactOwner: true, title: "New lead: call within 15 minutes", email: true } },
     ],
+  },
+  {
+    id: "sales-ai-speed-to-lead",
+    kind: "sales",
+    name: "Speed to lead: AI agent calls within minutes",
+    summary: "A new lead from a form or the API is handed to an AI calling campaign, so an AI agent phones them in the first minutes.",
+    description:
+      "Use an AI calling campaign with “Always on” turned on. Only leads whose consent to be called is recorded (for example by a consent box on your form) are called, and only within your calling hours in their time zone; the rest skip the call.",
+    trigger: "lead.imported",
+    conditions: [],
+    actions: [
+      { type: "assign_contact", config: { strategy: "round_robin", overwrite: false } },
+      { type: "add_tag", config: { tags: ["AI call"] } },
+      { type: "enroll_campaign", config: { campaignId: "" } },
+    ],
+    todo: "Choose an always-on AI calling campaign",
   },
   {
     id: "sales-round-robin",

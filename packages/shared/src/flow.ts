@@ -27,6 +27,7 @@ export const RULE_FIELDS = [
   "company",
   "country",
   "tag",
+  "call_outcome",
 ] as const;
 export type RuleField = (typeof RULE_FIELDS)[number] | `custom.${string}`;
 
@@ -80,7 +81,8 @@ export function branchPosition(steps: FlowStep[], pos: number, matched: boolean)
 export function waitBefore(steps: FlowStep[], from: number, to: number): number {
   const target = steps[to];
   if (!target) return 0;
-  const isMessage = (k: string | undefined) => k === "email" || k === "whatsapp" || k === "telegram";
+  // An AI call counts as a message here: two in a row never ring the same person twice in one day.
+  const isMessage = (k: string | undefined) => k === "email" || k === "whatsapp" || k === "telegram" || k === "ai_call";
   const backToBack = isMessage(target.kind) && isMessage(steps[from]?.kind) && target.kind === steps[from]?.kind;
   return Math.max(backToBack ? MINUTES_PER_DAY : 0, target.delayMinutes);
 }

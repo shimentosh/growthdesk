@@ -13,6 +13,7 @@ import { badRequest, conflict, forbidden, notFound, unauthorized } from "../comm
 import { actorId, holds, ws, type RequestContext } from "../common/context.js";
 import type { ChannelIntegration, Contact, Conversation } from "../generated/prisma/client.js";
 import { twilioApi } from "../calls/twilio.js";
+import { cartesiaApi } from "../ai-calling/cartesia.js";
 import {
   CHANNEL_CAPABILITIES,
   type ChatChannel,
@@ -116,7 +117,7 @@ export class ChannelsService implements ChatSender {
   dto(i: ChannelIntegration, canManage: boolean) {
     const config = (i.config ?? {}) as Record<string, unknown>;
     const details: Record<string, unknown> = {};
-    for (const key of ["phoneNumberId", "businessAccountId", "displayPhoneNumber", "verifiedName", "botId", "botUsername", "botName", "mode", "accountSid", "callerId", "friendlyName"]) {
+    for (const key of ["phoneNumberId", "businessAccountId", "displayPhoneNumber", "verifiedName", "botId", "botUsername", "botName", "mode", "accountSid", "callerId", "friendlyName", "phoneNumber", "webhookId"]) {
       if (config[key] !== undefined) details[key] = config[key];
     }
     const out: Record<string, unknown> = {
@@ -324,6 +325,14 @@ export class ChannelsService implements ChatSender {
         const acct = await twilioApi.account(String(config.accountSid ?? row.externalId), s.authToken);
         if (acct.status && acct.status !== "active") throw new Error(`The Twilio account is ${acct.status}`);
         config.friendlyName = acct.friendlyName;
+      } else if (row.provider === "cartesia") {
+        const s = openJson<{ apiKey: string }>(row.secretSealed);
+        if (!s) throw new Error("The stored API key could not be read — connect Cartesia again.");
+        const numbers = await cartesiaApi.phoneNumbers(s.apiKey);
+        config.numbers = numbers.map((n) => ({ id: n.id, number: n.number, label: n.label }));
+        const chosen = numbers.find((n) => n.id === config.phoneNumberId);
+        if (!chosen) throw new Error(numbers.length ? "The phone number AI calls are placed from is no longer on the Cartesia account — choose another in Settings → Calling." : "The Cartesia account has no phone number to call from. Buy or import one in Cartesia, then verify again.");
+        config.phoneNumber = chosen.number;
       }
     } catch (e) {
       lastError = reasonOf(e);
@@ -342,6 +351,12 @@ export class ChannelsService implements ChatSender {
     if (row.provider === "telegram_bot") {
       const s = openJson<TelegramSecrets>(row.secretSealed);
       if (s) await telegramApi.deleteWebhook(s.botToken).catch((e) => this.log.warn(`deleteWebhook failed: ${reasonOf(e)}`));
+    }
+    if (row.provider === "cartesia") {
+      // Stop Cartesia posting this workspace's call events to a URL that no longer answers. Agents stay on the account (their scripts are ours to re-push).
+      const s = openJson<{ apiKey: string }>(row.secretSealed);
+      const webhookId = (row.config as { webhookId?: string } | null)?.webhookId;
+      if (s && webhookId) await cartesiaApi.deleteWebhook(s.apiKey, webhookId).catch((e) => this.log.warn(`Cartesia deleteWebhook failed: ${reasonOf(e)}`));
     }
     await this.prisma.db.channelIntegration.update({
       where: { id: row.id, workspaceId: w.id },

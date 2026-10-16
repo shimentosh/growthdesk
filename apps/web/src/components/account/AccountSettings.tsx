@@ -15,7 +15,7 @@ import { Input, NativeSelect } from "@/components/ui/Input";
 import { Page, PageHeader } from "@/components/ui/PageHeader";
 import { LoadingBlock, SkeletonText } from "@/components/ui/Skeleton";
 import { toast } from "@/components/ui/Toast";
-import { browserTimeZone, timeZones, zoneAbbreviation } from "@/lib/format";
+import { browserTimeZone, timeZones, utcToZonedInput, zoneAbbreviation, zonedInputToUtc } from "@/lib/format";
 import { useApiMutation, useApiQuery, useInvalidate } from "@/lib/query";
 import { ME_KEY, useFormat, useMe } from "@/lib/session";
 import type { Me, SessionRow } from "@/lib/types";
@@ -34,7 +34,14 @@ function ProfileCard({ user }: { user: User }) {
   const initialZone = user.timezone || browserTimeZone();
   const [name, setName] = useState(user.name);
   const [timezone, setTimezone] = useState(initialZone);
-  const save = useApiMutation<{ updated: true }, { name: string; timezone: string }>({
+  const [title, setTitle] = useState(user.title ?? "");
+  const [phone, setPhone] = useState(user.phone ?? "");
+  // "Away until" is typed as a wall-clock time in their own zone; a time already past means they're back.
+  const savedAway = user.outOfOfficeUntil && new Date(user.outOfOfficeUntil).getTime() > Date.now() ? utcToZonedInput(user.outOfOfficeUntil, initialZone) : "";
+  const [away, setAway] = useState(savedAway);
+  const awayIso = away ? zonedInputToUtc(away, timezone) : null;
+  const awayPast = Boolean(awayIso && new Date(awayIso).getTime() <= Date.now());
+  const save = useApiMutation<{ updated: true }, { name: string; timezone: string; title: string; phone: string; outOfOfficeUntil: string | null }>({
     method: "PATCH",
     path: "/auth/me",
     invalidate: [ME_KEY],
@@ -47,11 +54,16 @@ function ProfileCard({ user }: { user: User }) {
     success: (r) => (r.alreadyVerified ? "Your email is already confirmed" : `Confirmation link sent to ${user.email}`),
   });
   const fields = save.error?.fields ?? {};
-  const dirty = name.trim() !== user.name || timezone !== (user.timezone ?? "");
+  const dirty =
+    name.trim() !== user.name ||
+    timezone !== (user.timezone ?? "") ||
+    title.trim() !== (user.title ?? "") ||
+    phone.trim() !== (user.phone ?? "") ||
+    away !== savedAway;
 
   function submit(e: FormEvent) {
     e.preventDefault();
-    save.mutate({ name: name.trim(), timezone });
+    save.mutate({ name: name.trim(), timezone, title: title.trim(), phone: phone.trim(), outOfOfficeUntil: awayIso });
   }
 
   return (
@@ -80,6 +92,26 @@ function ProfileCard({ user }: { user: User }) {
               ))}
             </NativeSelect>
           </Field>
+          <Field label="Job title" error={fields.title} hint="Shown under your name on the members page.">
+            <Input value={title} onChange={(e) => setTitle(e.target.value)} maxLength={100} autoComplete="organization-title" placeholder="Account executive" />
+          </Field>
+          <Field label="Phone" error={fields.phone}>
+            <Input type="tel" value={phone} onChange={(e) => setPhone(e.target.value)} maxLength={40} autoComplete="tel" />
+          </Field>
+          <Field
+            label="Away until"
+            error={fields.outOfOfficeUntil ?? (awayPast ? "That time has already passed — clear it or pick a later one." : undefined)}
+            hint="Lead routing skips you while you're away. Times are in your time zone above."
+            labelAction={
+              away ? (
+                <button type="button" className="text-xs text-accent-hi hover:underline" onClick={() => setAway("")}>
+                  Clear
+                </button>
+              ) : undefined
+            }
+          >
+            <Input type="datetime-local" value={away} onChange={(e) => setAway(e.target.value)} />
+          </Field>
         </CardBody>
         <CardFooter className={user.emailVerified ? undefined : "justify-between"}>
           {!user.emailVerified && (
@@ -87,7 +119,7 @@ function ProfileCard({ user }: { user: User }) {
               Resend confirmation email
             </Button>
           )}
-          <Button type="submit" variant="primary" loading={save.isPending} disabled={!dirty || !name.trim()}>
+          <Button type="submit" variant="primary" loading={save.isPending} disabled={!dirty || !name.trim() || awayPast}>
             Save profile
           </Button>
         </CardFooter>
@@ -286,7 +318,7 @@ export function AccountSettings() {
       <PageHeader icon={<EntityTile of="account" />} title="Account" description={`Signed in as ${user.email}. These settings are yours and follow you into every workspace.`} />
       <div className="flex flex-col gap-5">
         {/* Keyed so a refetched profile resets the form to what was saved. */}
-        <ProfileCard key={`${user.name}|${user.timezone}`} user={user} />
+        <ProfileCard key={`${user.name}|${user.timezone}|${user.title}|${user.phone}|${user.outOfOfficeUntil}`} user={user} />
         <PasswordCard user={user} />
         <TwoFactorCard user={user} />
         <SessionsCard />

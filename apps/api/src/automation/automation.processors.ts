@@ -6,12 +6,14 @@ import { QUEUES, Queues } from "../queues/queues.js";
 import { AutomationModule } from "./automation.module.js";
 import { DispatcherService } from "./dispatcher.service.js";
 import { WorkflowExecutor } from "./workflow-executor.service.js";
+import { LeadRoutingService } from "./lead-routing.service.js";
 import { DELIVERY_ATTEMPTS, WebhookDeliveryService } from "./webhook-delivery.service.js";
 
 /*
  * Worker side of automation:
  *   events     dispatch (kicked by EventsService.kick, jobId "dispatch") + sweep every 5 s
  *   automation run {workspaceId, runId} + resume every 30 s (due waits, lost jobs, stale runs, stale deliveries)
+ *              + route {workspaceId, contactIds}: lead routing, a few seconds after new contacts land
  *   webhooks   deliver {workspaceId, deliveryId}, 8 attempts with exponential backoff
  */
 
@@ -32,11 +34,22 @@ export class AutomationProcessor extends WorkerHost {
   constructor(
     private readonly executor: WorkflowExecutor,
     private readonly dispatcher: DispatcherService,
+    private readonly routing: LeadRoutingService,
   ) {
     super();
   }
 
-  override async process(job: Job<{ workspaceId?: string; runId?: string }>): Promise<unknown> {
+  override async process(job: Job<{ workspaceId?: string; runId?: string; contactIds?: string[]; conversationIds?: string[] }>): Promise<unknown> {
+    if (job.name === "assign-conversations") {
+      const { workspaceId, conversationIds } = job.data;
+      if (!workspaceId || !conversationIds?.length) return null;
+      return this.routing.assignConversations(workspaceId, conversationIds);
+    }
+    if (job.name === "route") {
+      const { workspaceId, contactIds } = job.data;
+      if (!workspaceId || !contactIds?.length) return null;
+      return this.routing.route(workspaceId, contactIds);
+    }
     if (job.name === "run") {
       const { workspaceId, runId } = job.data;
       if (!workspaceId || !runId) return null;

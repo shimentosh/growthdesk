@@ -21,12 +21,14 @@ import {
   Percent,
   Phone,
   Send,
+  SquareKanban,
   Table2,
   Timer,
   TrendingUp,
   Trophy,
   UserMinus,
   Users,
+  type LucideIcon,
 } from "lucide-react";
 import { isLocalDateString, labelOf, localDay, presetRange } from "@growthdesk/shared";
 import { DailyChart, dayLabel } from "@/components/analytics/DailyChart";
@@ -37,6 +39,7 @@ import { StatusBadge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { Callout } from "@/components/ui/Callout";
 import { Card, CardBody, CardHeader } from "@/components/ui/Card";
+import { COL, ColumnLabel } from "@/components/ui/columns";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { QueryState } from "@/components/ui/ErrorState";
 import { Page, PageHeader, Section } from "@/components/ui/PageHeader";
@@ -223,6 +226,7 @@ function FunnelCard({ query }: { query: DayRange }) {
           funnel.data && funnel.data.pipelines.length > 1 ? (
             <Select
               aria-label="Pipeline"
+              icon={<SquareKanban />}
               size="sm"
               className="w-48"
               value={funnel.data.pipelineId ?? undefined}
@@ -277,6 +281,15 @@ const METRICS: { value: MetricKey; label: string; title: string }[] = [
   { value: "tasksCompleted", label: "Tasks", title: "Tasks completed" },
   { value: "callsLogged", label: "Calls", title: "Calls logged" },
 ];
+const METRIC_ICON: Partial<Record<MetricKey, LucideIcon>> = {
+  sent: COL.sent,
+  replies: COL.replied,
+  dealsWon: COL.won,
+  valueWon: COL.amount,
+  meetingsBooked: COL.meetings,
+  tasksCompleted: COL.tasks,
+  callsLogged: COL.phone,
+};
 
 function TrendCard({ series, currency }: { series: SeriesPoint[]; currency: string }) {
   const f = useFormat();
@@ -311,10 +324,10 @@ function TrendCard({ series, currency }: { series: SeriesPoint[]; currency: stri
               <thead className="sticky top-0 bg-panel">
                 <tr className="border-b border-line">
                   <th scope="col" className="h-8 px-3 text-left text-xs font-medium text-text-3">
-                    Day
+                    <ColumnLabel icon={COL.date}>Day</ColumnLabel>
                   </th>
                   <th scope="col" className="h-8 px-3 text-right text-xs font-medium text-text-3">
-                    {m.label}
+                    <ColumnLabel icon={METRIC_ICON[metric]}>{m.label}</ColumnLabel>
                   </th>
                 </tr>
               </thead>
@@ -338,10 +351,10 @@ function TrendCard({ series, currency }: { series: SeriesPoint[]; currency: stri
 
 // ─── Campaigns ────────────────────────────────────────────────────────────────
 
-function Th({ children, left }: { children: ReactNode; left?: boolean }) {
+function Th({ children, left, icon }: { children: ReactNode; left?: boolean; icon?: LucideIcon }) {
   return (
     <th scope="col" className={cn("h-8 px-3 text-xs font-medium whitespace-nowrap text-text-3", left ? "text-left" : "text-right")}>
-      {children}
+      <ColumnLabel icon={icon}>{children}</ColumnLabel>
     </th>
   );
 }
@@ -368,16 +381,18 @@ function CampaignsSection({ query }: { query: DayRange }) {
                   <table className="w-full min-w-[860px] border-collapse text-sm">
                     <thead className="border-b border-line bg-s-2">
                       <tr>
-                        <Th left>Campaign</Th>
-                        <Th>Sent</Th>
-                        <Th>People</Th>
-                        <Th>Replied</Th>
-                        <Th>Reply rate</Th>
-                        <Th>Bounced</Th>
-                        <Th>Opens</Th>
-                        <Th>Clicks</Th>
-                        <Th>Unsubscribed</Th>
-                        <Th>Deals</Th>
+                        <Th left icon={COL.campaign}>
+                          Campaign
+                        </Th>
+                        <Th icon={COL.sent}>Sent</Th>
+                        <Th icon={COL.people}>People</Th>
+                        <Th icon={COL.replied}>Replied</Th>
+                        <Th icon={COL.rate}>Reply rate</Th>
+                        <Th icon={COL.bounced}>Bounced</Th>
+                        <Th icon={COL.opened}>Opens</Th>
+                        <Th icon={COL.clicked}>Clicks</Th>
+                        <Th icon={COL.unsubscribed}>Unsubscribed</Th>
+                        <Th icon={COL.deals}>Deals</Th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-line">
@@ -431,13 +446,15 @@ function StepsCard({ steps }: { steps: AnalyticsCampaigns["steps"] }) {
         <table className="w-full min-w-[640px] border-collapse text-sm">
           <thead className="border-b border-line bg-s-2">
             <tr>
-              <Th left>Step</Th>
-              <Th>Sent</Th>
-              <Th>Replied</Th>
-              <Th>Reply rate</Th>
-              <Th>Bounced</Th>
-              <Th>Opens</Th>
-              <Th>Clicks</Th>
+              <Th left icon={COL.steps}>
+                Step
+              </Th>
+              <Th icon={COL.sent}>Sent</Th>
+              <Th icon={COL.replied}>Replied</Th>
+              <Th icon={COL.rate}>Reply rate</Th>
+              <Th icon={COL.bounced}>Bounced</Th>
+              <Th icon={COL.opened}>Opens</Th>
+              <Th icon={COL.clicked}>Clicks</Th>
             </tr>
           </thead>
           <tbody className="divide-y divide-line">
@@ -493,15 +510,17 @@ function TeamTable({ data }: { data: ReturnType<typeof useApiQuery<AnalyticsTeam
             <table className="w-full min-w-[900px] border-collapse text-sm">
               <thead className="border-b border-line bg-s-2">
                 <tr>
-                  <Th left>Member</Th>
-                  <Th>Sent</Th>
-                  <Th>Replies</Th>
-                  <Th>Meetings</Th>
-                  <Th>Calls</Th>
-                  <Th>Tasks done</Th>
-                  <Th>Deals created</Th>
-                  <Th>Won</Th>
-                  <Th>Value won ({d.range.currency})</Th>
+                  <Th left icon={COL.person}>
+                    Member
+                  </Th>
+                  <Th icon={COL.sent}>Sent</Th>
+                  <Th icon={COL.replied}>Replies</Th>
+                  <Th icon={COL.meetings}>Meetings</Th>
+                  <Th icon={COL.phone}>Calls</Th>
+                  <Th icon={COL.tasks}>Tasks done</Th>
+                  <Th icon={COL.deals}>Deals created</Th>
+                  <Th icon={COL.won}>Won</Th>
+                  <Th icon={COL.amount}>Value won ({d.range.currency})</Th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-line">

@@ -13,6 +13,7 @@ import {
   AdminWorkspacesQuery,
   PlanAdminInput,
   PlatformSettingsInput,
+  EmailValidationTestInput,
   SuspendInput,
 } from "@growthdesk/shared";
 import { Body, Ctx, Platform, Query } from "../common/decorators.js";
@@ -156,6 +157,13 @@ export class AdminController {
   @Patch("settings")
   updateSettings(@Ctx() ctx: RequestContext, @Body(PlatformSettingsInput) body: z.infer<typeof PlatformSettingsInput>) {
     return this.admin.updateSettings(ctx, body);
+  }
+
+  @Platform("support")
+  @Post("settings/email-validation/test")
+  @HttpCode(200)
+  testContactEmail(@Body(EmailValidationTestInput) body: z.infer<typeof EmailValidationTestInput>) {
+    return this.admin.testContactEmail(body.email);
   }
 
   @Platform("support")

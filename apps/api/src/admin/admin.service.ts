@@ -12,7 +12,8 @@ import type { Prisma } from "../generated/prisma/client.js";
 import { PrismaService } from "../prisma/prisma.service.js";
 import { AuditService, type AuditInput } from "../core/audit.service.js";
 import { CredentialReleaseService } from "../core/credential-release.service.js";
-import { PlatformSettingsService, isSecretName, type PlatformSettings, type SecretName } from "../core/platform-settings.service.js";
+import { PlatformSettingsService, isSecretName, type ContactEmailValidation, type PlatformSettings, type SecretName } from "../core/platform-settings.service.js";
+import { EmailValidationService } from "../core/email-validation.service.js";
 import { SessionService } from "../auth/session.service.js";
 import { EntitlementsService } from "../billing/entitlements.service.js";
 import { BillingService } from "../billing/billing.service.js";
@@ -77,6 +78,7 @@ export class AdminService {
     private readonly billing: BillingService,
     private readonly revenue: RevenueService,
     private readonly credentials: CredentialReleaseService,
+    private readonly emailValidation: EmailValidationService,
     @Inject(APP_CONFIG) private readonly config: AppConfig,
   ) {}
 
@@ -677,12 +679,16 @@ export class AdminService {
     const urls = {
       googleRedirectUris: [`${base}/api/auth/google/callback`, `${base}/api/mailboxes/oauth/gmail/callback`],
       microsoftRedirectUri: `${base}/api/mailboxes/oauth/microsoft/callback`,
+      discordRedirectUri: `${base}/api/discord/oauth/callback`,
       stripeWebhookUrl: `${base}/api/webhooks/billing/stripe`,
     };
     return { ...view, plans, urls };
   }
 
-  async updateSettings(ctx: RequestContext, patch: Partial<PlatformSettings> & Partial<Record<SecretName, string>>) {
+  async updateSettings(
+    ctx: RequestContext,
+    patch: Omit<Partial<PlatformSettings>, "contactEmailValidation"> & { contactEmailValidation?: Partial<ContactEmailValidation> } & Partial<Record<SecretName, string>>,
+  ) {
     for (const key of ["defaultPlanKey", "expiredPlanKey"] as const) {
       const value = patch[key];
       if (value === undefined) continue;
@@ -712,8 +718,17 @@ export class AdminService {
       if (bad) throw badRequest(`"${bad}" is not a domain name`, { signupDomains: `"${bad}" is not a domain name` });
       patch.signupDomains = domains;
     }
+    if (patch.contactEmailValidation) {
+      // Saved as one object: a partial patch is merged over what is stored.
+      const current = await this.emailValidation.settings();
+      const next = { ...current, ...patch.contactEmailValidation };
+      const domains = [...new Set(next.blockedDomains.map((d) => d.trim().toLowerCase().replace(/^@/, "")).filter(Boolean))];
+      const bad = domains.find((d) => !/^[a-z0-9-]+(\.[a-z0-9-]+)+$/.test(d));
+      if (bad) throw badRequest(`"${bad}" is not a domain name`, { blockedDomains: `"${bad}" is not a domain name` });
+      patch.contactEmailValidation = { ...next, blockedDomains: domains };
+    }
     const before = await this.platform.get();
-    await this.platform.update(patch, me(ctx).userId);
+    await this.platform.update(patch as Partial<PlatformSettings>, me(ctx).userId);
     const changes: Record<string, unknown> = {};
     for (const [k, v] of Object.entries(patch)) {
       // Secrets are never written to the audit trail, only that they changed.
@@ -724,6 +739,12 @@ export class AdminService {
       await this.record(ctx, { action: "platform.settings_updated", targetType: "platform_settings", metadata: { changes } });
     }
     return this.settings();
+  }
+
+  /** The admin's "try an address" box: every check, with the saved switches, whether or not validation is on. */
+  async testContactEmail(email: string) {
+    const config = await this.emailValidation.settings();
+    return { enabled: config.enabled, ...(await this.emailValidation.check(email, config)) };
   }
 
   // ─── Audit log ─────────────────────────────────────────────────────────────

@@ -1,21 +1,25 @@
 import { Injectable } from "@nestjs/common";
 import type { z } from "zod";
-import type { DealInput, MeetingInput, PipelineInput } from "@growthdesk/shared";
+import { FORECAST_CATEGORY_LABELS, type DealInput, type MeetingInput, type PipelineInput, type Staleness } from "@growthdesk/shared";
 import { Prisma } from "../generated/prisma/client.js";
 import { PrismaService, type Tx } from "../prisma/prisma.service.js";
 import { EventsService } from "../core/events.service.js";
 import { ActivityService } from "../crm/activity.service.js";
+import { AuditService } from "../core/audit.service.js";
+import { NotificationsService } from "../notifications/notifications.service.js";
 import { advanceStage } from "../crm/lifecycle.js";
 import { badRequest, conflict, notFound } from "../common/errors.js";
 import { actorId, ownershipScope, ws, type RequestContext } from "../common/context.js";
 import { DEFAULT_STAGES } from "../workspaces/workspaces.service.js";
+import { staleness } from "../forecast/progress.js";
+import { meetingChanged } from "../booking/meeting-sync.js";
 
 type PipelineInputT = z.infer<typeof PipelineInput>;
 type DealInputT = z.infer<typeof DealInput>;
 type MeetingInputT = z.infer<typeof MeetingInput>;
 
 const dealInclude = {
-  stage: { select: { id: true, name: true, kind: true, position: true, color: true, probability: true } },
+  stage: { select: { id: true, name: true, kind: true, position: true, color: true, probability: true, rotDays: true } },
   contact: { select: { id: true, fullName: true, email: true } },
   company: { select: { id: true, name: true } },
   owner: { select: { id: true, name: true } },
@@ -24,7 +28,8 @@ const dealInclude = {
 
 type DealRow = Prisma.DealGetPayload<{ include: typeof dealInclude }>;
 
-export const dealDto = (d: DealRow) => ({
+/** `stale` comes from forecast/progress.ts staleness() (null: not stale, or not computed by the caller). */
+export const dealDto = (d: DealRow, stale: Staleness | null = null) => ({
   id: d.id,
   name: d.name,
   pipelineId: d.pipelineId,
@@ -41,6 +46,10 @@ export const dealDto = (d: DealRow) => ({
   lostReason: d.lostReason,
   proposalUrl: d.proposalUrl,
   description: d.description,
+  forecastCategory: d.forecastCategory,
+  nextStep: d.nextStep,
+  nextStepAt: d.nextStepAt,
+  stale: stale ? { since: stale.since, days: stale.days } : null,
   stageEnteredAt: d.stageEnteredAt,
   closedAt: d.closedAt,
   createdAt: d.createdAt,
@@ -53,6 +62,8 @@ export class PipelineService {
     private readonly prisma: PrismaService,
     private readonly events: EventsService,
     private readonly activity: ActivityService,
+    private readonly audit: AuditService,
+    private readonly notifications: NotificationsService,
   ) {}
 
   // ─── Pipelines ─────────────────────────────────────────────────────────────
@@ -69,14 +80,14 @@ export class PipelineService {
 
   async createPipeline(ctx: RequestContext, input: PipelineInputT) {
     const w = ws(ctx);
-    const stages = input.stages ?? DEFAULT_STAGES.map((s) => ({ name: s.name, kind: s.kind, probability: s.probability, color: s.color }));
+    const stages = input.stages ?? DEFAULT_STAGES.map((s) => ({ name: s.name, kind: s.kind, probability: s.probability, color: s.color, rotDays: null, guidance: "" }));
     this.assertStages(stages);
     return this.prisma.db.$transaction(async (tx) => {
       if (input.isDefault) await tx.pipeline.updateMany({ where: { workspaceId: w.id }, data: { isDefault: false } });
       const count = await tx.pipeline.count({ where: { workspaceId: w.id, archivedAt: null } });
       const p = await tx.pipeline.create({ data: { workspaceId: w.id, name: input.name, isDefault: input.isDefault ?? count === 0, position: count } });
       await tx.pipelineStage.createMany({
-        data: stages.map((s, i) => ({ workspaceId: w.id, pipelineId: p.id, name: s.name, kind: s.kind, probability: s.probability, color: s.color ?? "gray", position: i })),
+        data: stages.map((s, i) => ({ workspaceId: w.id, pipelineId: p.id, name: s.name, kind: s.kind, probability: s.probability, color: s.color ?? "gray", rotDays: s.rotDays ?? null, guidance: s.guidance ?? "", position: i })),
       });
       return tx.pipeline.findFirstOrThrow({ where: { id: p.id, workspaceId: w.id }, include: { stages: { orderBy: { position: "asc" } } } });
     });
@@ -113,7 +124,8 @@ export class PipelineService {
           await tx.pipelineStage.update({ where: { id: s.id, workspaceId: w.id }, data: { position: 1000 + s.position } });
         }
         for (const [i, s] of input.stages.entries()) {
-          const data = { name: s.name, kind: s.kind, probability: s.probability, color: s.color ?? "gray", position: i };
+          // rotDays or guidance left out keeps the stage's own; a new stage starts without them.
+          const data = { name: s.name, kind: s.kind, probability: s.probability, color: s.color ?? "gray", position: i, ...(s.rotDays !== undefined ? { rotDays: s.rotDays } : {}), ...(s.guidance !== undefined ? { guidance: s.guidance } : {}) };
           if (s.id && pipeline.stages.some((p) => p.id === s.id)) await tx.pipelineStage.update({ where: { id: s.id, workspaceId: w.id }, data });
           else await tx.pipelineStage.create({ data: { workspaceId: w.id, pipelineId: id, ...data } });
         }
@@ -140,7 +152,7 @@ export class PipelineService {
     return p;
   }
 
-  async deals(ctx: RequestContext, filter: { pipelineId?: string; status?: string; ownerId?: string; q?: string; contactId?: string }, page = 1, pageSize = 500) {
+  async deals(ctx: RequestContext, filter: { pipelineId?: string; status?: string; ownerId?: string; q?: string; contactId?: string; stale?: boolean }, page = 1, pageSize = 500) {
     const w = ws(ctx);
     const where: Prisma.DealWhereInput = {
       workspaceId: w.id,
@@ -152,11 +164,19 @@ export class PipelineService {
       ...(filter.q ? { name: { contains: filter.q, mode: "insensitive" } } : {}),
       ...(ownershipScope(ctx) as Prisma.DealWhereInput),
     };
+    if (filter.stale) {
+      // Staleness is computed, not stored: narrow to deals that could be stale, then page what is.
+      const rows = await this.prisma.db.deal.findMany({ where: { ...where, status: "open", stage: { rotDays: { not: null } } }, include: dealInclude, orderBy: [{ stageEnteredAt: "asc" }], take: 5000 });
+      const stale = await staleness(this.prisma.db, w.id, rows);
+      const hits = rows.filter((r) => stale.has(r.id));
+      return { items: hits.slice((page - 1) * pageSize, page * pageSize).map((r) => dealDto(r, stale.get(r.id))), total: hits.length, page, pageSize };
+    }
     const [rows, total] = await Promise.all([
       this.prisma.db.deal.findMany({ where, include: dealInclude, orderBy: [{ stageEnteredAt: "desc" }], skip: (page - 1) * pageSize, take: pageSize }),
       this.prisma.db.deal.count({ where }),
     ]);
-    return { items: rows.map(dealDto), total, page, pageSize };
+    const stale = await staleness(this.prisma.db, w.id, rows);
+    return { items: rows.map((r) => dealDto(r, stale.get(r.id))), total, page, pageSize };
   }
 
   async deal(ctx: RequestContext, id: string) {
@@ -172,8 +192,9 @@ export class PipelineService {
     const stageIds = [...new Set(history.flatMap((h) => [h.fromStageId, h.toStageId]).filter(Boolean))] as string[];
     const stages = await this.prisma.db.pipelineStage.findMany({ where: { workspaceId: w.id, id: { in: stageIds } }, select: { id: true, name: true } });
     const name = new Map(stages.map((s) => [s.id, s.name]));
+    const stale = await staleness(this.prisma.db, w.id, [d]);
     return {
-      ...dealDto(d),
+      ...dealDto(d, stale.get(d.id)),
       history: history.map((h) => ({ ...h, fromStage: h.fromStageId ? (name.get(h.fromStageId) ?? "") : null, toStage: name.get(h.toStageId) ?? "" })),
       meetings,
       tasks,
@@ -206,6 +227,9 @@ export class PipelineService {
           sourceCampaignId: input.sourceCampaignId ?? null,
           description: input.description ?? "",
           proposalUrl: input.proposalUrl ?? "",
+          forecastCategory: input.forecastCategory ?? "pipeline",
+          nextStep: input.nextStep ?? "",
+          nextStepAt: input.nextStepAt ?? null,
           status: stage.kind === "open" ? "open" : stage.kind,
           closedAt: stage.kind === "open" ? null : new Date(),
           createdById: actorId(ctx),
@@ -236,11 +260,35 @@ export class PipelineService {
     await this.prisma.db.$transaction(async (tx) => {
       await this.assertRefs(tx, w.id, input);
       const data: Prisma.DealUncheckedUpdateInput = {};
-      for (const key of ["name", "contactId", "companyId", "ownerId", "value", "currency", "expectedCloseDate", "sourceCampaignId", "description", "proposalUrl"] as const) {
+      for (const key of ["name", "contactId", "companyId", "ownerId", "value", "currency", "expectedCloseDate", "sourceCampaignId", "description", "proposalUrl", "forecastCategory", "nextStep", "nextStepAt"] as const) {
         if (input[key] !== undefined) (data as Record<string, unknown>)[key] = input[key];
       }
       await tx.deal.update({ where: { id, workspaceId: w.id }, data });
+      // The changes a team needs to see on the timeline (and the CEO in the activity feed): who owns it, what it is worth, when it closes.
+      const changes: string[] = [];
+      const ownerChanged = input.ownerId !== undefined && (input.ownerId ?? null) !== existing.ownerId;
+      if (ownerChanged) {
+        const owner = input.ownerId ? await tx.user.findUnique({ where: { id: input.ownerId }, select: { name: true } }) : null;
+        changes.push(owner ? `owner → ${owner.name}` : "owner removed");
+      }
+      if (input.value !== undefined && Number(input.value) !== Number(existing.value)) changes.push(`value ${Number(existing.value).toLocaleString("en-US")} → ${Number(input.value).toLocaleString("en-US")} ${input.currency ?? existing.currency}`);
+      const closeOld = existing.expectedCloseDate?.toISOString().slice(0, 10) ?? null;
+      const closeNew = input.expectedCloseDate === undefined ? closeOld : input.expectedCloseDate ? new Date(input.expectedCloseDate).toISOString().slice(0, 10) : null;
+      if (closeNew !== closeOld) changes.push(closeNew ? `expected close ${closeNew}` : "expected close removed");
+      if (input.name !== undefined && input.name !== existing.name) changes.push(`renamed to "${input.name}"`);
+      if (input.forecastCategory !== undefined && input.forecastCategory !== existing.forecastCategory) changes.push(`forecast → ${FORECAST_CATEGORY_LABELS[input.forecastCategory]}`);
+      if (input.nextStep !== undefined && input.nextStep !== existing.nextStep) changes.push(input.nextStep ? `next step: ${input.nextStep}` : "next step cleared");
+      if (changes.length) {
+        await this.activity.log(
+          { workspaceId: w.id, dealId: id, contactId: existing.contactId, companyId: existing.companyId, actorId: actorId(ctx), type: ownerChanged ? "deal.assigned" : "deal.updated", summary: `Deal ${changes.join(", ")}`, data: { changes, fromOwnerId: existing.ownerId, toOwnerId: ownerChanged ? (input.ownerId ?? null) : undefined } },
+          tx,
+        );
+      }
     });
+    // A deal handed to someone tells them (not when they took it themselves).
+    if (input.ownerId && input.ownerId !== existing.ownerId && input.ownerId !== actorId(ctx)) {
+      await this.notifications.notify(w.id, [input.ownerId], { type: "deal.assigned", title: `Deal assigned to you: ${input.name ?? existing.name}`, body: ctx.identity?.name ? `By ${ctx.identity.name}` : "", link: `/w/${w.id}/deals?deal=${id}` });
+    }
     if (input.stageId && input.stageId !== existing.stageId) await this.moveDeal(ctx, id, input.stageId);
     return this.deal(ctx, id);
   }
@@ -248,12 +296,14 @@ export class PipelineService {
   /** Moves a deal between stages, recording history; entering a Won or Lost stage closes it. */
   async moveDeal(ctx: RequestContext, id: string, stageId: string, reason?: string) {
     const w = ws(ctx);
+    let moved = false;
     await this.prisma.db.$transaction(async (tx) => {
       const deal = await tx.deal.findFirst({ where: { id, workspaceId: w.id, deletedAt: null, ...(ownershipScope(ctx) as Prisma.DealWhereInput) }, include: { stage: true } });
       if (!deal) throw notFound("That deal");
       const stage = await tx.pipelineStage.findFirst({ where: { id: stageId, workspaceId: w.id, pipelineId: deal.pipelineId } });
       if (!stage) throw badRequest("That stage is not in this deal's pipeline");
       if (stage.id === deal.stageId) return;
+      moved = true;
       const status = stage.kind === "open" ? "open" : stage.kind;
       await tx.deal.update({
         where: { id, workspaceId: w.id },
@@ -279,13 +329,36 @@ export class PipelineService {
       }
     });
     await this.events.kick();
+    if (moved) await this.announceClose(ctx, id);
     return this.deal(ctx, id);
+  }
+
+  /** A won deal is news for the owners and admins and the deal's owner; a lost one for its owner. Once per close. */
+  private async announceClose(ctx: RequestContext, id: string) {
+    const w = ws(ctx);
+    const d = await this.prisma.db.deal.findFirst({ where: { id, workspaceId: w.id }, select: { name: true, status: true, ownerId: true, value: true, currency: true, closedAt: true, lostReason: true } });
+    if (!d || d.status === "open") return;
+    const value = `${Number(d.value).toLocaleString("en-US")} ${d.currency}`;
+    const by = ctx.identity?.name ? ` · by ${ctx.identity.name}` : "";
+    const link = `/w/${w.id}/deals?deal=${id}`;
+    if (d.status === "won") {
+      await this.notifications.notifyRoles(w.id, ["owner", "admin"], { type: "deal.won", title: `Deal won: ${d.name}`, body: `${value}${by}`, link });
+      if (d.ownerId && d.ownerId !== actorId(ctx)) await this.notifications.notify(w.id, [d.ownerId], { type: "deal.won", title: `Your deal was won: ${d.name}`, body: value, link });
+    } else if (d.status === "lost" && d.ownerId && d.ownerId !== actorId(ctx)) {
+      await this.notifications.notify(w.id, [d.ownerId], { type: "deal.lost", title: `Deal lost: ${d.name}`, body: `${d.lostReason ? `${d.lostReason} · ` : ""}${value}${by}`, link });
+    }
   }
 
   async deleteDeal(ctx: RequestContext, id: string) {
     const w = ws(ctx);
-    const res = await this.prisma.db.deal.updateMany({ where: { id, workspaceId: w.id, deletedAt: null, ...(ownershipScope(ctx) as Prisma.DealWhereInput) }, data: { deletedAt: new Date() } });
-    if (!res.count) throw notFound("That deal");
+    const deal = await this.prisma.db.deal.findFirst({ where: { id, workspaceId: w.id, deletedAt: null, ...(ownershipScope(ctx) as Prisma.DealWhereInput) }, select: { name: true, contactId: true, companyId: true, value: true, currency: true, status: true } });
+    if (!deal) throw notFound("That deal");
+    await this.prisma.db.$transaction(async (tx) => {
+      await tx.deal.update({ where: { id, workspaceId: w.id }, data: { deletedAt: new Date() } });
+      // Kept on the contact's and company's timelines (the deal's own goes with it), and in the audit log.
+      await this.activity.log({ workspaceId: w.id, contactId: deal.contactId, companyId: deal.companyId, actorId: actorId(ctx), type: "deal.deleted", summary: `Deal deleted: ${deal.name}`, data: { dealId: id, value: Number(deal.value), currency: deal.currency, status: deal.status } }, tx);
+    });
+    await this.audit.record(ctx, { action: "deal.deleted", targetType: "deal", targetId: id, metadata: { name: deal.name, value: Number(deal.value), currency: deal.currency, status: deal.status } });
   }
 
   // ─── Meetings ─────────────────────────────────────────────────────────────
@@ -294,7 +367,9 @@ export class PipelineService {
     const w = ws(ctx);
     return this.prisma.db.meeting.findMany({
       where: { workspaceId: w.id, ...(from || to ? { startsAt: { ...(from ? { gte: from } : {}), ...(to ? { lte: to } : {}) } } : {}) },
-      include: { contact: { select: { id: true, fullName: true } }, deal: { select: { id: true, name: true } } },
+      include: { contact: { select: { id: true, fullName: true } }, deal: { select: { id: true, name: true } }, bookingPage: { select: { id: true, title: true, slug: true } } },
+      // The attendee's private cancel / reschedule key stays with the attendee.
+      omit: { manageToken: true },
       orderBy: { startsAt: "asc" },
       take: 500,
     });
@@ -332,7 +407,7 @@ export class PipelineService {
 
   async updateMeeting(ctx: RequestContext, id: string, input: Partial<MeetingInputT>) {
     const w = ws(ctx);
-    return this.prisma.db.$transaction(async (tx) => {
+    const meeting = await this.prisma.db.$transaction(async (tx) => {
       await this.assertRefs(tx, w.id, { contactId: input.contactId, ownerId: input.ownerId });
       if (input.dealId && !(await tx.deal.findFirst({ where: { id: input.dealId, workspaceId: w.id, deletedAt: null } }))) throw notFound("That deal");
       const res = await tx.meeting.updateMany({
@@ -353,7 +428,11 @@ export class PipelineService {
       const m = await tx.meeting.findFirstOrThrow({ where: { id, workspaceId: w.id } });
       // A meeting that took place turns the person into a contact.
       if (input.status === "completed") await advanceStage(tx, w.id, [m.contactId], "contact");
+      if (input.status === "canceled" && !m.canceledAt) return tx.meeting.update({ where: { id, workspaceId: w.id }, data: { canceledAt: new Date() } });
       return m;
     });
+    // A booked meeting's calendar event follows a cancel or a new time (booking/meeting-sync.ts).
+    if (meeting.externalEventId && (input.status !== undefined || input.startsAt !== undefined || input.endsAt !== undefined)) await meetingChanged(w.id, meeting.id);
+    return meeting;
   }
 }

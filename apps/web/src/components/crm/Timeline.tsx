@@ -37,6 +37,7 @@ import { EmptyState } from "@/components/ui/EmptyState";
 import { IconBadge, type Tint } from "@/components/ui/IconTile";
 import { SkeletonText } from "@/components/ui/Skeleton";
 import { useFormat } from "@/lib/session";
+import { ActorLabel } from "@/components/activity/ActorLabel";
 import type { ActivityEntry } from "@/lib/types/crm";
 
 type Mark = { icon: LucideIcon; tint: Tint };
@@ -85,12 +86,20 @@ const PREFIX: [string, Mark][] = [
   ["contact", { icon: UserPen, tint: "indigo" }],
 ];
 
-const markFor = (type: string): Mark =>
+export const markFor = (type: string): Mark =>
   EXACT[type] ??
   PREFIX.find(([p]) => type.startsWith(p))?.[1] ?? {
     icon: Activity,
     tint: "gray",
   };
+
+/** Who an entry is by: the agent/workflow/integration as named then; a person by their current name; an AI agent for its teammate. */
+function actorOf(e: ActivityEntry) {
+  const type = e.actorType ?? (e.actorId ? "user" : "system");
+  if (type === "user") return { type, name: e.actor?.name ?? e.actorName ?? "" };
+  if (type === "ai_agent") return { type, name: e.actorName || "AI agent", onBehalfOf: e.actor?.name ? { name: e.actor.name } : null };
+  return { type, name: e.actorName ?? "" };
+}
 
 /** The activity log of a record, newest first, as the API writes it next to each change. */
 export function Timeline({ entries, loading, limitNote }: { entries: ActivityEntry[] | undefined; loading?: boolean; limitNote?: string }) {
@@ -115,8 +124,9 @@ export function Timeline({ entries, loading, limitNote }: { entries: ActivityEnt
                 <IconBadge icon={<Icon />} tint={tint} />
                 <div className="min-w-0 flex-1 pt-[3px]">
                   <p className="text-sm break-words text-text">{e.summary}</p>
-                  <p className="mt-0.5 text-xs text-text-3">
-                    {e.actor?.name ? `${e.actor.name} · ` : ""}
+                  <p className="mt-0.5 flex min-w-0 flex-wrap items-center gap-x-1.5 text-xs text-text-3">
+                    <ActorLabel actor={actorOf(e)} />
+                    <span aria-hidden>·</span>
                     <time dateTime={e.occurredAt} title={f.dateTime(e.occurredAt)}>
                       {f.relative(e.occurredAt)}
                     </time>

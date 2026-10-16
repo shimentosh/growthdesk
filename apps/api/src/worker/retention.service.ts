@@ -51,7 +51,11 @@ type Table =
   | "Activity"
   | "AiUsage"
   | "BillingEvent"
-  | "MarketingSend";
+  | "MarketingSend"
+  | "McpCall"
+  | "Attachment"
+  | "McpPendingAction"
+  | "McpOAuthCode";
 
 /** Hard stop for one rule in one run; the next day's run carries on. */
 const MAX_BATCHES = 2000;

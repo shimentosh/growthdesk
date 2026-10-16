@@ -35,6 +35,7 @@ export const stageRef = (s: PipelineStage): DealStageRef => ({
   position: s.position,
   color: s.color,
   probability: s.probability,
+  rotDays: s.rotDays,
 });
 
 /** The per-field messages from a failed mutation (empty when it is not an ApiError). */

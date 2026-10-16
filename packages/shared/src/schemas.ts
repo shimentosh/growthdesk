@@ -20,6 +20,7 @@ import {
 } from "./enums.js";
 import { RULE_FIELDS, RULE_OPS } from "./flow.js";
 import { isValidTimeZone } from "./schedule.js";
+import { FORECAST_CATEGORIES } from "./forecast.js";
 
 /*
  * Request bodies, validated by the API (ZodBody pipe) and reused by the web
@@ -63,7 +64,15 @@ export const ResetPasswordInput = z.object({ token: z.string().min(10).max(200),
 export const VerifyEmailInput = z.object({ token: z.string().min(10).max(200) });
 /** `currentPassword` may be omitted only by an account that has none yet (Google sign-in); the API checks. */
 export const ChangePasswordInput = z.object({ currentPassword: z.string().max(200).optional(), newPassword: password });
-export const UpdateProfileInput = z.object({ name: requiredText(120).optional(), timezone: timezone.optional() });
+export const UpdateProfileInput = z.object({
+  name: requiredText(120).optional(),
+  timezone: timezone.optional(),
+  /** Job title, shown under their name on the members page. */
+  title: text(100).optional(),
+  phone: text(40).optional(),
+  /** Away until this moment: lead routing and round-robin assignment skip them. null = back. */
+  outOfOfficeUntil: z.iso.datetime({ offset: true }).nullable().optional(),
+});
 /** A six-digit authenticator code, or (where accepted) a recovery code; spaces and dashes are ignored by the API. */
 const twoFactorCode = z.string().trim().min(6).max(32);
 export const TwoFactorCodeInput = z.object({ code: twoFactorCode });
@@ -107,11 +116,23 @@ export const UpdateWorkspaceInput = z.object({
 });
 /** Owner-only: whether every member must have two-factor on to use the workspace. */
 export const WorkspaceSecurityInput = z.object({ requireTwoFactor: z.boolean() });
-export const InviteMemberInput = z.object({
-  email,
-  role: z.enum(WORKSPACE_ROLES).exclude(["owner"]),
-});
-export const UpdateMemberInput = z.object({ role: z.enum(WORKSPACE_ROLES) });
+/**
+ * One address (`email`, the original shape) or up to 50 (`emails`, checked one
+ * by one by the API so a bad address is reported, not a failure of the batch).
+ */
+export const InviteMemberInput = z
+  .object({
+    email: email.optional(),
+    emails: z.array(z.string().max(320)).min(1).max(50).optional(),
+    role: z.enum(WORKSPACE_ROLES).exclude(["owner"]),
+    /** A personal note from the inviter, shown in the email and on the accept page. */
+    message: text(500).optional(),
+  })
+  .refine((v) => Boolean(v.email) !== Boolean(v.emails), { message: "Enter an email address", path: ["email"] });
+/** A role change, pausing/restoring access (`deactivated`), or both. */
+export const UpdateMemberInput = z
+  .object({ role: z.enum(WORKSPACE_ROLES).optional(), deactivated: z.boolean().optional() })
+  .refine((v) => v.role !== undefined || v.deactivated !== undefined, { message: "Nothing to change", path: ["role"] });
 export const RolePermissionsInput = z.object({
   role: z.enum(WORKSPACE_ROLES).exclude(["owner"]),
   permissions: z.array(z.string()).max(100).nullable(),
@@ -341,6 +362,10 @@ export const PipelineInput = z.object({
         kind: z.enum(STAGE_KINDS).default("open"),
         probability: z.number().int().min(0).max(100).default(0),
         color: text(20).optional(),
+        /** Days without progress in this stage before a deal is stale (null = never). */
+        rotDays: z.number().int().min(1).max(365).nullable().optional(),
+        /** What to do in this stage / what gets a deal out of it, shown on the board and the deal. */
+        guidance: text(1000).optional(),
       }),
     )
     .min(2)
@@ -361,6 +386,10 @@ export const DealInput = z.object({
   sourceCampaignId: optionalUuid,
   description: text(5000).optional(),
   proposalUrl: text(1000).optional(),
+  /** How the owner rates it for the forecast (forecast.ts). */
+  forecastCategory: z.enum(FORECAST_CATEGORIES).optional(),
+  nextStep: text(500).optional(),
+  nextStepAt: isoDate.nullable().optional(),
 });
 export const MoveDealInput = z.object({
   stageId: uuid,
@@ -462,6 +491,8 @@ export const StepInput = z.object({
       strategy: z.enum(["user", "round_robin", "campaign_owner"]).optional(),
       message: text(2000).optional(),
       integrationId: optionalUuid,
+      /** ai_call: the AI agent that places the call. */
+      agentId: optionalUuid,
     })
     .passthrough()
     .default({}),
@@ -657,6 +688,8 @@ export const WORKFLOW_TRIGGERS = [
   "call.completed",
   "meeting.booked",
   "deal.stage_changed",
+  "deal.stale",
+  "quote.accepted",
   "task.overdue",
   "list.subscribed",
   "marketing.opened",
@@ -700,7 +733,7 @@ export const WorkflowInput = z.object({
 
 // ─── Integrations: API keys, webhooks ───────────────────────────────────────
 
-export const API_SCOPES = ["leads:write", "contacts:read", "contacts:write", "campaigns:read"] as const;
+export const API_SCOPES = ["leads:write", "contacts:read", "contacts:write", "campaigns:read", "products:write"] as const;
 export const ApiKeyInput = z.object({
   name: requiredText(80),
   scopes: z.array(z.enum(API_SCOPES)).min(1),
@@ -824,6 +857,15 @@ export const PlatformSettingsInput = z.object({
     .max(100)
     .refine((v) => v === "" || /^[A-Za-z0-9.-]+$/.test(v), "Use common, organizations, a tenant id or a domain")
     .optional(),
+  // The Discord application (bot). Secrets are write-only; "" clears them.
+  discordClientId: z
+    .string()
+    .trim()
+    .max(30)
+    .refine((v) => v === "" || /^\d{15,21}$/.test(v), "Paste the Application ID (a long number)")
+    .optional(),
+  discordClientSecret: z.string().trim().max(200).optional(),
+  discordBotToken: z.string().trim().max(200).optional(),
   // Stripe. Write-only; "" clears them.
   stripeSecretKey: z
     .string()
@@ -853,4 +895,18 @@ export const PlatformSettingsInput = z.object({
     })
     .partial()
     .optional(),
+  // Checks on every email a contact gets by hand, CSV, the leads API or MCP. A missing key keeps its saved value.
+  contactEmailValidation: z
+    .object({
+      enabled: z.boolean(),
+      blockDisposable: z.boolean(),
+      checkMailServer: z.boolean(),
+      blockRoleAccounts: z.boolean(),
+      blockedDomains: z.array(z.string().trim().max(253)).max(1000),
+    })
+    .partial()
+    .optional(),
 });
+
+/** The platform admin's "try an address" box for contact email validation. */
+export const EmailValidationTestInput = z.object({ email: z.string().trim().min(1).max(320) });

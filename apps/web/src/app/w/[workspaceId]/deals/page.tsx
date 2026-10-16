@@ -3,7 +3,7 @@
 import { useState } from "react";
 import type { QueryKey } from "@tanstack/react-query";
 import { useQueryClient } from "@tanstack/react-query";
-import { Columns3, Handshake, List, Plus, Settings2, SquareKanban } from "lucide-react";
+import { CircleDot, CircleUserRound, Columns3, Handshake, HeartPulse, List, Plus, Settings2, SquareKanban } from "lucide-react";
 import { DEAL_STATUSES, labelOf } from "@growthdesk/shared";
 import { CloseDealModal, type CloseRequest } from "@/components/pipeline/CloseDealModal";
 import { Segmented, useSearchState } from "@/components/pipeline/controls";
@@ -23,6 +23,7 @@ import { Pagination } from "@/components/ui/Pagination";
 import { RequirePermission } from "@/components/ui/RequirePermission";
 import { SearchInput } from "@/components/ui/SearchInput";
 import { Skeleton } from "@/components/ui/Skeleton";
+import { toast } from "@/components/ui/Toast";
 import { ENTITY, EntityTile } from "@/components/ui/icons";
 import { formatNumber } from "@/lib/format";
 import { useApiMutation, useApiQuery } from "@/lib/query";
@@ -57,6 +58,8 @@ function Deals() {
   const q = search.get("q");
   const ownerId = search.get("owner");
   const status = search.get("status");
+  // Open deals past their stage's "stale after" (computed by the API).
+  const staleOnly = search.get("stale") === "1";
   const [page, setPage] = useState(1);
   const [creating, setCreating] = useState<{ stageId?: string } | null>(null);
   const [closing, setClosing] = useState<CloseRequest | null>(null);
@@ -64,20 +67,24 @@ function Deals() {
   const pipelines = useApiQuery<Pipeline[]>(ws.key("pipelines"), ws.path("/pipelines"));
   const pipeline = pipelines.data?.find((p) => p.id === search.get("pipeline")) ?? pipelines.data?.[0];
 
-  const boardQuery = { pipelineId: pipeline?.id, ownerId, q, pageSize: BOARD_LIMIT };
+  const boardQuery = { pipelineId: pipeline?.id, ownerId, q, ...(staleOnly ? { stale: "true" } : {}), pageSize: BOARD_LIMIT };
   const boardKey: QueryKey = [...ws.key("deals", "board"), boardQuery];
   const board = useApiQuery<Paged<Deal>>(ws.key("deals", "board"), pipeline && view === "board" ? ws.path("/deals") : null, { query: boardQuery });
   const list = useApiQuery<Paged<Deal>>(ws.key("deals", "list"), pipeline && view === "list" ? ws.path("/deals") : null, {
-    query: { pipelineId: pipeline?.id, ownerId, q, status, page, pageSize: LIST_PAGE_SIZE },
+    query: { pipelineId: pipeline?.id, ownerId, q, status, ...(staleOnly ? { stale: "true" } : {}), page, pageSize: LIST_PAGE_SIZE },
     keepPrevious: true,
   });
 
-  const move = useApiMutation<DealDetail, MoveVars>({
+  const move = useApiMutation<DealDetail & { warning?: string }, MoveVars>({
     path: (v) => ws.path(`/deals/${v.deal.id}/move`),
     body: (v) => ({ stageId: v.stage.id, ...(v.reason ? { reason: v.reason } : {}) }),
     // Winning a deal marks its contact a customer, so contacts refresh too.
     invalidate: (_, v) => (v.stage.kind === "won" ? [ws.key("deals"), ws.key("contacts")] : [ws.key("deals")]),
     success: (_, v) => `“${v.deal.name}” moved to ${v.stage.name}`,
+    // A nudge from the API (no next step on an open deal); the move itself went through.
+    onSuccess: (d) => {
+      if (d.warning) toast.warn(d.warning);
+    },
     onError: (_, v) => {
       if (v.previous) qc.setQueryData(v.boardKey, v.previous);
     },
@@ -94,6 +101,8 @@ function Deals() {
         status: stage.kind,
         stageEnteredAt: new Date().toISOString(),
         closedAt: stage.kind === "open" ? null : new Date().toISOString(),
+        // Entering a stage is progress.
+        stale: null,
       };
       // The API lists deals newest-in-stage first, so the moved card goes to the top.
       qc.setQueryData<Paged<Deal>>(boardKey, { ...previous, items: [moved, ...previous.items.filter((d) => d.id !== deal.id)] });
@@ -173,6 +182,7 @@ function Deals() {
                 {all.length > 1 && (
                   <NativeSelect
                     aria-label="Pipeline"
+                    icon={<SquareKanban />}
                     className="w-auto min-w-44"
                     value={pipeline.id}
                     onChange={(e) => setFilter({ pipeline: e.target.value })}
@@ -180,10 +190,22 @@ function Deals() {
                   />
                 )}
                 <SearchInput className="w-full sm:w-60" value={q} onChange={(v) => setFilter({ q: v || null })} placeholder="Search deals…" />
-                <NativeSelect aria-label="Owner" className="w-auto min-w-36" value={ownerId} onChange={(e) => setFilter({ owner: e.target.value || null })} options={ownerOptions} />
+                <NativeSelect aria-label="Owner" icon={<CircleUserRound />} className="w-auto min-w-36" value={ownerId} onChange={(e) => setFilter({ owner: e.target.value || null })} options={ownerOptions} />
+                <NativeSelect
+                  aria-label="Health"
+                  icon={<HeartPulse />}
+                  className="w-auto min-w-32"
+                  value={staleOnly ? "1" : ""}
+                  onChange={(e) => setFilter({ stale: e.target.value || null })}
+                  options={[
+                    { value: "", label: "Any deal" },
+                    { value: "1", label: "Stale" },
+                  ]}
+                />
                 {view === "list" && (
                   <NativeSelect
                     aria-label="Status"
+                    icon={<CircleDot />}
                     className="w-auto min-w-32"
                     value={status}
                     onChange={(e) => setFilter({ status: e.target.value || null })}
@@ -226,8 +248,8 @@ function Deals() {
                       <EmptyState
                         compact
                         icon={<Handshake />}
-                        title={q || ownerId || status ? "No deals match these filters" : "No deals in this pipeline yet"}
-                        description={q || ownerId || status ? "Clear a filter to see more." : undefined}
+                        title={q || ownerId || status || staleOnly ? "No deals match these filters" : "No deals in this pipeline yet"}
+                        description={q || ownerId || status || staleOnly ? "Clear a filter to see more." : undefined}
                       />
                     }
                   >

@@ -6,6 +6,7 @@ import { useState } from "react";
 import { Handshake, Link2, Plus, Trash2 } from "lucide-react";
 import type { ContactInputT } from "@growthdesk/shared";
 import { AiSummaryCard } from "@/components/ai/AiSummaryCard";
+import { AttachmentsPanel } from "@/components/attachments/AttachmentsPanel";
 import { ContactCallActions } from "@/components/calls/ContactCallActions";
 import { ContactDetailsCard } from "@/components/crm/ContactDetailsCard";
 import { ContactPrivacyMenu } from "@/components/crm/ContactPrivacyMenu";
@@ -17,6 +18,7 @@ import { TagEditor } from "@/components/crm/Tags";
 import { Timeline } from "@/components/crm/Timeline";
 import { CompanyPicker, MemberPicker, contactLabel } from "@/components/pickers/Pickers";
 import { useContactDealActions } from "@/components/pipeline/ContactDealActions";
+import { ContactScorePanel } from "@/components/scoring/ContactScorePanel";
 import { Avatar } from "@/components/ui/Avatar";
 import { StatusBadge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
@@ -189,6 +191,7 @@ function Loaded({ contact: c, onDeleted }: { contact: ContactDetail; onDeleted: 
             addPath={ws.path(`/contacts/${c.id}/notes`)}
             invalidate={[ws.key("contacts", "notes", c.id), ws.key("contacts", "timeline", c.id)]}
           />
+          <AttachmentsPanel entityType="contact" entityId={c.id} />
           {timeline.isError ? (
             <Card>
               <ErrorState compact error={timeline.error} onRetry={() => void timeline.refetch()} />
@@ -200,6 +203,7 @@ function Loaded({ contact: c, onDeleted }: { contact: ContactDetail; onDeleted: 
 
         <aside className="flex min-w-0 flex-col gap-5">
           <AiSummaryCard kind="contact" id={c.id} />
+          <ContactScorePanel contactId={c.id} />
           <Card>
             <CardHeader title="Ownership" />
             <CardBody className="flex flex-col gap-3">

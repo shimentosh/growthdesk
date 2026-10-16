@@ -1,5 +1,5 @@
 import type { Request } from "express";
-import type { PlatformRole, WorkspaceRole } from "@growthdesk/shared";
+import type { McpAccess, PlatformRole, WorkspaceRole } from "@growthdesk/shared";
 import { forbidden, unauthorized } from "./errors.js";
 
 export type Identity = {
@@ -22,9 +22,24 @@ export type WorkspaceContext = {
   status: "active" | "suspended";
   timezone: string;
   currency: string;
+  /** Team visibility (common/visibility.ts): the people whose records this request may see; unset = no team narrowing. */
+  visibleUserIds?: string[];
 };
 
 export type ApiKeyContext = { id: string; workspaceId: string; scopes: string[]; name: string };
+
+/**
+ * Set when the request came through MCP (src/mcp): the person in `identity` is
+ * acting through one of their MCP tokens. `rolePermissions` is what their role
+ * holds; `workspace.permissions` is that, narrowed by the token's access level.
+ */
+export type McpTokenContext = {
+  tokenId: string;
+  tokenName: string;
+  access: McpAccess;
+  clientName: string | null;
+  rolePermissions: string[];
+};
 
 /** Everything the guard learned about a request. Handlers read it with @Ctx(). */
 export type RequestContext = {
@@ -33,6 +48,8 @@ export type RequestContext = {
   userAgent: string;
   identity?: Identity;
   apiKey?: ApiKeyContext;
+  /** The request came through MCP, as `identity`, with this token. */
+  mcp?: McpTokenContext;
   workspace?: WorkspaceContext;
 };
 
@@ -53,9 +70,14 @@ export const actorId = (ctx: RequestContext): string | null => ctx.identity?.use
 
 export const holds = (ctx: RequestContext, permission: string) => Boolean(ctx.workspace?.permissions.includes(permission));
 
-/** Rows a person may see when they lack records.view_all: their own (and unowned, for triage). */
+/**
+ * Rows a person may see when they lack records.view_all: their own (and
+ * unowned, for triage) — or, under team visibility, their teams' too.
+ */
 export function ownershipScope(ctx: RequestContext, field: "ownerId" | "assigneeId" = "ownerId"): Record<string, unknown> {
   if (!ctx.workspace || holds(ctx, "records.view_all") || !ctx.identity) return {};
+  const people = ctx.workspace.visibleUserIds;
+  if (people && people.length > 1) return { OR: [{ [field]: { in: people } }, { [field]: null }] };
   return { OR: [{ [field]: ctx.identity.userId }, { [field]: null }] };
 }
 

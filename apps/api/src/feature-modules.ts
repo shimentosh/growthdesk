@@ -12,6 +12,13 @@ import { TrackingModule } from "./tracking/tracking.module.js";
 import { ChannelsModule } from "./channels/channels.module.js";
 import { InboxModule } from "./inbox/inbox.module.js";
 import { CallsModule } from "./calls/calls.module.js";
+import { AiCallingModule } from "./ai-calling/ai-calling.module.js";
+import { BookingModule } from "./booking/booking.module.js";
+import { ForecastModule } from "./forecast/forecast.module.js";
+import { QuotesModule } from "./quotes/quotes.module.js";
+import { CatalogSyncModule } from "./catalog-sync/catalog-sync.module.js";
+import { ScoringModule } from "./scoring/scoring.module.js";
+import { AttachmentsModule } from "./attachments/attachments.module.js";
 import { CampaignsModule } from "./campaigns/campaigns.module.js";
 import { AutomationModule } from "./automation/automation.module.js";
 import { IntegrationsModule } from "./integrations/integrations.module.js";
@@ -26,6 +33,10 @@ import { PlatformMailModule } from "./platform-mail/platform-mail.module.js";
 import { PlatformGrowthModule } from "./platform-growth/platform-growth.module.js";
 import { LifecycleModule } from "./lifecycle/lifecycle.module.js";
 import { LiveChatModule } from "./livechat/livechat.module.js";
+import { SearchModule } from "./search/search.controller.js";
+import { TeamsModule } from "./teams/teams.module.js";
+import { DigestModule } from "./digest/digest.module.js";
+import { DiscordModule } from "./discord/discord.module.js";
 
 /** Every feature module, shared by the HTTP app and the worker. Do not reorder casually: globals first. */
 export const FEATURE_MODULES = [
@@ -37,6 +48,7 @@ export const FEATURE_MODULES = [
   CrmModule,
   AuthModule,
   WorkspacesModule,
+  TeamsModule,
   BillingModule,
   PipelineModule,
   MailboxesModule,
@@ -44,6 +56,13 @@ export const FEATURE_MODULES = [
   ChannelsModule,
   InboxModule,
   CallsModule,
+  AiCallingModule,
+  BookingModule,
+  ForecastModule,
+  QuotesModule,
+  CatalogSyncModule,
+  ScoringModule,
+  AttachmentsModule,
   CampaignsModule,
   AutomationModule,
   IntegrationsModule,
@@ -57,4 +76,7 @@ export const FEATURE_MODULES = [
   PlatformGrowthModule,
   LifecycleModule,
   LiveChatModule,
+  SearchModule,
+  DigestModule,
+  DiscordModule,
 ];

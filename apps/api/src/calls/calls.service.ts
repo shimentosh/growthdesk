@@ -46,11 +46,13 @@ const callInclude = {
   contact: { select: { id: true, fullName: true, firstName: true, lastName: true, email: true, phone: true, deletedAt: true } },
   deal: { select: { id: true, name: true } },
   user: { select: { id: true, name: true } },
+  agent: { select: { id: true, name: true } },
 } satisfies Prisma.CallInclude;
 
 type CallRow = Prisma.CallGetPayload<{ include: typeof callInclude }>;
 
-export function callDto(c: CallRow) {
+/** `full`: with the transcript (one call); lists leave it out. */
+export function callDto(c: CallRow, full = true) {
   return {
     id: c.id,
     provider: c.provider,
@@ -70,6 +72,14 @@ export function callDto(c: CallRow) {
     contact: c.contact && !c.contact.deletedAt ? { id: c.contact.id, fullName: c.contact.fullName, email: c.contact.email, phone: c.contact.phone } : null,
     deal: c.deal,
     user: c.user,
+    /** AI calls: the agent that spoke, what was said, and the judgement on it. */
+    agent: c.agent,
+    campaignId: c.campaignId,
+    summary: c.summary,
+    endReason: c.endReason,
+    analysis: c.provider === "cartesia" && c.analysis && typeof c.analysis === "object" && Object.keys(c.analysis).length ? c.analysis : null,
+    transcript: full && Array.isArray(c.transcript) ? c.transcript : [],
+    processedAt: c.processedAt,
     createdAt: c.createdAt,
     updatedAt: c.updatedAt,
   };
@@ -105,13 +115,14 @@ export class CallsService {
     if (q.status) and.push({ status: q.status });
     if (q.outcome) and.push({ outcome: q.outcome === "none" ? "" : q.outcome });
     if (q.provider) and.push({ provider: q.provider });
+    if (q.agentId) and.push({ agentId: q.agentId });
     if (q.from || q.to) and.push({ createdAt: { ...(q.from ? { gte: q.from } : {}), ...(q.to ? { lt: q.to } : {}) } });
     const where: Prisma.CallWhereInput = { workspaceId: w.id, AND: and };
     const [rows, total] = await Promise.all([
       this.prisma.db.call.findMany({ where, include: callInclude, orderBy: { createdAt: q.dir === "asc" ? "asc" : "desc" }, skip: (q.page - 1) * q.pageSize, take: q.pageSize }),
       this.prisma.db.call.count({ where }),
     ]);
-    return { items: rows.map(callDto), total, page: q.page, pageSize: q.pageSize };
+    return { items: rows.map((r) => callDto(r, false)), total, page: q.page, pageSize: q.pageSize };
   }
 
   private async find(ctx: RequestContext, id: string) {

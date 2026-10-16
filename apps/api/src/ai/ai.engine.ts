@@ -26,7 +26,7 @@ import { AiProviderError, DEFAULT_MODELS, DEFAULT_TIMEOUT_MS, complete, type AiP
 
 export const AI_CREDITS_PER_CALL = 1;
 
-export type AiFeature = "reply_draft" | "message_draft" | "write" | "classify" | "contact_summary" | "deal_summary";
+export type AiFeature = "reply_draft" | "message_draft" | "write" | "classify" | "contact_summary" | "deal_summary" | "call_analysis";
 
 export type AiRunInput<T> = {
   workspaceId: string;

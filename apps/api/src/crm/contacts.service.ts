@@ -19,9 +19,11 @@ import { Prisma } from "../generated/prisma/client.js";
 import { PrismaService, type Tx } from "../prisma/prisma.service.js";
 import { EntitlementsService } from "../billing/entitlements.service.js";
 import { EventsService } from "../core/events.service.js";
-import { ActivityService } from "./activity.service.js";
+import { ActivityService, resolveActor } from "./activity.service.js";
+import { NotificationsService } from "../notifications/notifications.service.js";
 import { SuppressionService } from "./suppression.service.js";
 import { ConsentService } from "./consent.service.js";
+import { EmailValidationService } from "../core/email-validation.service.js";
 import { advanceStage } from "./lifecycle.js";
 import { ApiError, badRequest, conflict, notFound } from "../common/errors.js";
 import { actorId, ownershipScope, ws, type RequestContext } from "../common/context.js";
@@ -123,6 +125,8 @@ export class ContactsService {
     private readonly activity: ActivityService,
     private readonly suppression: SuppressionService,
     private readonly consent: ConsentService,
+    private readonly notifications: NotificationsService,
+    private readonly emailValidation: EmailValidationService,
   ) {}
 
   // ─── Queries ───────────────────────────────────────────────────────────────
@@ -257,6 +261,11 @@ export class ContactsService {
     const suppressed = await this.suppression.check(w.id, { email: c.email, phone: c.phone });
     return {
       ...contactDto(c),
+      // Lead scoring (src/scoring): the parts of `score` and the rules behind it.
+      scoreFit: c.scoreFit,
+      scoreEngagement: c.scoreEngagement,
+      scoreBreakdown: c.scoreBreakdown,
+      scoreUpdatedAt: c.scoreUpdatedAt,
       identifiers: c.identifiers.map((i) => ({ id: i.id, kind: i.kind, value: i.value, isPrimary: i.isPrimary })),
       sources: c.sources.map((s) => ({ id: s.id, source: s.source, externalId: s.externalId, importId: s.importId, createdAt: s.createdAt })),
       suppressed,
@@ -324,6 +333,8 @@ export class ContactsService {
    * arriving from CSV, the API and an inbound reply is one canonical contact.
    */
   async upsert(workspaceId: string, billingAccountId: string, input: ContactInputT & { notes?: string }, opts: UpsertOptions): Promise<UpsertResult> {
+    // When the platform admin turns email validation on, a bad address refuses the whole contact (the import row fails with the reason).
+    await this.emailValidation.assertAcceptable([input.email, ...(input.emails ?? [])], opts.source);
     const emails = [...new Set([input.email ?? null, ...(input.emails ?? [])].map((e) => normalizeEmail(e)).filter((e): e is string => Boolean(e)))];
     const phones = [...new Set([input.phone ?? null, ...(input.phones ?? [])].map((p) => normalizePhone(p, opts.defaultCountry)).filter((p): p is string => Boolean(p)))];
 
@@ -611,6 +622,8 @@ export class ContactsService {
     const w = ws(ctx);
     const existing = await this.prisma.db.contact.findFirst({ where: { id, workspaceId: w.id, deletedAt: null, ...(ownershipScope(ctx) as Prisma.ContactWhereInput) } });
     if (!existing) throw notFound("That contact");
+    // Before the transaction: the mail-server check is a DNS lookup.
+    if (input.email && normalizeEmail(input.email) !== existing.email) await this.emailValidation.assertAcceptable([input.email]);
     const country = await this.defaultCountry(w.id);
     await this.prisma.db.$transaction(async (tx) => {
       const data: Prisma.ContactUpdateInput = {};
@@ -695,11 +708,17 @@ export class ContactsService {
         if (input.lifecycleStage === undefined) await advanceStage(tx, w.id, [id], "sales");
       }
       if (input.ownerId !== undefined && input.ownerId !== existing.ownerId) {
-        await this.activity.log({ workspaceId: w.id, contactId: id, actorId: actorId(ctx), type: "contact.assigned", summary: input.ownerId ? "Owner changed" : "Owner removed", data: { ownerId: input.ownerId } }, tx);
+        const owner = input.ownerId ? await tx.user.findUnique({ where: { id: input.ownerId }, select: { name: true } }) : null;
+        await this.activity.log({ workspaceId: w.id, contactId: id, actorId: actorId(ctx), type: "contact.assigned", summary: owner ? `Owner → ${owner.name}` : "Owner removed", data: { ownerId: input.ownerId, fromOwnerId: existing.ownerId } }, tx);
       }
       await this.events.emitIn(tx, { workspaceId: w.id, type: "contact.updated", subjectType: "contact", subjectId: id, actorId: actorId(ctx), payload: { fields: Object.keys(data) } });
     });
     await this.events.kick();
+    // Someone handed a contact to a teammate: tell them (not when they took it themselves).
+    if (input.ownerId && input.ownerId !== existing.ownerId && input.ownerId !== actorId(ctx)) {
+      const name = [existing.firstName, existing.lastName].filter(Boolean).join(" ") || existing.fullName || existing.email || "A contact";
+      await this.notifications.notify(w.id, [input.ownerId], { type: "contact.assigned", title: `${name} is now yours`, body: ctx.identity?.name ? `Assigned by ${ctx.identity.name}` : "", link: `/w/${w.id}/contacts/${id}` });
+    }
     return this.get(ctx, id);
   }
 
@@ -830,7 +849,7 @@ export class ContactsService {
           select: { id: true },
         })
       ).map((c) => c.id);
-      if (!scoped.length) return scoped;
+      if (!scoped.length) return { scoped, owned: [] as { id: string; ownerId: string | null; fullName: string; firstName: string; lastName: string; email: string | null }[] };
       await tx.contact.updateMany({
         where: { workspaceId: w.id, id: { in: scoped } },
         data: { lifecycleStage: "sales", stageChangedAt: new Date(), ...(ownerId !== undefined ? { ownerId } : {}) },
@@ -842,10 +861,36 @@ export class ContactsService {
         await this.activity.log({ workspaceId: w.id, contactId: id, actorId: actorId(ctx), type: "contact.stage_changed", summary: "Handed to sales", data: { to: "sales", ownerId: ownerId ?? null } }, tx);
         await this.events.emitIn(tx, { workspaceId: w.id, type: "contact.updated", subjectType: "contact", subjectId: id, actorId: actorId(ctx), payload: { fields: ["lifecycleStage"] } });
       }
-      return scoped;
+      // A hand-off nobody acts on is a dropped lead: each owner gets a follow-up task (unless one is already open for them).
+      const owned = await tx.contact.findMany({ where: { workspaceId: w.id, id: { in: scoped }, ownerId: { not: null } }, select: { id: true, ownerId: true, fullName: true, firstName: true, lastName: true, email: true } });
+      const busy = new Set(
+        (await tx.task.findMany({ where: { workspaceId: w.id, contactId: { in: owned.map((c) => c.id) }, status: "open" }, select: { contactId: true, assigneeId: true } }))
+          .filter((t) => owned.some((c) => c.id === t.contactId && c.ownerId === t.assigneeId))
+          .map((t) => t.contactId),
+      );
+      const due = new Date(Date.now() + 24 * 60 * 60_000);
+      const fresh = owned.filter((c) => !busy.has(c.id));
+      if (fresh.length) {
+        await tx.task.createMany({
+          data: fresh.map((c) => ({ workspaceId: w.id, contactId: c.id, assigneeId: c.ownerId, type: "follow_up" as const, priority: "high" as const, title: "Follow up: handed to sales", dueAt: due, source: "handoff", createdById: actorId(ctx) })),
+        });
+      }
+      return { scoped, owned };
     });
     await this.events.kick();
-    return { affected: moved.length };
+    // Tell each new owner what landed on them (not the person who did the hand-off).
+    const byOwner = new Map<string, typeof moved.owned>();
+    for (const c of moved.owned) if (c.ownerId && c.ownerId !== actorId(ctx)) byOwner.set(c.ownerId, [...(byOwner.get(c.ownerId) ?? []), c]);
+    for (const [owner, list] of byOwner) {
+      const one = list.length === 1 ? (list[0]!.fullName || [list[0]!.firstName, list[0]!.lastName].filter(Boolean).join(" ") || list[0]!.email || "A lead") : null;
+      await this.notifications.notify(w.id, [owner], {
+        type: "contact.handed_to_sales",
+        title: one ? `${one} was handed to you for sales` : `${list.length} leads were handed to you for sales`,
+        body: `${ctx.identity?.name ? `By ${ctx.identity.name} · ` : ""}a follow-up task is due tomorrow`,
+        link: one ? `/w/${w.id}/contacts/${list[0]!.id}` : `/w/${w.id}/leads?stage=sales`,
+      });
+    }
+    return { affected: moved.scoped.length };
   }
 
   /**
@@ -913,8 +958,36 @@ export class ContactsService {
           const m = await this.prisma.db.membership.findUnique({ where: { workspaceId_userId: { workspaceId: w.id, userId: action.ownerId } } });
           if (!m) throw badRequest("The owner must be a member of this workspace");
         }
-        const res = await this.prisma.db.contact.updateMany({ where, data: { ownerId: action.ownerId ?? null } });
-        return { affected: res.count };
+        // Only rows whose owner actually changes: those are logged on their timelines and announced to the new owner.
+        const target = action.ownerId ?? null;
+        const moving = await this.prisma.db.contact.findMany({ where, select: { id: true, ownerId: true } });
+        const changing = moving.filter((c) => c.ownerId !== target);
+        if (!changing.length) return { affected: 0 };
+        const owner = target ? await this.prisma.db.user.findUnique({ where: { id: target }, select: { name: true } }) : null;
+        const who = resolveActor({ actorId: actorId(ctx) });
+        await this.prisma.db.$transaction(async (tx) => {
+          await tx.contact.updateMany({ where: { workspaceId: w.id, id: { in: changing.map((c) => c.id) } }, data: { ownerId: target } });
+          await tx.activity.createMany({
+            data: changing.map((c) => ({
+              workspaceId: w.id,
+              contactId: c.id,
+              type: "contact.assigned",
+              summary: owner ? `Owner → ${owner.name} (bulk)` : "Owner removed (bulk)",
+              data: { ownerId: target, fromOwnerId: c.ownerId, bulk: true } as never,
+              ...who,
+            })),
+          });
+        });
+        if (target && target !== actorId(ctx)) {
+          const n = changing.length;
+          await this.notifications.notify(w.id, [target], {
+            type: "contact.assigned",
+            title: `${n} contact${n === 1 ? " is" : "s are"} now yours`,
+            body: ctx.identity?.name ? `Assigned by ${ctx.identity.name}` : "",
+            link: `/w/${w.id}/contacts?owner=me`,
+          });
+        }
+        return { affected: changing.length };
       }
       case "status": {
         const res = await this.prisma.db.contact.updateMany({ where, data: { status: action.status as never } });

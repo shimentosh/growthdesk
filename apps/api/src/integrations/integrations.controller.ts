@@ -42,6 +42,19 @@ export class IntegrationsController {
   // ─── Lead ingest (Business OS) ────────────────────────────────────────────
 
   /**
+   * A connection check for lead-ingest clients: answers with the workspace a
+   * key reaches when the key may ingest leads there (401/403 otherwise).
+   * Nothing is created.
+   */
+  @ApiKeyScope("leads:write")
+  @Permission("contacts.import")
+  @Get("leads/ping")
+  ping(@Ctx() ctx: RequestContext) {
+    const w = ws(ctx);
+    return { workspace: { id: w.id, name: w.name }, apiKey: ctx.apiKey ? { name: ctx.apiKey.name } : null };
+  }
+
+  /**
    * Upserts up to 100 leads. With an `Idempotency-Key` header, a retry of the
    * same request returns the first response (header `Idempotent-Replayed: true`)
    * instead of running again.

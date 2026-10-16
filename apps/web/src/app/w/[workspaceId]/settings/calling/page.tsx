@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { Info, Phone } from "lucide-react";
+import { AiCallingSettings } from "@/components/ai-calling/AiCallingSettings";
 import { useCallSetup } from "@/components/calls/callHooks";
 import { TwilioConnectModal } from "@/components/calls/TwilioConnectModal";
 import { ChannelCard } from "@/components/integrations/ChannelCard";
@@ -22,12 +23,14 @@ import type { ChannelIntegration } from "@/lib/types/integrations";
  * Twilio for click-to-call. The account is a channel integration, so it is
  * listed, verified and disconnected through the channels API (ChannelCard);
  * connecting goes through the calls API, which checks the account with
- * Twilio first.
+ * Twilio first. Below it, AI calling: the Cartesia account voice agents call
+ * through (components/ai-calling/AiCallingSettings), also a "call" channel
+ * integration, so it is left out of the Twilio list.
  */
 export default function CallingSettingsPage() {
   const ws = useWorkspace();
   const channels = useApiQuery<ChannelIntegration[]>(ws.key("channels", "list"), ws.path("/channels"), {
-    select: (rows) => rows.filter((r) => r.channel === "call"),
+    select: (rows) => rows.filter((r) => r.channel === "call" && r.provider !== "cartesia"),
   });
   const setup = useCallSetup();
   const manage = ws.can("integrations.manage");
@@ -44,7 +47,7 @@ export default function CallingSettingsPage() {
       <PageHeader
         icon={<EntityTile of="calling" />}
         title="Calling"
-        description="Place calls from Growthdesk through your own Twilio account. Without one, reps dial from their own phones and log each call."
+        description="Place calls from Growthdesk through your own Twilio account, and let AI agents call for you through Cartesia. Without either, reps dial from their own phones and log each call."
         actions={channels.data && channels.data.length > 0 ? connectButton : undefined}
       />
       <div className="flex flex-col gap-6">
@@ -83,7 +86,7 @@ export default function CallingSettingsPage() {
           )}
         </QueryState>
 
-        <Section icon={<Info />} title="How calls are placed" description="What Growthdesk does, and what remains your responsibility.">
+        <Section icon={<Info />} title="How click-to-call works" description="What Growthdesk does when a rep calls through Twilio, and what remains your responsibility.">
           <Card className="p-4">
             <ul className="flex list-disc flex-col gap-1.5 pl-5 text-sm text-text-2">
               <li>A rep presses Call on one contact. Twilio rings the rep&apos;s own phone; when they answer, it dials the contact from your caller ID.</li>
@@ -98,6 +101,8 @@ export default function CallingSettingsPage() {
             </ul>
           </Card>
         </Section>
+
+        <AiCallingSettings />
       </div>
 
       {manage && <TwilioConnectModal open={connecting} onOpenChange={setConnecting} />}

@@ -143,7 +143,8 @@ export function LoginForm({
         </Button>
       </form>
       {googleEnabled && (
-        <a href="/api/auth/google/start" className={buttonClass({ variant: "secondary", className: "w-full" })}>
+        // `next` is already a same-site path (safeNext); the API checks it again and lands there after Google.
+        <a href={next === "/" ? "/api/auth/google/start" : `/api/auth/google/start?next=${encodeURIComponent(next)}`} className={buttonClass({ variant: "secondary", className: "w-full" })}>
           Continue with Google
         </a>
       )}

@@ -12,6 +12,7 @@ import { useArchiveList } from "@/components/marketing/lists/useArchiveList";
 import { Badge } from "@/components/ui/Badge";
 import { Button, IconButton } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
+import { COL, ColumnLabel } from "@/components/ui/columns";
 import { ConfirmDialog } from "@/components/ui/Dialog";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/DropdownMenu";
 import { EmptyState } from "@/components/ui/EmptyState";
@@ -104,21 +105,21 @@ function Lists() {
           <thead className="border-b border-line bg-s-2">
             <tr>
               <th scope="col" className={TH}>
-                List
+                <ColumnLabel icon={COL.list}>List</ColumnLabel>
               </th>
               <th scope="col" className={cn(TH, "text-right")}>
-                Subscribed
+                <ColumnLabel icon={COL.subscribed}>Subscribed</ColumnLabel>
               </th>
               <th scope="col" className={cn(TH, "text-right")}>
-                Unsubscribed
+                <ColumnLabel icon={COL.unsubscribed}>Unsubscribed</ColumnLabel>
               </th>
               {showPending && (
                 <th scope="col" className={cn(TH, "text-right")}>
-                  Pending
+                  <ColumnLabel icon={COL.pending}>Pending</ColumnLabel>
                 </th>
               )}
               <th scope="col" className={TH}>
-                Created
+                <ColumnLabel icon={COL.created}>Created</ColumnLabel>
               </th>
               {canWrite && (
                 <th scope="col" className="w-12 px-3">

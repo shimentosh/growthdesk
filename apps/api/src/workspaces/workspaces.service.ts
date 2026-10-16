@@ -1,6 +1,7 @@
 import { Inject, Injectable } from "@nestjs/common";
 import {
   DEFAULT_ROLE_PERMISSIONS,
+  email as emailSchema,
   ROLE_RANK,
   type RolePermissionOverrides,
   type WorkspaceRole,
@@ -22,6 +23,8 @@ import { hashToken, newToken } from "../common/crypto.js";
 import { badRequest, conflict, forbidden, notFound } from "../common/errors.js";
 import { me, ws, type RequestContext } from "../common/context.js";
 import { LibrarySeedService } from "./library-seed.service.js";
+import { NotificationsService } from "../notifications/notifications.service.js";
+import { resolveActor } from "../crm/activity.service.js";
 
 export const DEFAULT_STAGES: { name: string; kind: "open" | "won" | "lost"; probability: number; color: string }[] = [
   { name: "New Lead", kind: "open", probability: 5, color: "gray" },
@@ -48,6 +51,17 @@ export const DEFAULT_WORKSPACE_SETTINGS = {
 
 const INVITE_TTL_MS = 7 * 86_400_000;
 
+/** A role in plain words, for the invitation email ("…join Acme as a manager — …"). */
+export const ROLE_IN_WORDS: Record<WorkspaceRole, string> = {
+  owner: "the owner — everything, including billing",
+  admin: "an admin — everything except changing the plan and payment details",
+  manager: "a manager — works contacts, deals, campaigns and the inbox, and sees team performance",
+  member: "a member — works contacts, deals, campaigns and the inbox",
+  viewer: "a viewer — can look at records and reports but not change them",
+};
+
+export type InviteOutcome = { email: string; status: "invited" | "already_member" | "already_invited" | "no_seat" | "invalid"; invitationId?: string };
+
 const slugify = (s: string) =>
   s
     .toLowerCase()
@@ -67,6 +81,7 @@ export class WorkspacesService {
     private readonly credentials: CredentialReleaseService,
     private readonly library: LibrarySeedService,
     @Inject(APP_CONFIG) private readonly config: AppConfig,
+    private readonly notifications: NotificationsService,
   ) {}
 
   /**
@@ -246,7 +261,7 @@ export class WorkspacesService {
     const [rows, invites] = await Promise.all([
       this.prisma.db.membership.findMany({
         where: { workspaceId: w.id },
-        include: { user: { select: { id: true, email: true, name: true, lastLoginAt: true } } },
+        include: { user: { select: { id: true, email: true, name: true, lastLoginAt: true, title: true, phone: true, outOfOfficeUntil: true } } },
         orderBy: { createdAt: "asc" },
       }),
       this.prisma.db.invitation.findMany({
@@ -255,7 +270,19 @@ export class WorkspacesService {
       }),
     ]);
     return {
-      members: rows.map((m) => ({ id: m.id, userId: m.userId, email: m.user.email, name: m.user.name, role: m.role, lastLoginAt: m.user.lastLoginAt, joinedAt: m.createdAt })),
+      members: rows.map((m) => ({
+        id: m.id,
+        userId: m.userId,
+        email: m.user.email,
+        name: m.user.name,
+        role: m.role,
+        lastLoginAt: m.user.lastLoginAt,
+        joinedAt: m.createdAt,
+        title: m.user.title,
+        phone: m.user.phone,
+        outOfOfficeUntil: m.user.outOfOfficeUntil,
+        deactivatedAt: m.deactivatedAt,
+      })),
       invitations: invites.map((i) => ({ id: i.id, email: i.email, role: i.role, expiresAt: i.expiresAt, expired: i.expiresAt.getTime() < Date.now(), createdAt: i.createdAt })),
     };
   }
@@ -268,7 +295,7 @@ export class WorkspacesService {
     if (ROLE_RANK[role] >= mine) throw forbidden(`Your role (${w.role}) cannot grant the ${role} role.`);
   }
 
-  async invite(ctx: RequestContext, email: string, role: WorkspaceRole) {
+  async invite(ctx: RequestContext, email: string, role: WorkspaceRole, message = "") {
     const w = ws(ctx);
     this.assertCanAssign(ctx, role);
     const existingMember = await this.prisma.db.membership.findFirst({ where: { workspaceId: w.id, user: { email } } });
@@ -279,14 +306,62 @@ export class WorkspacesService {
     if (pending) throw conflict("An invitation to that address is already pending — resend it instead.", { email: "Already invited" });
     await this.entitlements.assertFullAccess(w.billingAccountId, "Inviting teammates");
     await this.entitlements.assertSeat(w.billingAccountId, email);
-
-    const token = newToken();
-    const invitation = await this.prisma.db.invitation.create({
-      data: { workspaceId: w.id, email, role, tokenHash: hashToken(token), invitedById: ctx.identity?.userId, expiresAt: new Date(Date.now() + INVITE_TTL_MS) },
-    });
-    await this.mail.invitation(email, ctx.identity?.name || ctx.identity?.email || "A teammate", w.name, token);
-    await this.audit.record(ctx, { action: "member.invited", targetType: "invitation", targetId: invitation.id, metadata: { email, role } });
+    const invitation = await this.createInvitation(ctx, email, role, message);
     return { id: invitation.id, email, role, expiresAt: invitation.expiresAt };
+  }
+
+  /**
+   * Invites up to 50 addresses at once. The role, rank and billing rules
+   * refuse the whole batch; anything about one address (not an email, already
+   * a member, already invited, no seat left) is reported for that address.
+   * Seats are counted for the whole batch first: the first ones that fit are
+   * invited, the rest come back as "no_seat".
+   */
+  async inviteMany(ctx: RequestContext, rawEmails: string[], role: WorkspaceRole, message = ""): Promise<{ results: InviteOutcome[] }> {
+    const w = ws(ctx);
+    this.assertCanAssign(ctx, role);
+    await this.entitlements.assertFullAccess(w.billingAccountId, "Inviting teammates");
+    const results: InviteOutcome[] = [];
+    const seen = new Set<string>();
+    const valid: string[] = [];
+    for (const raw of rawEmails) {
+      const parsed = emailSchema.safeParse(raw);
+      const key = parsed.success ? parsed.data : raw.trim().toLowerCase();
+      if (!key || seen.has(key)) continue;
+      seen.add(key);
+      if (!parsed.success) results.push({ email: raw.trim(), status: "invalid" });
+      else valid.push(key);
+    }
+    const [members, pending] = await Promise.all([
+      this.prisma.db.membership.findMany({ where: { workspaceId: w.id, user: { email: { in: valid } } }, select: { user: { select: { email: true } } } }),
+      this.prisma.db.invitation.findMany({ where: { workspaceId: w.id, email: { in: valid }, acceptedAt: null, revokedAt: null, expiresAt: { gt: new Date() } }, select: { email: true } }),
+    ]);
+    const memberSet = new Set(members.map((m) => m.user.email));
+    const pendingSet = new Set(pending.map((p) => p.email));
+    const candidates = valid.filter((e) => !memberSet.has(e) && !pendingSet.has(e));
+    const fits = await this.entitlements.seatsFor(w.billingAccountId, candidates);
+    for (const e of valid) {
+      if (memberSet.has(e)) results.push({ email: e, status: "already_member" });
+      else if (pendingSet.has(e)) results.push({ email: e, status: "already_invited" });
+      else if (!fits.has(e)) results.push({ email: e, status: "no_seat" });
+      else {
+        const invitation = await this.createInvitation(ctx, e, role, message);
+        results.push({ email: e, status: "invited", invitationId: invitation.id });
+      }
+    }
+    return { results };
+  }
+
+  private async createInvitation(ctx: RequestContext, email: string, role: WorkspaceRole, message: string) {
+    const w = ws(ctx);
+    const token = newToken();
+    const note = message.trim().slice(0, 500);
+    const invitation = await this.prisma.db.invitation.create({
+      data: { workspaceId: w.id, email, role, message: note, tokenHash: hashToken(token), invitedById: ctx.identity?.userId, expiresAt: new Date(Date.now() + INVITE_TTL_MS) },
+    });
+    await this.mail.invitation(email, ctx.identity?.name || ctx.identity?.email || "A teammate", w.name, token, { role: ROLE_IN_WORDS[role], message: note });
+    await this.audit.record(ctx, { action: "member.invited", targetType: "invitation", targetId: invitation.id, metadata: { email, role, withMessage: Boolean(note) } });
+    return invitation;
   }
 
   async resendInvitation(ctx: RequestContext, id: string) {
@@ -301,7 +376,8 @@ export class WorkspacesService {
       where: { id: inv.id },
       data: { tokenHash: hashToken(token), expiresAt: new Date(Date.now() + INVITE_TTL_MS) },
     });
-    await this.mail.invitation(inv.email, ctx.identity?.name || "A teammate", w.name, token);
+    await this.mail.invitation(inv.email, ctx.identity?.name || ctx.identity?.email || "A teammate", w.name, token, { role: ROLE_IN_WORDS[inv.role], message: inv.message });
+    await this.audit.record(ctx, { action: "member.invitation_resent", targetType: "invitation", targetId: inv.id, metadata: { email: inv.email } });
     return { resent: true };
   }
 
@@ -326,9 +402,35 @@ export class WorkspacesService {
     return { id: target.id, role };
   }
 
-  async remove(ctx: RequestContext, membershipId: string) {
+  /**
+   * Pauses (or restores) a member's access. Paused, they cannot open the
+   * workspace (the access guard answers 403 member_deactivated) and lead
+   * routing and round-robin assignment skip them, but they keep their seat,
+   * their records and their role. Needs members.manage (the controller); never
+   * the owner, never yourself, never someone at or above your own level.
+   */
+  async setDeactivated(ctx: RequestContext, membershipId: string, deactivated: boolean) {
     const w = ws(ctx);
     const target = await this.prisma.db.membership.findFirst({ where: { id: membershipId, workspaceId: w.id } });
+    if (!target) throw notFound("That member");
+    if (target.role === "owner") throw forbidden("The owner's access cannot be paused.");
+    if (target.userId === ctx.identity?.userId) throw forbidden("You cannot pause your own access.");
+    const mine = w.role === "api" ? 0 : ROLE_RANK[w.role];
+    if (ROLE_RANK[target.role] >= mine) throw forbidden("You cannot pause someone at or above your own level.");
+    const already = Boolean(target.deactivatedAt) === deactivated;
+    const row = already
+      ? target
+      : await this.prisma.db.membership.update({ where: { id: target.id }, data: { deactivatedAt: deactivated ? new Date() : null } });
+    if (!already) {
+      await this.audit.record(ctx, { action: deactivated ? "member.deactivated" : "member.reactivated", targetType: "membership", targetId: target.id, metadata: { userId: target.userId } });
+    }
+    return { id: row.id, role: row.role, deactivatedAt: row.deactivatedAt };
+  }
+
+  /** Who may remove whom: yourself always (not the owner); others with members.manage, below your own level. */
+  private async removable(ctx: RequestContext, membershipId: string) {
+    const w = ws(ctx);
+    const target = await this.prisma.db.membership.findFirst({ where: { id: membershipId, workspaceId: w.id }, include: { user: { select: { name: true, email: true } } } });
     if (!target) throw notFound("That member");
     if (target.role === "owner") throw forbidden("The owner cannot be removed.");
     const self = target.userId === ctx.identity?.userId;
@@ -337,18 +439,137 @@ export class WorkspacesService {
       const mine = w.role === "api" ? 0 : ROLE_RANK[w.role];
       if (ROLE_RANK[target.role] >= mine) throw forbidden("You cannot remove someone at or above your own level.");
     }
+    return { w, target, self };
+  }
+
+  /** Workflows that name this person (assign to, task for, notify), by their stored actions. */
+  private async workflowsNaming(workspaceId: string, userId: string) {
+    const rows = await this.prisma.db.workflow.findMany({ where: { workspaceId, deletedAt: null }, select: { id: true, name: true, actions: true } });
+    return rows.filter((r) => JSON.stringify(r.actions ?? []).includes(userId));
+  }
+
+  /**
+   * Everything a member is responsible for, so it can be handed to someone
+   * before they leave: owned contacts (by stage), open deals, open tasks,
+   * conversations, companies, upcoming meetings, running outreach
+   * campaigns, the mailboxes they connected, and workflows that name them.
+   */
+  async handoverPreview(ctx: RequestContext, membershipId: string) {
+    const { w, target } = await this.removable(ctx, membershipId);
+    const u = target.userId;
+    const [stages, deals, tasks, conversations, companies, meetings, campaigns, mailboxes, workflows] = await Promise.all([
+      this.prisma.db.contact.groupBy({ by: ["lifecycleStage"], where: { workspaceId: w.id, ownerId: u, deletedAt: null }, _count: { _all: true } }),
+      this.prisma.db.deal.count({ where: { workspaceId: w.id, ownerId: u, deletedAt: null, status: "open" } }),
+      this.prisma.db.task.count({ where: { workspaceId: w.id, assigneeId: u, status: "open" } }),
+      this.prisma.db.conversation.count({ where: { workspaceId: w.id, assigneeId: u } }),
+      this.prisma.db.company.count({ where: { workspaceId: w.id, ownerId: u } }),
+      this.prisma.db.meeting.count({ where: { workspaceId: w.id, ownerId: u, startsAt: { gte: new Date() } } }),
+      this.prisma.db.campaign.findMany({ where: { workspaceId: w.id, ownerId: u, deletedAt: null, status: { in: ["scheduled", "running", "paused"] } }, select: { id: true, name: true, status: true } }),
+      this.prisma.db.mailbox.findMany({ where: { workspaceId: w.id, createdById: u, deletedAt: null }, select: { id: true, email: true, status: true } }),
+      this.workflowsNaming(w.id, u),
+    ]);
+    const byStage = Object.fromEntries(stages.map((g) => [g.lifecycleStage, g._count._all])) as Record<string, number>;
+    return {
+      member: { membershipId: target.id, userId: u, name: target.user.name, email: target.user.email, role: target.role },
+      contacts: { total: Object.values(byStage).reduce((a, b) => a + b, 0), byStage },
+      openDeals: deals,
+      openTasks: tasks,
+      conversations,
+      companies,
+      upcomingMeetings: meetings,
+      campaigns,
+      mailboxes,
+      workflows: workflows.map((x) => ({ id: x.id, name: x.name })),
+    };
+  }
+
+  /**
+   * Removes a member (or lets them leave). Their records stay. With
+   * `handoverTo`, everything they were responsible for — contacts, open
+   * deals, open tasks, conversations, companies, upcoming meetings, outreach
+   * campaigns, and their place in workflows — goes to that teammate, logged
+   * on each contact's and deal's timeline, and the teammate is told. Without
+   * it, all of that is released (unassigned) as before. `pauseMailboxes`
+   * stops the mailboxes they connected from sending until someone checks
+   * them again.
+   */
+  async remove(ctx: RequestContext, membershipId: string, opts: { handoverTo?: string | null; pauseMailboxes?: boolean } = {}) {
+    const { w, target, self } = await this.removable(ctx, membershipId);
+    const from = target.userId;
+    const to = opts.handoverTo ?? null;
+    let toName = "";
+    if (to) {
+      if (to === from) throw badRequest("Hand their work to someone else.");
+      const m = await this.prisma.db.membership.findUnique({ where: { workspaceId_userId: { workspaceId: w.id, userId: to } }, include: { user: { select: { name: true } } } });
+      if (!m) throw badRequest("Hand their work to a member of this workspace.", { handoverTo: "Not a member" });
+      if (m.role === "viewer") throw badRequest("A viewer cannot own records; choose someone else.", { handoverTo: "Viewer" });
+      toName = m.user.name;
+    }
+    const workflows = await this.workflowsNaming(w.id, from);
     // Their API keys and webhooks go first: if this fails, they are still a member and the removal can be retried.
-    await this.credentials.releaseInWorkspace(ctx, w.id, target.userId, self ? "member_left" : "member_removed");
-    await this.prisma.db.$transaction(async (tx) => {
-      // Their records stay; ownership and assignments are released so nothing points at someone who cannot see it.
-      await tx.contact.updateMany({ where: { workspaceId: w.id, ownerId: target.userId }, data: { ownerId: null } });
-      await tx.deal.updateMany({ where: { workspaceId: w.id, ownerId: target.userId }, data: { ownerId: null } });
-      await tx.task.updateMany({ where: { workspaceId: w.id, assigneeId: target.userId, status: "open" }, data: { assigneeId: null } });
-      await tx.conversation.updateMany({ where: { workspaceId: w.id, assigneeId: target.userId }, data: { assigneeId: null } });
+    await this.credentials.releaseInWorkspace(ctx, w.id, from, self ? "member_left" : "member_removed");
+    const moved = await this.prisma.db.$transaction(async (tx) => {
+      const contacts = await tx.contact.findMany({ where: { workspaceId: w.id, ownerId: from }, select: { id: true } });
+      const deals = await tx.deal.findMany({ where: { workspaceId: w.id, ownerId: from, deletedAt: null }, select: { id: true, contactId: true, companyId: true } });
+      await tx.contact.updateMany({ where: { workspaceId: w.id, ownerId: from }, data: { ownerId: to } });
+      await tx.deal.updateMany({ where: { workspaceId: w.id, ownerId: from }, data: { ownerId: to } });
+      const tasks = await tx.task.updateMany({ where: { workspaceId: w.id, assigneeId: from, status: "open" }, data: { assigneeId: to } });
+      const conversations = await tx.conversation.updateMany({ where: { workspaceId: w.id, assigneeId: from }, data: { assigneeId: to } });
+      const companies = await tx.company.updateMany({ where: { workspaceId: w.id, ownerId: from }, data: { ownerId: to } });
+      const meetings = await tx.meeting.updateMany({ where: { workspaceId: w.id, ownerId: from, startsAt: { gte: new Date() } }, data: { ownerId: to } });
+      const campaigns = await tx.campaign.updateMany({ where: { workspaceId: w.id, ownerId: from }, data: { ownerId: to } });
+      // Workflows that assign to them, give them tasks or notify them now name the new person (or keep failing loudly without one).
+      if (to) {
+        for (const wf of workflows) {
+          const actions = JSON.parse(JSON.stringify(wf.actions ?? []).split(from).join(to));
+          await tx.workflow.update({ where: { id: wf.id, workspaceId: w.id }, data: { actions } });
+        }
+      }
+      let mailboxes = 0;
+      if (opts.pauseMailboxes) {
+        const res = await tx.mailbox.updateMany({
+          where: { workspaceId: w.id, createdById: from, deletedAt: null, status: { not: "disconnected" } },
+          data: { status: "disconnected", lastError: `Paused: ${target.user.name || target.user.email} left the workspace. Check the mailbox again to resume sending.` },
+        });
+        mailboxes = res.count;
+      }
+      // Each record's timeline says where it went, attributed to whoever did the removal.
+      const who = resolveActor({ actorId: ctx.identity?.userId ?? null });
+      const summary = to ? `Handed over from ${target.user.name || target.user.email} to ${toName}` : `Released: ${target.user.name || target.user.email} left the workspace`;
+      const type = to ? "contact.assigned" : "contact.unassigned";
+      if (contacts.length) {
+        await tx.activity.createMany({ data: contacts.map((c) => ({ workspaceId: w.id, contactId: c.id, type, summary, data: { fromOwnerId: from, ownerId: to, offboarding: true } as never, ...who })) });
+      }
+      if (deals.length) {
+        await tx.activity.createMany({ data: deals.map((d) => ({ workspaceId: w.id, dealId: d.id, contactId: d.contactId, companyId: d.companyId, type: to ? "deal.assigned" : "deal.unassigned", summary: `Deal ${summary.charAt(0).toLowerCase()}${summary.slice(1)}`, data: { fromOwnerId: from, ownerId: to, offboarding: true } as never, ...who })) });
+      }
+      // Out of their teams; a team they led passes to whoever took their work (or has no lead).
+      await tx.teamMember.deleteMany({ where: { workspaceId: w.id, userId: from } });
+      await tx.team.updateMany({ where: { workspaceId: w.id, leadUserId: from }, data: { leadUserId: to } });
+      if (to) {
+        const led = await tx.team.findMany({ where: { workspaceId: w.id, leadUserId: to }, select: { id: true } });
+        if (led.length) await tx.teamMember.createMany({ data: led.map((t) => ({ teamId: t.id, workspaceId: w.id, userId: to })), skipDuplicates: true });
+      }
       await tx.membership.delete({ where: { id: target.id } });
+      return { contacts: contacts.length, deals: deals.length, tasks: tasks.count, conversations: conversations.count, companies: companies.count, meetings: meetings.count, campaigns: campaigns.count, workflows: to ? workflows.length : 0, mailboxesPaused: mailboxes };
     });
     // Sessions are not revoked: they may still work in other workspaces, and every request re-checks membership.
-    await this.audit.record(ctx, { action: self ? "member.left" : "member.removed", targetType: "membership", targetId: target.id });
+    await this.audit.record(ctx, { action: self ? "member.left" : "member.removed", targetType: "membership", targetId: target.id, metadata: { userId: from, handoverTo: to, ...moved } });
+    if (to && to !== ctx.identity?.userId) {
+      const parts = [
+        moved.contacts && `${moved.contacts} contact${moved.contacts === 1 ? "" : "s"}`,
+        moved.deals && `${moved.deals} deal${moved.deals === 1 ? "" : "s"}`,
+        moved.tasks && `${moved.tasks} open task${moved.tasks === 1 ? "" : "s"}`,
+        moved.conversations && `${moved.conversations} conversation${moved.conversations === 1 ? "" : "s"}`,
+      ].filter(Boolean);
+      await this.notifications.notify(w.id, [to], {
+        type: "member.handover",
+        title: `${target.user.name || target.user.email}'s work was handed to you`,
+        body: parts.length ? parts.join(", ") : "Nothing open was handed over.",
+        link: `/w/${w.id}/contacts?owner=me`,
+      });
+    }
+    return { removed: true, handover: moved };
   }
 
   async setRolePermissions(ctx: RequestContext, role: Exclude<WorkspaceRole, "owner">, permissions: string[] | null) {
@@ -377,8 +598,20 @@ export class WorkspacesService {
     if (!inv || inv.revokedAt || inv.acceptedAt || inv.expiresAt.getTime() < Date.now()) {
       throw notFound("That invitation (it may have expired or been withdrawn)");
     }
-    const existing = await this.prisma.db.user.findUnique({ where: { email: inv.email } });
-    return { email: inv.email, role: inv.role, workspaceName: inv.workspace.name, accountExists: Boolean(existing) };
+    const [existing, inviter] = await Promise.all([
+      this.prisma.db.user.findUnique({ where: { email: inv.email } }),
+      inv.invitedById ? this.prisma.db.user.findUnique({ where: { id: inv.invitedById }, select: { name: true, email: true } }) : null,
+    ]);
+    return {
+      email: inv.email,
+      role: inv.role,
+      workspaceName: inv.workspace.name,
+      accountExists: Boolean(existing),
+      /** Who sent it (null when they have since deleted their account, or it came from an API key). */
+      invitedBy: inviter ? { name: inviter.name, email: inviter.email } : null,
+      message: inv.message,
+      expiresAt: inv.expiresAt,
+    };
   }
 
   /** Accepts as the signed-in user, whose email must be the one invited. */

@@ -17,6 +17,7 @@ import { Button } from "@/components/ui/Button";
 import { Callout } from "@/components/ui/Callout";
 import { Card, CardFooter } from "@/components/ui/Card";
 import { Checkbox } from "@/components/ui/Checkbox";
+import { COL, ColumnLabel } from "@/components/ui/columns";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuTrigger } from "@/components/ui/DropdownMenu";
 import { ENTITY, EntityTile, type Entity } from "@/components/ui/icons";
 import { PageHeader } from "@/components/ui/PageHeader";
@@ -186,7 +187,7 @@ function Matrix({ overrides }: { overrides: RolePermissionOverrides }) {
           <table className="w-full min-w-[640px] border-collapse text-sm">
             <thead>
               <tr>
-                <th className="h-10 border-b border-line bg-well px-4 text-left text-xs font-medium text-text-3">Permission</th>
+                <th className="h-10 border-b border-line bg-well px-4 text-left text-xs font-medium text-text-3"><ColumnLabel icon={COL.role}>Permission</ColumnLabel></th>
                 <th className="h-10 w-20 border-b border-line bg-well px-2 text-center text-xs font-medium text-text-3">Owner</th>
                 {EDITABLE_ROLES.map((r) => (
                   <th key={r} className="h-10 w-24 border-b border-line bg-well px-2 text-center text-xs font-medium text-text-3">

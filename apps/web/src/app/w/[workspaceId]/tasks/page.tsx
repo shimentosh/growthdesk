@@ -6,31 +6,36 @@ import type { QueryKey } from "@tanstack/react-query";
 import { useQueryClient } from "@tanstack/react-query";
 import {
   AlarmClock,
+  CalendarClock,
   CalendarDays,
   CheckCheck,
   CheckSquare,
-  CircleCheck,
+  CircleUserRound,
   Clock,
+  Columns3,
   Ellipsis,
-  FileText,
+  Group,
   Handshake,
+  List,
+  ListChecks,
   ListFilter,
-  Mail,
+  ListTodo,
   MessageSquareReply,
   Pencil,
-  Phone,
   Plus,
-  Repeat,
   Trash2,
   User,
-  UserRoundSearch,
+  UserRound,
+  Users,
   X,
   type LucideIcon,
 } from "lucide-react";
 import { labelOf, TASK_TYPES, type Channel } from "@growthdesk/shared";
-import { useSearchState, ViewTabs } from "@/components/pipeline/controls";
+import { Segmented, useSearchState } from "@/components/pipeline/controls";
 import { TaskDrawer } from "@/components/pipeline/TaskDrawer";
 import { useMembers } from "@/components/pickers/Pickers";
+import { TaskBoard } from "@/components/tasks/TaskBoard";
+import { GROUP_PREF, isTaskGroupBy, LAYOUT_PREF, readPref, TYPE_ICON, writePref, type TaskGroupBy, type TaskLayout } from "@/components/tasks/taskMeta";
 import { Avatar } from "@/components/ui/Avatar";
 import { Badge, statusTone } from "@/components/ui/Badge";
 import { Button, IconButton } from "@/components/ui/Button";
@@ -41,6 +46,7 @@ import { ConfirmDialog } from "@/components/ui/Dialog";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/DropdownMenu";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { QueryState } from "@/components/ui/ErrorState";
+import { IconTile, type Tint } from "@/components/ui/IconTile";
 import { CHANNEL, ENTITY, EntityTile } from "@/components/ui/icons";
 import { NativeSelect } from "@/components/ui/Input";
 import { Page, PageHeader } from "@/components/ui/PageHeader";
@@ -59,64 +65,77 @@ const PAGE_SIZE = 50;
 const VIEWS: {
   value: TaskView;
   label: string;
+  /** Short line under the count on the view card. */
+  hint: string;
+  icon: LucideIcon;
+  tint: Tint;
   description: string;
   empty: string;
 }[] = [
   {
     value: "today",
     label: "Today",
+    hint: "Due today",
+    icon: CalendarDays,
+    tint: "blue",
     description: "Open tasks due today.",
     empty: "Nothing due today.",
   },
   {
     value: "overdue",
     label: "Overdue",
+    hint: "Past due",
+    icon: AlarmClock,
+    tint: "red",
     description: "Open tasks past their due time.",
     empty: "Nothing overdue.",
   },
   {
     value: "upcoming",
     label: "Upcoming",
+    hint: "Later or no date",
+    icon: CalendarClock,
+    tint: "indigo",
     description: "Open tasks due after today, or with no due date.",
     empty: "Nothing coming up.",
   },
   {
     value: "mine",
     label: "Mine",
+    hint: "Assigned to you",
+    icon: UserRound,
+    tint: "purple",
     description: "Open tasks assigned to you.",
     empty: "No open tasks assigned to you.",
   },
   {
     value: "team",
     label: "Team",
+    hint: "Everyone else",
+    icon: Users,
+    tint: "teal",
     description: "Open tasks assigned to other people.",
     empty: "No open tasks assigned to teammates.",
   },
   {
     value: "completed",
     label: "Completed",
+    hint: "Done",
+    icon: CheckCheck,
+    tint: "green",
     description: "Done tasks, most recently completed first.",
     empty: "No completed tasks yet.",
   },
   {
     value: "all",
     label: "All",
+    hint: "Open and done",
+    icon: ListTodo,
+    tint: "gray",
     description: "Every task, open or not.",
     empty: "No tasks yet.",
   },
 ];
-
-/** A glyph per task type, so a row says "call" or "email" at a glance. */
-const TYPE_ICON: Record<string, LucideIcon> = {
-  email: Mail,
-  follow_up: Repeat,
-  call: Phone,
-  meeting: CalendarDays,
-  proposal: FileText,
-  review_reply: MessageSquareReply,
-  qualify: UserRoundSearch,
-  custom: CircleCheck,
-};
 
 type ToggleVars = {
   task: TaskRow;
@@ -146,6 +165,9 @@ function Tasks() {
   const type = search.get("type");
   const assigneeId = search.get("assignee");
   const openTaskId = search.get("task");
+  const layout: TaskLayout = search.get("layout") === "board" ? "board" : "list";
+  const groupParam = search.get("group");
+  const groupBy: TaskGroupBy = isTaskGroupBy(groupParam) ? groupParam : "due";
   const [page, setPage] = useState(1);
   const [creating, setCreating] = useState(false);
   const [deleting, setDeleting] = useState<TaskRow | null>(null);
@@ -159,7 +181,27 @@ function Tasks() {
     pageSize: PAGE_SIZE,
   };
   const listKey: QueryKey = [...ws.key("tasks", "list"), listQuery];
-  const list = useApiQuery<Paged<TaskRow>>(ws.key("tasks", "list"), ws.path("/tasks"), { query: listQuery, keepPrevious: true });
+  // The board loads its own (larger) page, so the list only loads in list layout.
+  const list = useApiQuery<Paged<TaskRow>>(ws.key("tasks", "list"), layout === "list" ? ws.path("/tasks") : null, { query: listQuery, keepPrevious: true });
+
+  // No layout in the URL: reopen the board (and its grouping) when that was this browser's last choice.
+  useEffect(() => {
+    const patch: Record<string, string> = {};
+    if (!search.get("layout") && readPref(LAYOUT_PREF) === "board") patch.layout = "board";
+    const savedGroup = readPref(GROUP_PREF);
+    if ((patch.layout || search.get("layout") === "board") && !search.get("group") && isTaskGroupBy(savedGroup) && savedGroup !== "due") patch.group = savedGroup;
+    if (Object.keys(patch).length) search.set(patch);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const setLayout = (next: TaskLayout) => {
+    writePref(LAYOUT_PREF, next);
+    search.set({ layout: next === "board" ? "board" : null });
+  };
+  const setGroupBy = (next: TaskGroupBy) => {
+    writePref(GROUP_PREF, next);
+    search.set({ group: next === "due" ? null : next });
+  };
 
   // ?task=<id> (notification links, the deal record) opens that task, even when it is not in the current view.
   const inList = openTaskId ? list.data?.items.find((t) => t.id === openTaskId) : undefined;
@@ -241,20 +283,23 @@ function Tasks() {
         }
       />
 
-      <ViewTabs
-        aria-label="Task views"
-        value={view.value}
-        onChange={(v) => setFilter({ view: v === "today" ? null : v })}
-        options={views.map((v) => ({
-          value: v.value,
-          label: v.label,
-          count: v.value === view.value && list.data && !list.isPlaceholderData ? list.data.total : undefined,
-        }))}
-      />
+      <div role="group" aria-label="Task views" className="-mx-1 flex gap-2 overflow-x-auto px-1 pb-1">
+        {views.map((v) => (
+          <ViewCard
+            key={v.value}
+            view={v}
+            active={v.value === view.value}
+            filters={{ type, assigneeId }}
+            current={v.value === view.value && list.data && !list.isPlaceholderData ? list.data.total : undefined}
+            onSelect={() => setFilter({ view: v.value === "today" ? null : v.value })}
+          />
+        ))}
+      </div>
 
       <div className="my-4 flex flex-wrap items-center gap-2">
         <NativeSelect
           aria-label="Type"
+          icon={<ListChecks />}
           className="w-auto min-w-36"
           value={type}
           onChange={(e) => setFilter({ type: e.target.value || null })}
@@ -262,6 +307,7 @@ function Tasks() {
         />
         <NativeSelect
           aria-label="Assignee"
+          icon={<CircleUserRound />}
           className="w-auto min-w-36"
           value={assigneeId}
           onChange={(e) => setFilter({ assignee: e.target.value || null })}
@@ -272,6 +318,32 @@ function Tasks() {
             Clear filters
           </Button>
         )}
+        <div className="ml-auto flex flex-wrap items-center gap-2">
+          {layout === "board" && (
+            <NativeSelect
+              aria-label="Group by"
+              icon={<Group />}
+              className="w-auto min-w-40"
+              value={groupBy}
+              onChange={(e) => setGroupBy(isTaskGroupBy(e.target.value) ? e.target.value : "due")}
+              options={[
+                { value: "due", label: "Due date" },
+                { value: "assignee", label: "Assignee" },
+                { value: "priority", label: "Priority" },
+                { value: "type", label: "Type" },
+              ]}
+            />
+          )}
+          <Segmented<TaskLayout>
+            aria-label="Layout"
+            value={layout}
+            onChange={setLayout}
+            options={[
+              { value: "list", label: "List", icon: <List /> },
+              { value: "board", label: "Board", icon: <Columns3 /> },
+            ]}
+          />
+        </div>
       </div>
 
       {openTaskId && linked.isError && !inList && (
@@ -288,56 +360,60 @@ function Tasks() {
         </Callout>
       )}
 
-      <Card>
-        <QueryState
-          query={list}
-          loading={<SkeletonText lines={6} className="p-4" />}
-          isEmpty={(d) => d.items.length === 0}
-          empty={
-            <EmptyState
-              compact={filtered}
-              icon={filtered ? <ListFilter /> : <CheckSquare />}
-              tint={filtered ? undefined : ENTITY.tasks.tint}
-              title={filtered ? "No tasks match these filters" : view.empty}
-              description={
-                filtered
-                  ? "Try another type or assignee, or clear the filters."
-                  : view.value === "completed" || view.value === "all"
-                    ? undefined
-                    : "Enjoy the quiet, or plan the next step for a contact."
-              }
-              action={
-                canWrite && !filtered ? (
-                  <Button icon={<Plus />} onClick={() => setCreating(true)}>
-                    New task
-                  </Button>
-                ) : undefined
-              }
-            />
-          }
-        >
-          {(data) => (
-            <>
-              <ul className="divide-y divide-line">
-                {data.items.map((t) => (
-                  <TaskItem
-                    key={t.id}
-                    task={t}
-                    canWrite={canWrite}
-                    toggling={toggle.isPending && toggle.variables?.task.id === t.id}
-                    onToggle={() => void quickToggle(t)}
-                    onOpen={() => setEditing(t)}
-                    onDelete={() => setDeleting(t)}
-                  />
-                ))}
-              </ul>
-              {data.total > data.pageSize && (
-                <Pagination className="border-t border-line px-4 py-2" page={data.page} pageSize={data.pageSize} total={data.total} onPageChange={setPage} />
-              )}
-            </>
-          )}
-        </QueryState>
-      </Card>
+      {layout === "board" ? (
+        <TaskBoard view={view.value} type={type} assigneeId={assigneeId} groupBy={groupBy} onOpen={setEditing} />
+      ) : (
+        <Card>
+          <QueryState
+            query={list}
+            loading={<SkeletonText lines={6} className="p-4" />}
+            isEmpty={(d) => d.items.length === 0}
+            empty={
+              <EmptyState
+                compact={filtered}
+                icon={filtered ? <ListFilter /> : <CheckSquare />}
+                tint={filtered ? undefined : ENTITY.tasks.tint}
+                title={filtered ? "No tasks match these filters" : view.empty}
+                description={
+                  filtered
+                    ? "Try another type or assignee, or clear the filters."
+                    : view.value === "completed" || view.value === "all"
+                      ? undefined
+                      : "Enjoy the quiet, or plan the next step for a contact."
+                }
+                action={
+                  canWrite && !filtered ? (
+                    <Button icon={<Plus />} onClick={() => setCreating(true)}>
+                      New task
+                    </Button>
+                  ) : undefined
+                }
+              />
+            }
+          >
+            {(data) => (
+              <>
+                <ul className="divide-y divide-line">
+                  {data.items.map((t) => (
+                    <TaskItem
+                      key={t.id}
+                      task={t}
+                      canWrite={canWrite}
+                      toggling={toggle.isPending && toggle.variables?.task.id === t.id}
+                      onToggle={() => void quickToggle(t)}
+                      onOpen={() => setEditing(t)}
+                      onDelete={() => setDeleting(t)}
+                    />
+                  ))}
+                </ul>
+                {data.total > data.pageSize && (
+                  <Pagination className="border-t border-line px-4 py-2" page={data.page} pageSize={data.pageSize} total={data.total} onPageChange={setPage} />
+                )}
+              </>
+            )}
+          </QueryState>
+        </Card>
+      )}
 
       <TaskDrawer open={creating} onOpenChange={setCreating} />
       <TaskDrawer open={editing !== null} onOpenChange={(o) => !o && setEditing(null)} task={editing} onDelete={canWrite ? (t) => setDeleting(t) : undefined} />
@@ -480,5 +556,55 @@ function TaskItem({
         </DropdownMenuContent>
       </DropdownMenu>
     </li>
+  );
+}
+
+/**
+ * One task view as a card: a tinted glyph, the name, how many tasks it holds
+ * (its own count query, sharing the list's key prefix so any task change
+ * refreshes it) and a short line. The active view is outlined in the accent.
+ */
+function ViewCard({
+  view,
+  active,
+  filters,
+  current,
+  onSelect,
+}: {
+  view: (typeof VIEWS)[number];
+  active: boolean;
+  filters: { type: string | null; assigneeId: string | null };
+  current?: number;
+  onSelect: () => void;
+}) {
+  const ws = useWorkspace();
+  const query = { view: view.value, type: filters.type, assigneeId: filters.assigneeId, page: 1, pageSize: 1 };
+  const count = useApiQuery<Paged<TaskRow>>(ws.key("tasks", "list", "count"), current === undefined ? ws.path("/tasks") : null, { query, keepPrevious: true });
+  const n = current ?? count.data?.total;
+  const alarm = view.value === "overdue" && Boolean(n);
+  const Icon = view.icon;
+  return (
+    <button
+      type="button"
+      aria-pressed={active}
+      onClick={onSelect}
+      className={cn(
+        "group flex min-w-36 flex-1 shrink-0 flex-col gap-2.5 rounded-xl border p-3 text-left transition-all",
+        "focus-visible:outline-2 focus-visible:outline-accent",
+        active ? "border-accent bg-accent-soft shadow-card" : "border-line bg-panel hover:-translate-y-px hover:border-line-strong hover:shadow-card",
+        alarm && !active && "border-bad-edge",
+      )}
+    >
+      <div className="flex items-center justify-between gap-2">
+        <IconTile icon={<Icon />} tint={view.tint} size="md" />
+        <span className={cn("text-2xl leading-none font-semibold tabular-nums", alarm ? "text-bad-ink" : active ? "text-accent-ink" : "text-text-hi")}>
+          {n === undefined ? <span className="text-text-3">·</span> : n > 999 ? "999+" : n}
+        </span>
+      </div>
+      <div className="min-w-0">
+        <div className={cn("truncate text-sm font-semibold", active ? "text-text-hi" : "text-text")}>{view.label}</div>
+        <div className="truncate text-xs text-text-3">{view.hint}</div>
+      </div>
+    </button>
   );
 }

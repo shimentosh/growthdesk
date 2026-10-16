@@ -1,10 +1,10 @@
 "use client";
 
-import { AlarmClock, Inbox as InboxIcon, Megaphone, PenSquare, SlidersHorizontal } from "lucide-react";
+import { AlarmClock, Inbox as InboxIcon, ListTree, Megaphone, PenSquare, Rows2, Rows3 } from "lucide-react";
 import { labelOf } from "@growthdesk/shared";
 import { Segmented } from "@/components/pipeline/controls";
 import { Avatar } from "@/components/ui/Avatar";
-import { Button } from "@/components/ui/Button";
+import { Button, IconButton } from "@/components/ui/Button";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { ChannelTile, EntityTile } from "@/components/ui/icons";
 import { ErrorState } from "@/components/ui/ErrorState";
@@ -18,6 +18,8 @@ import { useApiQuery } from "@/lib/query";
 import { useFormat, useWorkspace } from "@/lib/session";
 import type { Paged } from "@/lib/types";
 import type { ConversationRow, InboxChannel } from "@/lib/types/inbox";
+import { ActiveFilterChips, FiltersPopover } from "./ListFilters";
+import { isBoolean, useStoredState } from "./useStoredState";
 import { conversationTitle, isSnoozed } from "./utils";
 
 export type InboxFilters = {
@@ -31,6 +33,8 @@ export type InboxFilters = {
   tag: string;
   /** A live-chat widget's id. */
   widget: string;
+  /** "" (any) or an AI reply label (Conversation.aiCategory). */
+  label: string;
   q: string;
   page: number;
 };
@@ -54,9 +58,11 @@ const EMPTY: Record<InboxFilters["status"], { title: string; description: string
 
 /**
  * The conversation list: search and status on top, then the conversations
- * (newest activity first). The other filters live in the rail (InboxRail);
- * below `lg` the Filters button opens it in a drawer. Kept fresh by the live
- * stream, with a slow poll as the fallback.
+ * (newest activity first). Channel, AI label, assignee and unread are in the
+ * Filters popover; campaigns, tags and widgets in the rail (InboxRail), which
+ * below `lg` opens in a drawer. Active filters show as clearable chips. Rows
+ * can be compact (one line each). Kept fresh by the live stream, with a slow
+ * poll as the fallback.
  */
 export function ConversationList({
   filters,
@@ -85,6 +91,7 @@ export function ConversationList({
     campaignId: filters.campaign || undefined,
     tag: filters.tag || undefined,
     integrationId: filters.widget || undefined,
+    aiCategory: filters.label || undefined,
     q: filters.q || undefined,
     page: filters.page,
     pageSize: PAGE_SIZE,
@@ -95,6 +102,8 @@ export function ConversationList({
     refetchInterval: 120_000,
   });
   const filtered = activeFilters > 0 || filters.q !== "";
+  // One-line rows, remembered in this browser.
+  const [compact, setCompact] = useStoredState("gd.inbox.compact", false, isBoolean);
 
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -104,39 +113,41 @@ export function ConversationList({
             <EntityTile of="inbox" size="md" />
             Inbox
           </h1>
-          {onCompose && (
-            <Button size="sm" variant="primary" icon={<PenSquare />} onClick={onCompose}>
-              New message
-            </Button>
-          )}
+          <div className="flex shrink-0 items-center gap-1">
+            <IconButton
+              size="sm"
+              label="Compact rows"
+              aria-pressed={compact}
+              icon={compact ? <Rows3 /> : <Rows2 />}
+              className={cn(compact && "bg-s-3 text-text-hi")}
+              onClick={() => setCompact(!compact)}
+            />
+            {onCompose && (
+              <Button size="sm" variant="primary" icon={<PenSquare />} onClick={onCompose}>
+                New message
+              </Button>
+            )}
+          </div>
         </div>
         <SearchInput value={filters.q} onChange={(q) => onFilters({ q, page: 1 })} size="sm" placeholder="Search name, address, subject…" />
-        <Segmented
-          aria-label="Status"
-          value={filters.status}
-          onChange={(status) => onFilters({ status, page: 1 })}
-          options={[
-            { value: "open", label: "Open" },
-            { value: "snoozed", label: "Snoozed" },
-            { value: "closed", label: "Closed" },
-          ]}
-        />
-        <div className={cn("flex items-center gap-2", !activeFilters && "lg:hidden")}>
+        <div className="flex items-center gap-1.5">
+          <Segmented
+            aria-label="Status"
+            value={filters.status}
+            onChange={(status) => onFilters({ status, page: 1 })}
+            options={[
+              { value: "open", label: "Open" },
+              { value: "snoozed", label: "Snoozed" },
+              { value: "closed", label: "Closed" },
+            ]}
+          />
+          <span className="flex-1" />
+          <FiltersPopover filters={filters} onFilters={onFilters} />
           {onOpenFilters && (
-            <Button size="sm" variant="secondary" icon={<SlidersHorizontal />} onClick={onOpenFilters} className="lg:hidden">
-              Filters{activeFilters ? ` (${activeFilters})` : ""}
-            </Button>
-          )}
-          {activeFilters > 0 && (
-            <button
-              type="button"
-              className="text-xs text-text-3 underline-offset-2 hover:text-text hover:underline"
-              onClick={() => onFilters({ assignee: "all", channel: "", unread: false, campaign: "", tag: "", widget: "", page: 1 })}
-            >
-              Clear filters
-            </button>
+            <IconButton size="sm" variant="secondary" label="Campaigns, tags and channels" icon={<ListTree />} onClick={onOpenFilters} className="lg:hidden" />
           )}
         </div>
+        <ActiveFilterChips filters={filters} onFilters={onFilters} />
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto">
@@ -154,7 +165,7 @@ export function ConversationList({
         ) : (
           <ul aria-label="Conversations" className="divide-y divide-line">
             {list.data.items.map((c) => (
-              <ConversationItem key={c.id} c={c} active={c.id === selectedId} onSelect={() => onSelect(c.id)} />
+              <ConversationItem key={c.id} c={c} active={c.id === selectedId} compact={compact} onSelect={() => onSelect(c.id)} />
             ))}
           </ul>
         )}
@@ -169,11 +180,33 @@ export function ConversationList({
   );
 }
 
-function ConversationItem({ c, active, onSelect }: { c: ConversationRow; active: boolean; onSelect: () => void }) {
+function ConversationItem({ c, active, compact, onSelect }: { c: ConversationRow; active: boolean; compact: boolean; onSelect: () => void }) {
   const f = useFormat();
   const title = conversationTitle(c);
   const snoozed = isSnoozed(c);
   const preview = c.preview ? `${c.preview.direction === "outbound" ? "You: " : ""}${c.preview.text}` : "No messages yet";
+  if (compact) {
+    return (
+      <li>
+        <button
+          type="button"
+          onClick={onSelect}
+          aria-current={active ? "true" : undefined}
+          title={[title, c.subject, preview].filter(Boolean).join(" — ")}
+          className={cn("flex h-9 w-full items-center gap-2 px-3 text-left transition-colors", active ? "bg-sidebar-accent" : "hover:bg-hover")}
+        >
+          <span className="flex w-2 shrink-0 justify-center">{c.unread && <span className="size-2 rounded-full bg-accent" aria-label="Unread" role="img" />}</span>
+          <ChannelTile channel={c.channel} size="sm" />
+          <span className={cn("w-[34%] max-w-40 shrink-0 truncate text-sm", c.unread ? "font-semibold text-text-hi" : "text-text")}>{title}</span>
+          <span className="min-w-0 flex-1 truncate text-xs text-text-3">{c.channel === "email" && c.subject ? `${c.subject} — ${preview}` : preview}</span>
+          {snoozed && <AlarmClock aria-label="Snoozed" className="size-3 shrink-0 text-warn-ink" />}
+          <span className="shrink-0 text-2xs text-text-3 tabular-nums" title={c.lastMessageAt ? f.dateTime(c.lastMessageAt) : undefined}>
+            {c.lastMessageAt ? f.relative(c.lastMessageAt) : ""}
+          </span>
+        </button>
+      </li>
+    );
+  }
   return (
     <li>
       <button

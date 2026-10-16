@@ -19,6 +19,10 @@ export type Me = {
     hasPassword: boolean;
     googleLinked: boolean;
     twoFactorEnabled: boolean;
+    title: string;
+    phone: string;
+    /** Away until then (ISO); lead routing and round-robin assignment skip them. */
+    outOfOfficeUntil: string | null;
   };
   workspaces: MeWorkspace[];
   lastWorkspaceId: string | null;
@@ -79,6 +83,11 @@ export type Member = {
   role: WorkspaceRole;
   lastLoginAt: string | null;
   joinedAt: string;
+  title: string;
+  phone: string;
+  outOfOfficeUntil: string | null;
+  /** Access paused: they cannot open the workspace and get no new leads, but keep their seat and records. */
+  deactivatedAt: string | null;
 };
 export type MembersResponse = {
   members: Member[];
@@ -127,7 +136,16 @@ export type WorkspaceSecurity = {
 };
 
 /** GET /invitations/:token */
-export type InvitationInfo = { email: string; role: WorkspaceRole; workspaceName: string; accountExists: boolean };
+export type InvitationInfo = {
+  email: string;
+  role: WorkspaceRole;
+  workspaceName: string;
+  accountExists: boolean;
+  invitedBy: { name: string; email: string } | null;
+  /** The inviter's personal note ("" for none). */
+  message: string;
+  expiresAt: string;
+};
 
 /** A page of rows — the list endpoints' common shape (ListQuery: page, pageSize, sort, dir). */
 export type Paged<T> = { items: T[]; total: number; page: number; pageSize: number };

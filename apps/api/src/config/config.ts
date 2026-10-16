@@ -29,6 +29,14 @@ const Env = z.object({
   API_HOST: z.string().default("127.0.0.1"),
   /** Where people open the app. Links in emails, tracking URLs and webhook URLs are built from it. */
   PUBLIC_APP_URL: z.string().url().default("http://localhost:3600"),
+  /**
+   * Optional: where the API itself is reachable from outside (e.g. https://api.example.com).
+   * MCP clients are told to connect to {PUBLIC_API_URL}/mcp; unset, {PUBLIC_APP_URL}/api/mcp
+   * through the web app's proxy.
+   */
+  PUBLIC_API_URL: z.preprocess(blankAsUndefined, z.string().url().optional()),
+  /** MCP tool calls one token may make per minute (src/mcp). */
+  MCP_CALLS_PER_MINUTE: z.coerce.number().int().min(1).default(120),
   /** The super-admin app (apps/admin). Linked from the customer app for platform staff only. */
   ADMIN_APP_URL: z.string().url().default("http://localhost:3602"),
   /** Origins allowed to send cookie-authenticated writes (comma-separated). Defaults to PUBLIC_APP_URL + ADMIN_APP_URL. */
@@ -59,6 +67,14 @@ const Env = z.object({
   MICROSOFT_CLIENT_ID: opt(),
   MICROSOFT_CLIENT_SECRET: opt(),
   MICROSOFT_TENANT: z.string().default("common"),
+
+  /**
+   * The installation's Discord application (docs/DISCORD.md): workspaces add its bot to their servers.
+   * Values saved in admin → Settings → Discord take precedence.
+   */
+  DISCORD_CLIENT_ID: opt(),
+  DISCORD_CLIENT_SECRET: opt(),
+  DISCORD_BOT_TOKEN: opt(),
 
   STRIPE_SECRET_KEY: opt(),
   STRIPE_WEBHOOK_SECRET: opt(),

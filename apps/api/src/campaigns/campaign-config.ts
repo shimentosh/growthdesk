@@ -24,6 +24,7 @@ export const ACTION_STEPS: ReadonlySet<string> = new Set([
   "whatsapp",
   "telegram",
   "call_task",
+  "ai_call",
   "create_task",
   "update_field",
   "assign_owner",
@@ -33,8 +34,11 @@ export const ACTION_STEPS: ReadonlySet<string> = new Set([
 /** Steps that send a message through a channel. */
 export const MESSAGE_STEPS: ReadonlySet<string> = new Set(["email", "whatsapp", "telegram"]);
 
+/** Step kinds that act outside Growthdesk (a provider is asked to deliver): a "running" execution may have happened. */
+export const EXTERNAL_STEPS: ReadonlySet<string> = new Set(["email", "whatsapp", "telegram", "ai_call"]);
+
 /** Step kinds that need the plan's "multichannel" feature. */
-export const MULTICHANNEL_STEPS: ReadonlySet<string> = new Set(["whatsapp", "telegram", "call_task"]);
+export const MULTICHANNEL_STEPS: ReadonlySet<string> = new Set(["whatsapp", "telegram", "call_task", "ai_call"]);
 
 /** A step as stored: its kind and its free-form config. */
 export type StepLike = { type: StepType | string; config: unknown };
@@ -57,6 +61,7 @@ export type StepConfigT = {
   message?: string;
   integrationId?: string | null;
   description?: string;
+  agentId?: string | null;
   [key: string]: unknown;
 };
 

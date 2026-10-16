@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useState } from "react";
-import { Plus } from "lucide-react";
+import { Handshake, Megaphone, Plus } from "lucide-react";
 import { WORKFLOW_TEMPLATES, workflowKind, type WorkflowKind } from "@growthdesk/shared";
 import { Segments } from "@/components/crm/ContactListView";
 import { Badge } from "@/components/ui/Badge";
@@ -176,9 +176,9 @@ function Automation() {
             value={view}
             onChange={setView}
             options={[
-              { value: "sales", label: `Sales templates · ${templateCount("sales")}` },
-              { value: "marketing", label: `Email marketing templates · ${templateCount("marketing")}` },
-              { value: "mine", label: `My workflows${list.data ? ` · ${rows.length}` : ""}` },
+              { value: "sales", label: `Sales templates · ${templateCount("sales")}`, icon: Handshake },
+              { value: "marketing", label: `Email marketing templates · ${templateCount("marketing")}`, icon: Megaphone },
+              { value: "mine", label: `My workflows${list.data ? ` · ${rows.length}` : ""}`, icon: WorkflowIcon },
             ]}
           />
         </div>
@@ -221,9 +221,9 @@ function Automation() {
                       value={kind}
                       onChange={setKind}
                       options={[
-                        { value: "", label: `All · ${all.length}` },
-                        { value: "sales", label: `Sales · ${count("sales")}` },
-                        { value: "marketing", label: `Email marketing · ${count("marketing")}` },
+                        { value: "", label: `All · ${all.length}`, icon: WorkflowIcon },
+                        { value: "sales", label: `Sales · ${count("sales")}`, icon: Handshake },
+                        { value: "marketing", label: `Email marketing · ${count("marketing")}`, icon: Megaphone },
                       ]}
                     />
                   </div>

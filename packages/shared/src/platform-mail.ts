@@ -62,6 +62,8 @@ export const PLATFORM_TEMPLATES: Record<
     variables: [
       { key: "inviter", label: "Who invited them", sample: "Sam Rivera" },
       { key: "workspace", label: "Workspace name", sample: "Acme Sales" },
+      { key: "role", label: "Their role, in plain words", sample: "a member — works contacts, deals, campaigns and the inbox" },
+      { key: "message", label: "Personal note from the inviter (may be empty)", sample: "Welcome aboard — you'll be looking after our UK leads." },
       { key: "action_url", label: "Accept link", sample: "https://app.example.com/invite/…" },
     ],
     required: ["action_url"],

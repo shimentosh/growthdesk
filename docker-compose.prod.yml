@@ -20,6 +20,7 @@ x-api-env: &api-env
   API_PORT: 3601
   PUBLIC_APP_URL: ${PUBLIC_APP_URL}
   ADMIN_APP_URL: ${ADMIN_APP_URL:?set ADMIN_APP_URL in .env.production}
+  PUBLIC_API_URL: ${PUBLIC_API_URL:-}
   ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-}
   TRUSTED_PROXY_HOPS: ${TRUSTED_PROXY_HOPS:-1}
   DATABASE_URL: postgresql://growthdesk:${POSTGRES_PASSWORD}@postgres:5432/growthdesk

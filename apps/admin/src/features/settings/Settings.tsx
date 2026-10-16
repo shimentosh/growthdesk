@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, type FormEvent, type ReactNode } from "react";
-import { ArrowRight, Archive, CreditCard, KeyRound, OctagonPause, Sparkles, Trash2, UserPlus, Wallet, Wrench } from "lucide-react";
+import { ArrowRight, Archive, CircleCheck, CircleX, CreditCard, KeyRound, MailCheck, OctagonPause, Sparkles, Trash2, UserPlus, Wallet, Wrench } from "lucide-react";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { Callout } from "@/components/ui/Callout";
@@ -14,7 +14,7 @@ import { Page, PageHeader } from "@/components/ui/PageHeader";
 import { SkeletonText } from "@/components/ui/Skeleton";
 import { Switch } from "@/components/ui/Switch";
 import { useApiMutation, useApiQuery } from "@/lib/query";
-import type { AdminSettings, RetentionKey } from "@/features/common/types";
+import type { AdminSettings, ContactEmailValidation, EmailCheck, EmailValidationResult, RetentionKey } from "@/features/common/types";
 import { CopyValue } from "@/features/email/common";
 import { PlatformTile, platformKey, usePlatform } from "@/features/common/platform";
 
@@ -500,6 +500,102 @@ function Retention({ s }: { s: AdminSettings }) {
   );
 }
 
+const CHECK_LABEL: Record<EmailCheck, string> = {
+  syntax: "Looks like an email address",
+  blocked: "Not on the blocked list",
+  disposable: "Not a disposable (throwaway) service",
+  role: "A person, not a shared inbox",
+  mail_server: "Domain can receive email",
+};
+
+/** Free checks on contacts' emails (core/email-validation.service.ts): no paid verification API. */
+function EmailValidation({ s }: { s: AdminSettings }) {
+  const { canChange } = usePlatform();
+  const [form, setForm] = useState<ContactEmailValidation>(s.contactEmailValidation);
+  const [domains, setDomains] = useState(s.contactEmailValidation.blockedDomains.join("\n"));
+  const save = useSave("Email validation saved");
+  const [probe, setProbe] = useState("");
+  const test = useApiMutation<EmailValidationResult, { email: string }>({ path: "/admin/settings/email-validation/test", errorToast: false });
+  const set = (patch: Partial<ContactEmailValidation>) => setForm({ ...form, ...patch });
+  const submit = (e: FormEvent) => {
+    e.preventDefault();
+    save.mutate({ contactEmailValidation: { ...form, blockedDomains: domains.split(/[\s,]+/).map((d) => d.trim()).filter(Boolean) } });
+  };
+  const r = test.data;
+  return (
+    <form onSubmit={submit}>
+      <Section
+        icon={<MailCheck />}
+        title="Contact email validation"
+        description="Checks every email a contact gets when someone adds it, imports a CSV, or sends leads through the API or Claude (MCP). A refused address is not added: the person sees why, and an import lists the row with the reason. Free: no paid verification service. Emails people send to you and live chat are never refused."
+        footer={
+          canChange && (
+            <Button type="submit" variant="primary" loading={save.isPending}>
+              Save
+            </Button>
+          )
+        }
+      >
+        <FormError error={save.error?.message} />
+        <Switch checked={form.enabled} disabled={!canChange} onCheckedChange={(v) => set({ enabled: v })} label="Only add contacts with valid email addresses" description="Off: any address that looks like an email is accepted, as before." />
+        <div className={form.enabled ? "flex flex-col gap-3 border-l-2 border-line pl-4" : "flex flex-col gap-3 border-l-2 border-line pl-4 opacity-60"}>
+          <Switch size="sm" checked={form.blockDisposable} disabled={!canChange} onCheckedChange={(v) => set({ blockDisposable: v })} label="Refuse disposable email services" description="Throwaway inboxes such as mailinator.com, from a built-in list of about 700 services." />
+          <Switch size="sm" checked={form.checkMailServer} disabled={!canChange} onCheckedChange={(v) => set({ checkMailServer: v })} label="Refuse domains that cannot receive email" description="Looks up the domain's mail server (DNS MX) and caches the answer. If DNS does not answer, the address is let through." />
+          <Switch size="sm" checked={form.blockRoleAccounts} disabled={!canChange} onCheckedChange={(v) => set({ blockRoleAccounts: v })} label="Refuse shared role mailboxes" description="info@, sales@, support@, noreply@ and similar reach a team, not a person." />
+          <Field label="Blocked domains" hint="One per line. These domains and their subdomains are never accepted.">
+            <Textarea rows={3} value={domains} onChange={(e) => setDomains(e.target.value)} placeholder={"competitor.com\nexample.org"} disabled={!canChange} />
+          </Field>
+        </div>
+
+        <div className="flex flex-col gap-2 border-t border-line pt-4">
+          <span className="text-sm font-medium text-text">Try an address</span>
+          <div className="flex flex-col gap-2 sm:flex-row">
+            <Input
+              type="text"
+              value={probe}
+              onChange={(e) => setProbe(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && probe.trim()) {
+                  e.preventDefault();
+                  test.mutate({ email: probe.trim() });
+                }
+              }}
+              placeholder="someone@company.com"
+              aria-label="Email address to test"
+            />
+            <Button type="button" loading={test.isPending} disabled={!probe.trim()} onClick={() => test.mutate({ email: probe.trim() })}>
+              Check
+            </Button>
+          </div>
+          <span className="text-xs text-text-3">Uses the saved settings, so save first if you changed a switch.</span>
+          <FormError error={test.error?.message} />
+          {r && (
+            <div className="flex flex-col gap-2 rounded-md border border-line p-3">
+              <div className="flex items-center gap-2">
+                <Badge tone={r.ok ? "ok" : "bad"} dot>
+                  {r.ok ? "Would be added" : "Would be refused"}
+                </Badge>
+                <span className="truncate text-sm text-text">{r.email}</span>
+                {!r.enabled && <span className="text-xs text-text-3">(validation is off, so it is accepted today)</span>}
+              </div>
+              {r.message && <span className="text-xs text-text-2">{r.message}</span>}
+              <ul className="flex flex-col gap-1">
+                {r.checks.map((c) => (
+                  <li key={c.check} className="flex items-center gap-2 text-xs">
+                    {c.ok ? <CircleCheck aria-hidden className="size-3.5 text-ok-ink" /> : <CircleX aria-hidden className="size-3.5 text-bad-ink" />}
+                    <span className="text-text-2">{CHECK_LABEL[c.check]}</span>
+                    {c.detail && <span className="truncate text-text-3">· {c.detail}</span>}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </div>
+      </Section>
+    </form>
+  );
+}
+
 /** /settings */
 export function PlatformSettings() {
   const q = useApiQuery<AdminSettings>(platformKey("settings"), "/admin/settings");
@@ -512,6 +608,7 @@ export function PlatformSettings() {
             <ReadOnlyNote />
             <Maintenance key={`m-${s.maintenanceMessage}`} s={s} />
             <Outreach s={s} />
+            <EmailValidation key={`ev-${JSON.stringify(s.contactEmailValidation)}`} s={s} />
             <SignupsMoved />
             <Billing key={`b-${s.defaultPlanKey}-${s.expiredPlanKey}-${s.graceDays}-${s.trialsPerIpPerDay}`} s={s} />
             <Ai key={`a-${s.aiProvider}-${s.aiModel}-${s.aiBaseUrl}`} s={s} />

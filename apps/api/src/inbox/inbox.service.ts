@@ -153,7 +153,6 @@ export class InboxService {
     else if (q.status === "snoozed") and.push({ status: "open", snoozedUntil: { gt: now } });
     else if (q.status === "closed") and.push({ status: "closed" });
     if (q.channel) and.push({ channel: q.channel });
-    if (q.unread !== undefined) and.push({ unread: q.unread });
     if (q.assignee === "me") and.push({ assigneeId: user ?? "00000000-0000-0000-0000-000000000000" });
     else if (q.assignee === "none") and.push({ assigneeId: null });
     else if (q.assignee) and.push({ assigneeId: q.assignee });
@@ -163,6 +162,7 @@ export class InboxService {
     if (q.integrationId) and.push({ channelIntegrationId: q.integrationId });
     if (q.tag === "none") and.push({ tags: { none: {} } });
     else if (q.tag) and.push({ tags: { some: { tagId: q.tag } } });
+    if (q.aiCategory) and.push({ aiCategory: q.aiCategory });
     if (q.q) {
       const term = q.q.trim();
       and.push({
@@ -175,6 +175,11 @@ export class InboxService {
         ],
       });
     }
+    // Unread is per person: the shared flag (nobody has answered) and this person not having opened it since the last message in.
+    if (q.unread !== undefined) {
+      const mine = await this.unreadIds(ctx, { workspaceId: w.id, AND: [...and] });
+      and.push(q.unread ? { id: { in: [...mine] } } : { id: { notIn: [...mine] } });
+    }
     const where: Prisma.ConversationWhereInput = { workspaceId: w.id, AND: and };
     const [rows, total] = await Promise.all([
       this.prisma.db.conversation.findMany({
@@ -186,19 +191,50 @@ export class InboxService {
       }),
       this.prisma.db.conversation.count({ where }),
     ]);
-    return { items: rows.map(conversationRow), total, page: q.page, pageSize: q.pageSize };
+    const reads = await this.readsOf(ctx, rows.map((r) => r.id));
+    return { items: rows.map((r) => this.forViewer(conversationRow(r), reads)), total, page: q.page, pageSize: q.pageSize };
+  }
+
+  /** When this person last opened each conversation (none for an API key). */
+  private async readsOf(ctx: RequestContext, ids: string[]): Promise<Map<string, Date> | null> {
+    const me = ctx.identity?.userId;
+    if (!me || ctx.apiKey) return null;
+    if (!ids.length) return new Map();
+    const rows = await this.prisma.db.conversationRead.findMany({ where: { workspaceId: ws(ctx).id, userId: me, conversationId: { in: ids } }, select: { conversationId: true, readAt: true } });
+    return new Map(rows.map((r) => [r.conversationId, r.readAt]));
+  }
+
+  /** Unread for this person: nobody has answered, and they have not opened it since the last inbound message. */
+  private unreadFor(c: { unread: boolean; lastInboundAt: Date | null }, readAt: Date | undefined) {
+    if (!c.unread) return false;
+    if (!readAt) return true;
+    return Boolean(c.lastInboundAt && readAt < c.lastInboundAt);
+  }
+
+  private forViewer<T extends { id: string; unread: boolean; lastInboundAt: Date | null }>(row: T, reads: Map<string, Date> | null): T {
+    return reads ? { ...row, unread: this.unreadFor(row, reads.get(row.id)) } : row;
+  }
+
+  /** The ids, among `where`, that are unread for this person (bounded by what nobody has answered yet). */
+  private async unreadIds(ctx: RequestContext, where: Prisma.ConversationWhereInput): Promise<Set<string>> {
+    const rows = await this.prisma.db.conversation.findMany({ where: { AND: [where, { unread: true }] }, select: { id: true, unread: true, lastInboundAt: true } });
+    const reads = await this.readsOf(ctx, rows.map((r) => r.id));
+    return new Set(rows.filter((r) => (reads ? this.unreadFor(r, reads.get(r.id)) : true)).map((r) => r.id));
+  }
+
+  /** Unread for this person, per channel, among `where`. */
+  private async unreadByChannelFor(ctx: RequestContext, where: Prisma.ConversationWhereInput) {
+    const rows = await this.prisma.db.conversation.findMany({ where: { AND: [where, { unread: true }] }, select: { id: true, unread: true, lastInboundAt: true, channel: true } });
+    const reads = await this.readsOf(ctx, rows.map((r) => r.id));
+    const out: Record<string, number> = { email: 0, whatsapp: 0, telegram: 0, web: 0 };
+    for (const r of rows) if ((!reads || this.unreadFor(r, reads.get(r.id))) && r.channel in out) out[r.channel] = (out[r.channel] ?? 0) + 1;
+    return out;
   }
 
   async unreadCount(ctx: RequestContext) {
     const w = ws(ctx);
-    const rows = await this.prisma.db.conversation.groupBy({
-      by: ["channel"],
-      // Snoozed conversations stay out of the count until they wake.
-      where: { workspaceId: w.id, unread: true, status: "open", AND: [this.scope(ctx), { OR: [{ snoozedUntil: null }, { snoozedUntil: { lte: new Date() } }] }] },
-      _count: { _all: true },
-    });
-    const byChannel: Record<string, number> = { email: 0, whatsapp: 0, telegram: 0, web: 0 };
-    for (const r of rows) byChannel[r.channel] = r._count._all;
+    // Snoozed conversations stay out of the count until they wake.
+    const byChannel = await this.unreadByChannelFor(ctx, { workspaceId: w.id, status: "open", AND: [this.scope(ctx), { OR: [{ snoozedUntil: null }, { snoozedUntil: { lte: new Date() } }] }] });
     return { total: Object.values(byChannel).reduce((a, b) => a + b, 0), byChannel };
   }
 
@@ -216,12 +252,11 @@ export class InboxService {
       AND: [this.scope(ctx), { OR: [{ snoozedUntil: null }, { snoozedUntil: { lte: new Date() } }] }],
     };
     const user = ctx.identity?.userId ?? "00000000-0000-0000-0000-000000000000";
-    const [channels, unreadChannels, mine, unassigned, unread, campaigns, tagRows, tags, widgets] = await Promise.all([
+    const [channels, unreadChannels, mine, unassigned, campaigns, tagRows, tags, widgets] = await Promise.all([
       db.conversation.groupBy({ by: ["channel"], where, _count: { _all: true } }),
-      db.conversation.groupBy({ by: ["channel"], where: { ...where, unread: true }, _count: { _all: true } }),
+      this.unreadByChannelFor(ctx, where),
       db.conversation.count({ where: { ...where, assigneeId: user } }),
       db.conversation.count({ where: { ...where, assigneeId: null } }),
-      db.conversation.count({ where: { ...where, unread: true } }),
       db.conversation.groupBy({ by: ["campaignId"], where: { ...where, campaignId: { not: null } }, _count: { _all: true } }),
       db.conversationTag.groupBy({ by: ["tagId"], where: { workspaceId: w.id, conversation: where }, _count: { _all: true } }),
       db.tag.findMany({ where: { workspaceId: w.id }, select: { id: true, name: true, color: true }, orderBy: { name: "asc" } }),
@@ -246,9 +281,9 @@ export class InboxService {
       total: channels.reduce((a, r) => a + r._count._all, 0),
       mine,
       unassigned,
-      unread,
+      unread: Object.values(unreadChannels).reduce((a, b) => a + b, 0),
       channels: count(channels),
-      unreadByChannel: count(unreadChannels),
+      unreadByChannel: unreadChannels,
       campaignReplies: campaigns.reduce((a, r) => a + r._count._all, 0),
       campaigns: campaigns
         .flatMap((c) => {
@@ -336,7 +371,7 @@ export class InboxService {
       (channel === "whatsapp" || channel === "telegram") && c.contactId ? await this.chat.reachability(w.id, channel, c.contactId) : null;
     const visitor = channel === "web" ? await this.livechat.visitorInfo(w.id, c.chatVisitorId) : null;
     return {
-      ...conversationRow(full),
+      ...this.forViewer(conversationRow(full), await this.readsOf(ctx, [full.id])),
       peer: full.peer,
       contact: full.contact,
       mailbox: full.mailbox,
@@ -356,7 +391,11 @@ export class InboxService {
     const c = await this.find(ctx, id);
     const self = ctx.identity?.userId ?? null;
     const data: Prisma.ConversationUncheckedUpdateInput = {};
-    if (input.unread !== undefined) data.unread = input.unread;
+    // "Mark as read / unread" is this person's own; an API key (no person) changes the shared flag as before.
+    if (input.unread !== undefined) {
+      if (self && !ctx.apiKey) await this.setRead(w.id, c.id, self, !input.unread);
+      else data.unread = input.unread;
+    }
     if (input.status !== undefined) data.status = input.status;
     if (input.snoozedUntil !== undefined) data.snoozedUntil = input.snoozedUntil;
     let notifyAssignee: string | null = null;
@@ -381,6 +420,19 @@ export class InboxService {
       await this.prisma.db.conversation.update({ where: { id: c.id, workspaceId: w.id }, data });
       await this.realtime.conversationChanged(w.id, c.id, "updated");
     }
+    // Who took or handed over a conversation shows on the contact's timeline and in the team activity feed.
+    if (data.assigneeId !== undefined && c.contactId) {
+      const to = data.assigneeId ? await this.prisma.db.user.findUnique({ where: { id: data.assigneeId as string }, select: { name: true } }) : null;
+      const what = c.subject || c.displayName || c.handle || "Conversation";
+      await this.activity.log({
+        workspaceId: w.id,
+        contactId: c.contactId,
+        actorId: self,
+        type: "conversation.assigned",
+        summary: to ? (data.assigneeId === self ? `Took the conversation: ${what}` : `Conversation assigned to ${to.name}: ${what}`) : `Conversation unassigned: ${what}`,
+        data: { conversationId: c.id, assigneeId: data.assigneeId ?? null, fromAssigneeId: c.assigneeId },
+      });
+    }
     if (notifyAssignee) {
       await this.notifications.notify(w.id, [notifyAssignee], {
         type: "conversation.assigned",
@@ -395,17 +447,33 @@ export class InboxService {
     const w = ws(ctx);
     const row = await this.prisma.db.conversation.findFirst({ where: { id, workspaceId: w.id }, include: conversationInclude });
     if (!row) throw notFound("That conversation");
-    return conversationRow(row);
+    return this.forViewer(conversationRow(row), await this.readsOf(ctx, [row.id]));
   }
 
   async markRead(ctx: RequestContext, id: string) {
     const w = ws(ctx);
     const c = await this.find(ctx, id);
-    if (c.unread) {
+    const self = ctx.identity?.userId;
+    if (self && !ctx.apiKey) {
+      // Opening it is read for this person only; the conversation stays unanswered for the team until someone replies.
+      await this.setRead(w.id, c.id, self, true);
+    } else if (c.unread) {
       await this.prisma.db.conversation.update({ where: { id: c.id, workspaceId: w.id }, data: { unread: false } });
       await this.realtime.conversationChanged(w.id, c.id, "read");
     }
     return { id: c.id, unread: false };
+  }
+
+  private async setRead(workspaceId: string, conversationId: string, userId: string, read: boolean) {
+    if (read) {
+      await this.prisma.db.conversationRead.upsert({
+        where: { conversationId_userId: { conversationId, userId }, workspaceId },
+        create: { conversationId, userId, workspaceId, readAt: new Date() },
+        update: { readAt: new Date() },
+      });
+    } else {
+      await this.prisma.db.conversationRead.deleteMany({ where: { workspaceId, conversationId, userId } });
+    }
   }
 
   private async messageOut(workspaceId: string, messageRowId: string) {
@@ -488,7 +556,19 @@ export class InboxService {
     } else {
       throw badRequest("Call conversations cannot be replied to — log a call instead.");
     }
-    await this.prisma.db.conversation.update({ where: { id: c.id, workspaceId: w.id }, data: { unread: false } });
+    // Answering takes it: an unassigned conversation becomes the replier's, so the next message has an owner.
+    await this.prisma.db.conversation.update({ where: { id: c.id, workspaceId: w.id }, data: { unread: false, ...(c.assigneeId ? {} : { assigneeId: author }) } });
+    await this.setRead(w.id, c.id, author, true);
+    // A person is talking to them now: automated outreach steps stop, so the contact does not get both.
+    if (c.contactId) {
+      const stopped = await this.prisma.db.enrollment.updateMany({
+        where: { workspaceId: w.id, contactId: c.contactId, status: { in: ["active", "paused"] } },
+        data: { status: "stopped", stopReason: "A teammate replied by hand", nextRunAt: null },
+      });
+      if (stopped.count) {
+        await this.activity.log({ workspaceId: w.id, contactId: c.contactId, actorId: author, type: "campaign.stopped", summary: `Sequences stopped: ${ctx.identity?.name ?? "a teammate"} replied by hand`, data: { count: stopped.count, conversationId: c.id } });
+      }
+    }
     await this.realtime.conversationChanged(w.id, c.id, "reply");
     return out;
   }

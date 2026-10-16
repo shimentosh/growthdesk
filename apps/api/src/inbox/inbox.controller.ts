@@ -7,6 +7,7 @@ import { Body, Ctx, Permission, Query, Raw } from "../common/decorators.js";
 import { ws, type RequestContext } from "../common/context.js";
 import { RealtimeService } from "../realtime/realtime.service.js";
 import { InboxService } from "./inbox.service.js";
+import { InboxSummaryService } from "./inbox-summary.service.js";
 import { ConversationListQuery, ConversationTaskInput, type ConversationListQueryT, type ConversationTaskInputT } from "./inbox.schemas.js";
 
 const ConversationNoteInput = z.object({ body: requiredText(10000) });
@@ -30,6 +31,7 @@ export class InboxController {
   constructor(
     private readonly inbox: InboxService,
     private readonly realtime: RealtimeService,
+    private readonly summaries: InboxSummaryService,
   ) {}
 
   @Permission("inbox.read")
@@ -50,6 +52,13 @@ export class InboxController {
   @Get("facets")
   facets(@Ctx() ctx: RequestContext) {
     return this.inbox.facets(ctx);
+  }
+
+  /** "Inbox today": unread, needs a reply, snoozed until today, mine, the oldest unanswered and the AI-label counts. */
+  @Permission("inbox.read")
+  @Get("summary")
+  summary(@Ctx() ctx: RequestContext) {
+    return this.summaries.summary(ctx);
   }
 
   /**

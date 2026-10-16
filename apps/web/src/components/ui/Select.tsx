@@ -34,6 +34,8 @@ export type SelectProps<V extends string = string> = {
   "aria-label"?: string;
   "aria-describedby"?: string;
   className?: string;
+  /** A small muted icon before the chosen value (filter bars), e.g. <Building2 />. */
+  icon?: ReactNode;
 };
 
 const SEARCH_AFTER = 12;
@@ -63,6 +65,7 @@ export function Select<V extends string = string>({
   id,
   name,
   className,
+  icon,
   ...aria
 }: SelectProps<V>) {
   const field = useFieldControl({ id, invalid, "aria-describedby": aria["aria-describedby"] });
@@ -155,7 +158,10 @@ export function Select<V extends string = string>({
           className,
         )}
       >
-        <span className="truncate">{current ? current.label : placeholder}</span>
+        <span className="flex min-w-0 items-center gap-1.5">
+          {icon && <span aria-hidden className="inline-flex shrink-0 text-text-3 [&_svg]:size-3.5">{icon}</span>}
+          <span className="truncate">{current ? current.label : placeholder}</span>
+        </span>
         <ChevronDown aria-hidden className="size-3.5 shrink-0 text-text-3 transition-transform duration-150 group-data-[state=open]:rotate-180" />
       </P.Trigger>
       {name && <input type="hidden" name={name} value={value ?? ""} />}

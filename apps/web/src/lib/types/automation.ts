@@ -77,9 +77,11 @@ export const TRIGGER_LABELS: Record<WorkflowTrigger, { label: string; descriptio
   },
   "contact.qualified": { label: "Contact qualified", description: "A contact is marked as qualified." },
   "reply.received": { label: "Reply received", description: "A contact replies by email, WhatsApp or Telegram." },
-  "call.completed": { label: "Call completed", description: "A call finishes. Nothing records calls in this installation yet, so it does not fire today." },
+  "call.completed": { label: "Call completed", description: "A call finishes with an outcome: logged by hand, placed with click-to-call, or made by an AI agent. Filter by event.outcome." },
   "meeting.booked": { label: "Meeting booked", description: "A meeting is scheduled with a contact." },
   "deal.stage_changed": { label: "Deal stage changed", description: "A deal moves to another pipeline stage." },
+  "deal.stale": { label: "Deal went stale", description: "An open deal has had no progress for longer than its stage allows (set per stage in Settings → Pipelines)." },
+  "quote.accepted": { label: "Quote accepted", description: "A buyer accepts and signs a quote. event.total and event.quoteNumber say which." },
   "task.overdue": { label: "Task overdue", description: "An open task passes its due date." },
   "list.subscribed": {
     label: "Joined a list",

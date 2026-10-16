@@ -28,6 +28,7 @@ import { CrmExtrasService } from "./crm-extras.service.js";
 import { ImportsService } from "./imports.service.js";
 import { SuppressionService } from "./suppression.service.js";
 import { ConsentService } from "./consent.service.js";
+import { AuditService } from "../core/audit.service.js";
 
 const ContactListQuery = ListQuery.extend({ filter: z.string().max(5000).optional(), viewId: z.string().uuid().optional() });
 const SearchQuery = ListQuery.extend({ q: text(200).optional() });
@@ -44,6 +45,7 @@ export class CrmController {
     private readonly imports: ImportsService,
     private readonly suppression: SuppressionService,
     private readonly consent: ConsentService,
+    private readonly audit: AuditService,
   ) {}
 
   private async filterFrom(ctx: RequestContext, raw?: string, viewId?: string) {
@@ -82,6 +84,9 @@ export class CrmController {
   @Get("contacts/export")
   async exportContacts(@Ctx() ctx: RequestContext, @Q("filter") filter: string | undefined, @Q("viewId") viewId: string | undefined, @Res() res: Response) {
     const csv = await this.imports.exportCsv(ctx, await this.filterFrom(ctx, filter, viewId));
+    // Customer data leaving the CRM: who took how many, with which filter.
+    const rows = Math.max(0, csv.split("\n").filter((l) => l.trim()).length - 1);
+    await this.audit.record(ctx, { action: "contacts.exported", targetType: "contact", metadata: { rows, filter: filter?.slice(0, 500) ?? null, viewId: viewId ?? null } });
     res.setHeader("content-type", "text/csv; charset=utf-8");
     res.setHeader("content-disposition", `attachment; filename="contacts-${new Date().toISOString().slice(0, 10)}.csv"`);
     res.setHeader("cache-control", "no-store");

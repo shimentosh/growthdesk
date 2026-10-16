@@ -3,11 +3,12 @@
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useState, type ReactNode } from "react";
-import { ArrowDown, ArrowUp, Building2, ChevronsUpDown, Plus, SearchX } from "lucide-react";
+import { ArrowDown, ArrowDownUp, ArrowUp, Building2, ChevronsUpDown, Plus, SearchX, type LucideIcon } from "lucide-react";
 import { NewCompanyModal } from "@/components/crm/CompanyForm";
 import { TagList } from "@/components/crm/Tags";
 import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
+import { COL, ColumnLabel } from "@/components/ui/columns";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { ErrorState } from "@/components/ui/ErrorState";
 import { ENTITY, EntityTile } from "@/components/ui/icons";
@@ -94,7 +95,7 @@ function Companies() {
   });
   const rows = companies.data?.items ?? [];
 
-  const sortHeader = (field: Sort, label: string) => {
+  const sortHeader = (field: Sort, label: string, ColIcon?: LucideIcon) => {
     const active = state.sort === field;
     const Icon = !active ? ChevronsUpDown : state.dir === "asc" ? ArrowUp : ArrowDown;
     return (
@@ -109,7 +110,10 @@ function Companies() {
           }
           className={cn("inline-flex items-center gap-1 hover:text-text", active && "text-text")}
         >
-          {label}
+          <span className="inline-flex items-center gap-1.5">
+            {ColIcon && <ColIcon aria-hidden className="size-3.5 shrink-0 opacity-70" strokeWidth={1.75} />}
+            {label}
+          </span>
           <Icon aria-hidden className={cn("size-3", !active && "opacity-50")} />
         </button>
       </th>
@@ -160,29 +164,29 @@ function Companies() {
         <table className="w-full min-w-[920px] border-collapse text-sm">
           <thead className="border-b border-line bg-s-2">
             <tr>
-              {sortHeader("name", "Name")}
+              {sortHeader("name", "Name", COL.name)}
               <th scope="col" className={TH}>
-                Industry
+                <ColumnLabel icon={COL.industry}>Industry</ColumnLabel>
               </th>
               <th scope="col" className={TH}>
-                Size
+                <ColumnLabel icon={COL.size}>Size</ColumnLabel>
               </th>
               <th scope="col" className={TH}>
-                Location
+                <ColumnLabel icon={COL.location}>Location</ColumnLabel>
               </th>
               <th scope="col" className={TH}>
-                Owner
+                <ColumnLabel icon={COL.owner}>Owner</ColumnLabel>
               </th>
               <th scope="col" className={cn(TH, "text-right")}>
-                Contacts
+                <ColumnLabel icon={COL.people}>Contacts</ColumnLabel>
               </th>
               <th scope="col" className={cn(TH, "text-right")}>
-                Deals
+                <ColumnLabel icon={COL.deals}>Deals</ColumnLabel>
               </th>
               <th scope="col" className={TH}>
-                Tags
+                <ColumnLabel icon={COL.tags}>Tags</ColumnLabel>
               </th>
-              {sortHeader("createdAt", "Created")}
+              {sortHeader("createdAt", "Created", COL.created)}
             </tr>
           </thead>
           <tbody className="divide-y divide-line">
@@ -246,6 +250,7 @@ function Companies() {
             size="sm"
             className="w-36"
             aria-label="Sort"
+            icon={<ArrowDownUp />}
             value={state.sort}
             onChange={(e) => update({ sort: e.target.value as Sort })}
             options={[

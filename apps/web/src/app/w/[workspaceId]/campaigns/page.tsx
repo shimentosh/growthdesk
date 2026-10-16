@@ -4,7 +4,7 @@ import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useMemo, useState, type ReactNode } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { Plus, SearchX, X } from "lucide-react";
+import { AudioLines, Layers, MailPlus, Plus, SearchX, Send, X } from "lucide-react";
 import type { StepType } from "@growthdesk/shared";
 import { CampaignTypeModal, useCampaignKinds } from "@/components/campaigns/CampaignTypeModal";
 import { CampaignMenu, rateOf } from "@/components/marketing/campaigns/common";
@@ -14,6 +14,7 @@ import { Badge, StatusBadge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { Callout } from "@/components/ui/Callout";
 import { Card } from "@/components/ui/Card";
+import { COL, ColumnLabel } from "@/components/ui/columns";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { ErrorState } from "@/components/ui/ErrorState";
 import { ENTITY, EntityTile } from "@/components/ui/icons";
@@ -42,7 +43,8 @@ export default function CampaignsPage() {
   );
 }
 
-type TypeFilter = "" | "outreach" | "marketing";
+/** ai_calling: outreach campaigns with an AI call step (still the outreach list, filtered here). */
+type TypeFilter = "" | "outreach" | "marketing" | "ai_calling";
 
 const PAGE_SIZES = [25, 50, 100];
 /** How many outreach campaigns the merged list reads (the API's page-size cap); search reaches the rest. */
@@ -51,7 +53,9 @@ const CampaignGlyph = ENTITY.campaigns.icon;
 const TH = "h-9 px-3 text-left text-xs font-medium whitespace-nowrap text-text-3";
 const TD = "px-3 py-2 align-middle";
 
-const STEP_CHANNEL: Partial<Record<StepType, string>> = { email: "Email", call_task: "Calls", whatsapp: "WhatsApp", telegram: "Telegram" };
+const STEP_CHANNEL: Partial<Record<StepType, string>> = { email: "Email", call_task: "Calls", ai_call: "AI calls", whatsapp: "WhatsApp", telegram: "Telegram" };
+
+const isAiCalling = (c: Campaign) => (c.stepTypes ?? []).includes("ai_call");
 
 /** One row of the merged table: an outreach campaign or a marketing campaign. */
 type Row = { kind: "outreach"; id: string; updatedAt: string; c: Campaign } | { kind: "marketing"; id: string; updatedAt: string; c: MarketingCampaign };
@@ -66,7 +70,7 @@ function useListParams() {
   const type = sp.get("type") ?? "";
   const state = {
     q: sp.get("q") ?? "",
-    type: (type === "outreach" || type === "marketing" ? type : "") as TypeFilter,
+    type: (type === "outreach" || type === "marketing" || type === "ai_calling" ? type : "") as TypeFilter,
     page: Number.isInteger(page) && page > 0 ? page : 1,
     pageSize: PAGE_SIZES.includes(pageSize) ? pageSize : 50,
   };
@@ -109,7 +113,8 @@ function Campaigns() {
   const canOutreach = ws.can("campaigns.read");
   const canMarketing = ws.can("marketing.read");
   const wantOutreach = canOutreach && state.type !== "marketing";
-  const wantMarketing = canMarketing && state.type !== "outreach";
+  const wantMarketing = canMarketing && state.type !== "outreach" && state.type !== "ai_calling";
+  const showAiCalling = canOutreach && (ws.hasFeature("calling") || state.type === "ai_calling");
 
   const outreach = useApiQuery<Paged<Campaign>>(ws.key("campaigns", "list"), wantOutreach ? ws.path("/campaigns") : null, {
     query: { q: state.q.trim() || undefined, sort: "updatedAt", dir: "desc", page: 1, pageSize: OUTREACH_CAP },
@@ -123,12 +128,13 @@ function Campaigns() {
   const q = state.q.trim().toLowerCase();
   const all = useMemo<Row[]>(() => {
     const rows: Row[] = [];
-    if (wantOutreach) for (const c of outreach.data?.items ?? []) rows.push({ kind: "outreach", id: c.id, updatedAt: c.updatedAt, c });
+    if (wantOutreach)
+      for (const c of outreach.data?.items ?? []) if (state.type !== "ai_calling" || isAiCalling(c)) rows.push({ kind: "outreach", id: c.id, updatedAt: c.updatedAt, c });
     if (wantMarketing)
       for (const c of marketing.data ?? [])
         if (!q || c.name.toLowerCase().includes(q) || c.subject.toLowerCase().includes(q)) rows.push({ kind: "marketing", id: c.id, updatedAt: c.updatedAt, c });
     return rows.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
-  }, [wantOutreach, wantMarketing, outreach.data, marketing.data, q]);
+  }, [wantOutreach, wantMarketing, outreach.data, marketing.data, q, state.type]);
   const rows = all.slice((state.page - 1) * state.pageSize, state.page * state.pageSize);
 
   const pending = (wantOutreach && outreach.isPending) || (wantMarketing && marketing.isPending);
@@ -168,7 +174,15 @@ function Campaigns() {
       <EmptyState
         icon={<CampaignGlyph />}
         tint={ENTITY.campaigns.tint}
-        title={state.type === "marketing" ? "No marketing campaigns yet" : state.type === "outreach" ? "No outreach campaigns yet" : "No campaigns yet"}
+        title={
+          state.type === "marketing"
+            ? "No marketing campaigns yet"
+            : state.type === "outreach"
+              ? "No outreach campaigns yet"
+              : state.type === "ai_calling"
+                ? "No AI calling campaigns yet"
+                : "No campaigns yet"
+        }
         description={
           kinds.any
             ? "Outreach campaigns send 1:1 multi-step sequences from your mailboxes. Marketing campaigns send one email to opted-in lists from your verified domain."
@@ -184,31 +198,31 @@ function Campaigns() {
           <thead className="border-b border-line bg-s-2">
             <tr>
               <th scope="col" className={TH}>
-                Name
+                <ColumnLabel icon={COL.name}>Name</ColumnLabel>
               </th>
               <th scope="col" className={TH}>
-                Type
+                <ColumnLabel icon={COL.type}>Type</ColumnLabel>
               </th>
               <th scope="col" className={TH}>
-                Channels
+                <ColumnLabel icon={COL.channel}>Channels</ColumnLabel>
               </th>
               <th scope="col" className={TH}>
-                Status
+                <ColumnLabel icon={COL.status}>Status</ColumnLabel>
               </th>
               <th scope="col" className={TH}>
-                Audience
+                <ColumnLabel icon={COL.target}>Audience</ColumnLabel>
               </th>
               <th scope="col" className={cn(TH, "text-right")}>
-                Reached
+                <ColumnLabel icon={COL.people}>Reached</ColumnLabel>
               </th>
               <th scope="col" className={cn(TH, "text-right")}>
-                Sent
+                <ColumnLabel icon={COL.sent}>Sent</ColumnLabel>
               </th>
               <th scope="col" className={cn(TH, "text-right")}>
-                Engagement
+                <ColumnLabel icon={COL.activity}>Engagement</ColumnLabel>
               </th>
               <th scope="col" className={TH}>
-                Updated
+                <ColumnLabel icon={COL.updated}>Updated</ColumnLabel>
               </th>
               <th scope="col" className="w-10">
                 <span className="sr-only">Actions</span>
@@ -230,7 +244,7 @@ function Campaigns() {
                   </td>
                   <td className={TD}>
                     <Badge tone="live" quiet>
-                      Outreach
+                      {isAiCalling(r.c) ? "AI calling" : "Outreach"}
                     </Badge>
                   </td>
                   <td className={cn(TD, "max-w-40 truncate text-text-2")}>{outreachChannels(r.c)}</td>
@@ -283,15 +297,16 @@ function Campaigns() {
         </>
       )}
       <div className="mb-3 flex flex-col gap-2 lg:flex-row lg:items-center">
-        {canOutreach && canMarketing && (
+        {canOutreach && (canMarketing || showAiCalling) && (
           <div role="tablist" aria-label="Type" className="-mx-1 flex gap-1 overflow-x-auto px-1 pb-1 lg:pb-0">
             {(
               [
-                ["", "All"],
-                ["outreach", "Outreach"],
-                ["marketing", "Marketing"],
+                ["", "All", Layers],
+                ...(canMarketing ? ([["outreach", "Outreach", Send]] as const) : []),
+                ...(showAiCalling ? ([["ai_calling", "AI calling", AudioLines]] as const) : []),
+                ...(canMarketing ? ([["marketing", "Marketing", MailPlus]] as const) : []),
               ] as const
-            ).map(([value, label]) => (
+            ).map(([value, label, Icon]) => (
               <button
                 key={value || "all"}
                 type="button"
@@ -299,10 +314,11 @@ function Campaigns() {
                 aria-selected={state.type === value}
                 onClick={() => update({ type: value })}
                 className={cn(
-                  "h-7 shrink-0 rounded-sm px-2.5 text-xs font-medium whitespace-nowrap",
+                  "inline-flex h-7 shrink-0 items-center gap-1.5 rounded-sm px-2.5 text-xs font-medium whitespace-nowrap",
                   state.type === value ? "bg-accent-soft text-accent-ink" : "text-text-2 hover:bg-hover hover:text-text",
                 )}
               >
+                <Icon aria-hidden className="size-3.5 shrink-0 opacity-70" strokeWidth={1.75} />
                 {label}
               </button>
             ))}

@@ -51,6 +51,10 @@ export class StepRulesService {
       const rows = await this.prisma.db.template.findMany({ where: { workspaceId, id: { in: templateIds } } });
       for (const t of rows) report.templates.set(t.id, t);
     }
+    const agentIds = [...new Set(steps.filter((s) => String(s.type) === "ai_call").map((s) => configOf(s).agentId).filter((v): v is string => typeof v === "string" && v.length > 0))];
+    const agents = new Map(
+      agentIds.length ? (await this.prisma.db.callAgent.findMany({ where: { workspaceId, id: { in: agentIds } }, select: { id: true, name: true, archivedAt: true } })).map((a) => [a.id, a] as const) : [],
+    );
     const userIds = [...new Set(steps.map((s) => configOf(s).userId).filter((v): v is string => typeof v === "string" && v.length > 0))];
     const members = userIds.length
       ? new Set((await this.prisma.db.membership.findMany({ where: { workspaceId, userId: { in: userIds } }, select: { userId: true } })).map((m) => m.userId))
@@ -66,6 +70,7 @@ export class StepRulesService {
       const say = (key: string, message: string) => report.problems.push({ field: at(key), message: `Step ${i + 1}: ${message}` });
       if (MULTICHANNEL_STEPS.has(type)) features.add("multichannel");
       if (type === "branch") features.add("branching");
+      if (type === "ai_call") features.add("calling");
 
       const template = cfg.templateId ? report.templates.get(cfg.templateId) : undefined;
       if (cfg.templateId && !template) say("templateId", "that template does not exist in this workspace.");
@@ -86,6 +91,12 @@ export class StepRulesService {
       }
       if (type === "call_task" || type === "create_task") {
         texts.push(cfg.taskTitle ?? "", cfg.body ?? "", typeof cfg.description === "string" ? cfg.description : "");
+      }
+      if (type === "ai_call") {
+        const agent = cfg.agentId ? agents.get(cfg.agentId) : undefined;
+        if (!cfg.agentId) say("agentId", "choose the AI agent that makes the call.");
+        else if (!agent) say("agentId", "that AI agent does not exist in this workspace.");
+        else if (agent.archivedAt) say("agentId", `the AI agent “${agent.name}” is archived.`);
       }
       if (type === "notify") {
         texts.push(cfg.message ?? "");

@@ -2,7 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { Suspense, useState } from "react";
-import { ListChecks, Plus, Upload, UserPlus } from "lucide-react";
+import { Handshake, ListChecks, Plus, Upload, UserPlus, type LucideIcon } from "lucide-react";
 import type { LifecycleStage } from "@growthdesk/shared";
 import { ContactListView, Segments, useContactQuery } from "@/components/crm/ContactListView";
 import { LIST_READ } from "@/components/crm/lifecycle";
@@ -33,9 +33,9 @@ export default function LeadsPage() {
 /** Leads shows the lead stage unless the tabs say In sales. */
 const DEFAULTS = { stage: ["lead"] as const satisfies readonly LifecycleStage[] };
 type Tab = "lead" | "sales";
-const TABS: { value: Tab; label: string }[] = [
-  { value: "lead", label: "Leads" },
-  { value: "sales", label: "In sales" },
+const TABS: { value: Tab; label: string; icon: LucideIcon }[] = [
+  { value: "lead", label: "Leads", icon: UserPlus },
+  { value: "sales", label: "In sales", icon: Handshake },
 ];
 
 /**
@@ -103,6 +103,7 @@ function Leads() {
               <NativeSelect
                 size="sm"
                 aria-label="Lead list"
+                icon={<ListChecks />}
                 className="w-full sm:w-64"
                 value={state.listId}
                 disabled={lists.isPending}

@@ -1,4 +1,6 @@
 import type { ReactNode, TdHTMLAttributes, ThHTMLAttributes } from "react";
+import type { LucideIcon } from "lucide-react";
+import { ColumnLabel } from "@/components/ui/columns";
 import { cn } from "@/lib/cn";
 
 /*
@@ -14,7 +16,8 @@ export function Table({ className, children }: { className?: string; children: R
   );
 }
 
-export function Th({ className, align, ...rest }: ThHTMLAttributes<HTMLTableCellElement> & { align?: "left" | "right" }) {
+/** `icon`: one of COL (components/ui/columns), shown small and muted before the heading. */
+export function Th({ className, align, icon, children, ...rest }: ThHTMLAttributes<HTMLTableCellElement> & { align?: "left" | "right"; icon?: LucideIcon }) {
   return (
     <th
       scope="col"
@@ -24,7 +27,9 @@ export function Th({ className, align, ...rest }: ThHTMLAttributes<HTMLTableCell
         align === "right" ? "text-right" : "text-left",
         className,
       )}
-    />
+    >
+      <ColumnLabel icon={icon}>{children}</ColumnLabel>
+    </th>
   );
 }
 

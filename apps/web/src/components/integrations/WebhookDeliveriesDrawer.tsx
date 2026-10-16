@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { RefreshCw, Send } from "lucide-react";
+import { CircleDot, RefreshCw, Send } from "lucide-react";
 import { Badge, StatusBadge } from "@/components/ui/Badge";
 import { IconButton } from "@/components/ui/Button";
 import { Drawer } from "@/components/ui/Drawer";
@@ -49,6 +49,7 @@ export function WebhookDeliveriesDrawer({ endpoint, onClose }: { endpoint: Webho
           <NativeSelect
             size="sm"
             aria-label="Filter by status"
+            icon={<CircleDot />}
             value={status}
             onChange={(e) => {
               setStatus(e.target.value);

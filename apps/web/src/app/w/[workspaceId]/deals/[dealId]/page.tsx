@@ -8,6 +8,7 @@ import { CalendarDays, CalendarPlus, CheckSquare, History, Plus, Trash2 } from "
 import { labelOf } from "@growthdesk/shared";
 import { AiSummaryCard } from "@/components/ai/AiSummaryCard";
 import { CloseDealModal, type CloseRequest } from "@/components/pipeline/CloseDealModal";
+import { DealForecastCard, StaleCallout } from "@/components/pipeline/DealNextStep";
 import { DealDetailsForm, DealFacts, DealNotes, DealTimeline, StagePanel } from "@/components/pipeline/DealSections";
 import { MeetingModal } from "@/components/pipeline/MeetingModal";
 import { TaskDrawer } from "@/components/pipeline/TaskDrawer";
@@ -22,7 +23,10 @@ import { Page, PageHeader } from "@/components/ui/PageHeader";
 import { RequirePermission } from "@/components/ui/RequirePermission";
 import { SkeletonText } from "@/components/ui/Skeleton";
 import { EntityTile } from "@/components/ui/icons";
+import { toast } from "@/components/ui/Toast";
 import { cn } from "@/lib/cn";
+import { AttachmentsPanel } from "@/components/attachments/AttachmentsPanel";
+import { DealQuotesPanel } from "@/components/quotes/DealQuotesPanel";
 import { useApiMutation, useApiQuery } from "@/lib/query";
 import { useFormat, useWorkspace } from "@/lib/session";
 import type { DealDetail, Pipeline, PipelineStage, Task } from "@/lib/types/pipeline";
@@ -62,12 +66,16 @@ function DealView({ deal }: { deal: DealDetail }) {
   const pipelines = useApiQuery<Pipeline[]>(ws.key("pipelines"), ws.path("/pipelines"));
   const pipeline = pipelines.data?.find((p) => p.id === deal.pipelineId);
 
-  const move = useApiMutation<DealDetail, { stage: PipelineStage; reason?: string }>({
+  const move = useApiMutation<DealDetail & { warning?: string }, { stage: PipelineStage; reason?: string }>({
     path: ws.path(`/deals/${deal.id}/move`),
     body: (v) => ({ stageId: v.stage.id, ...(v.reason ? { reason: v.reason } : {}) }),
     // Winning a deal marks its contact a customer, so contacts refresh too.
     invalidate: (_, v) => (v.stage.kind === "won" ? [ws.key("deals"), ws.key("contacts")] : [ws.key("deals")]),
     success: (_, v) => (v.stage.kind === "open" ? `Moved to ${v.stage.name}` : `Marked ${labelOf(v.stage.kind).toLowerCase()}`),
+    // A nudge from the API (no next step on an open deal); the move itself went through.
+    onSuccess: (d) => {
+      if (d.warning) toast.warn(d.warning);
+    },
   });
 
   const remove = useApiMutation<unknown, void>({
@@ -112,6 +120,7 @@ function DealView({ deal }: { deal: DealDetail }) {
 
       <div className="grid grid-cols-1 gap-5 lg:grid-cols-[minmax(0,1fr)_340px]">
         <div className="flex min-w-0 flex-col gap-5">
+          <StaleCallout deal={deal} />
           <StagePanel
             deal={deal}
             pipeline={pipeline}
@@ -121,12 +130,15 @@ function DealView({ deal }: { deal: DealDetail }) {
             onClose={(stage) => setClosing({ dealId: deal.id, dealName: deal.name, stage: stageRef(stage) })}
           />
           <DealDetailsForm key={deal.id} deal={deal} canWrite={canWrite} />
+          {ws.can("quotes.read") && <DealQuotesPanel dealId={deal.id} />}
           <DealNotes deal={deal} canWrite={canWrite} />
           <DealTimeline dealId={deal.id} />
         </div>
         <div className="flex min-w-0 flex-col gap-5">
           <AiSummaryCard kind="deal" id={deal.id} />
+          <DealForecastCard key={deal.id} deal={deal} canWrite={canWrite} />
           <DealFacts deal={deal} />
+          <AttachmentsPanel entityType="deal" entityId={deal.id} />
           <DealTasks deal={deal} onAdd={() => setAddingTask(true)} />
           <DealMeetings deal={deal} onAdd={() => setAddingMeeting(true)} />
           <StageHistory deal={deal} />

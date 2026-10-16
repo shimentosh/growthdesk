@@ -16,6 +16,7 @@ import { Button, IconButton } from "@/components/ui/Button";
 import { Callout } from "@/components/ui/Callout";
 import { Card } from "@/components/ui/Card";
 import { Checkbox } from "@/components/ui/Checkbox";
+import { COL, ColumnLabel } from "@/components/ui/columns";
 import { ConfirmDialog } from "@/components/ui/Dialog";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { ErrorState, QueryState } from "@/components/ui/ErrorState";
@@ -49,6 +50,7 @@ const PAGE_SIZES = [25, 50, 100, 200];
 const TH = "h-9 px-3 text-left text-xs font-medium whitespace-nowrap text-text-3";
 const TD = "px-3 py-2 align-middle";
 const STATUS_LABEL: Record<ListMembershipStatus, string> = { subscribed: "Subscribed", unsubscribed: "Unsubscribed", pending: "Pending" };
+const STATUS_ICON = { subscribed: COL.subscribed, unsubscribed: COL.unsubscribed, pending: COL.pending } satisfies Record<ListMembershipStatus, unknown>;
 const ListGlyph = ENTITY.lists.icon;
 
 const people = (n: number) => `${formatNumber(n)} ${n === 1 ? "person" : "people"}`;
@@ -204,19 +206,19 @@ function ListWorkspace({ list }: { list: MarketingList }) {
                 </th>
               )}
               <th scope="col" className={TH}>
-                Contact
+                <ColumnLabel icon={COL.person}>Contact</ColumnLabel>
               </th>
               <th scope="col" className={TH}>
-                Status
+                <ColumnLabel icon={COL.status}>Status</ColumnLabel>
               </th>
               <th scope="col" className={TH}>
-                Consent
+                <ColumnLabel icon={COL.consent}>Consent</ColumnLabel>
               </th>
               <th scope="col" className={TH}>
-                Source
+                <ColumnLabel icon={COL.source}>Source</ColumnLabel>
               </th>
               <th scope="col" className={TH}>
-                Since
+                <ColumnLabel icon={COL.date}>Since</ColumnLabel>
               </th>
             </tr>
           </thead>
@@ -360,6 +362,7 @@ function ListWorkspace({ list }: { list: MarketingList }) {
         <div role="tablist" aria-label="Status" className="-mx-1 flex gap-1 overflow-x-auto px-1 pb-1 lg:pb-0">
           {(["", ...LIST_MEMBERSHIP_STATUSES] as const).filter((s) => s !== "pending" || showPending).map((s) => {
             const n = s ? list.counts[s] : total;
+            const Icon = s ? STATUS_ICON[s] : COL.people;
             return (
               <button
                 key={s || "all"}
@@ -372,6 +375,7 @@ function ListWorkspace({ list }: { list: MarketingList }) {
                   state.status === s ? "bg-accent-soft text-accent-ink" : "text-text-2 hover:bg-hover hover:text-text",
                 )}
               >
+                <Icon aria-hidden className="size-3.5 shrink-0 opacity-70" strokeWidth={1.75} />
                 {s ? STATUS_LABEL[s] : "All"}
                 <span className={cn("tabular-nums", state.status === s ? "text-accent-ink/70" : "text-text-3")}>{formatNumber(n)}</span>
               </button>

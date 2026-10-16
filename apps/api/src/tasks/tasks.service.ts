@@ -104,7 +104,14 @@ export class TasksService {
       this.prisma.db.task.count({ where: { ...mine, dueAt: { lt: now } } }),
       this.prisma.db.task.count({ where: { ...mine, dueAt: { gte: end } } }),
       this.prisma.db.conversation.findMany({
-        where: { workspaceId: w.id, status: "open", unread: true, lastInboundAt: { not: null }, ...(holds(ctx, "records.view_all") ? {} : { OR: [{ assigneeId: user }, { assigneeId: null }] }) },
+        // Yours to answer: assigned to you, or unassigned with a contact you own (or nobody owns) — not the whole team's queue.
+        where: {
+          workspaceId: w.id,
+          status: "open",
+          unread: true,
+          lastInboundAt: { not: null },
+          OR: [{ assigneeId: user }, { assigneeId: null, contact: { ownerId: user } }, { assigneeId: null, contact: { ownerId: null } }, { assigneeId: null, contactId: null }],
+        },
         include: { contact: { select: { id: true, fullName: true } } },
         orderBy: { lastInboundAt: "asc" },
         take: 10,

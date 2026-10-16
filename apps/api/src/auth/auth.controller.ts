@@ -25,8 +25,13 @@ import { SessionService } from "./session.service.js";
 import { TwoFactorService } from "./two-factor.service.js";
 import { parseAttributionCookie } from "./signup-profile.js";
 import { currentTermsVersion } from "../lifecycle/terms.js";
+import { safeNextPath } from "./safe-next.js";
 
-/** Carries a Google sign-up's invitation token and consent tick across the OAuth round-trip (validated again on return). */
+/**
+ * Carries a Google sign-up's invitation token and consent tick, and the page to
+ * return to (`next`, e.g. /invite/<token>), across the OAuth round-trip
+ * (all validated again on return).
+ */
 const OAUTH_SIGNUP_COOKIE = "gd_oauth_signup";
 
 const attributionFrom = (res: Response) => parseAttributionCookie(res.req.cookies?.[ATTRIBUTION_COOKIE]);
@@ -110,6 +115,7 @@ export class AuthController {
   @AllowUnverified()
   @Patch("me")
   async updateMe(@Ctx() ctx: RequestContext, @Body(UpdateProfileInput) body: z.infer<typeof UpdateProfileInput>) {
+    // title, phone and outOfOfficeUntil (ISO, or null = back) sit beside name and timezone.
     await this.prisma.db.user.update({ where: { id: me(ctx).userId }, data: body });
     return { updated: true };
   }
@@ -192,15 +198,16 @@ export class AuthController {
   @Public()
   @Raw()
   @Get("google/start")
-  async googleStart(@Res() res: Response, @Q("invite") invite?: string, @Q("consent") consent?: string) {
+  async googleStart(@Res() res: Response, @Q("invite") invite?: string, @Q("consent") consent?: string, @Q("next") next?: string) {
     if (!(await this.auth.googleEnabled())) return res.redirect(302, "/login?error=google_unavailable");
     const nonce = newToken(16);
     const state = `${nonce}.${hmac(derivedKey("oauth-state"), nonce, "base64url")}`;
     const secure = this.sessions.secureCookies;
     res.cookie("gd_oauth_state", state, { httpOnly: true, sameSite: "lax", secure, maxAge: 10 * 60_000, path: "/" });
     // From the register page: kept for the callback, where the invitation is checked like any other.
-    const signup = { invite: typeof invite === "string" ? invite.slice(0, 200) : "", consent: consent === "1" };
-    if (signup.invite || signup.consent) {
+    // From the login or invitation page: where to land afterwards (same-site paths only).
+    const signup = { invite: typeof invite === "string" ? invite.slice(0, 200) : "", consent: consent === "1", next: safeNextPath(next) };
+    if (signup.invite || signup.consent || signup.next !== "/") {
       res.cookie(OAUTH_SIGNUP_COOKIE, JSON.stringify(signup), { httpOnly: true, sameSite: "lax", secure, maxAge: 10 * 60_000, path: "/" });
     } else {
       res.clearCookie(OAUTH_SIGNUP_COOKIE, { path: "/" });
@@ -218,7 +225,8 @@ export class AuthController {
     res.clearCookie(OAUTH_SIGNUP_COOKIE, { path: "/" });
     const [nonce, sig] = (state ?? "").split(".");
     const valid = nonce && sig && cookie === state && safeEqual(sig, hmac(derivedKey("oauth-state"), nonce, "base64url"));
-    if (!valid || !code) return res.redirect(302, "/login?error=google_state");
+    const back = signup.next !== "/" ? `&next=${encodeURIComponent(signup.next)}` : "";
+    if (!valid || !code) return res.redirect(302, `/login?error=google_state${back}`);
     try {
       const result = await this.auth.googleCallback(code, ctx, {
         inviteToken: signup.invite || undefined,
@@ -227,24 +235,24 @@ export class AuthController {
       });
       if ("challenge" in result) {
         this.twoFactor.setChallengeCookie(res, result.challenge);
-        return res.redirect(302, "/login?step=2fa");
+        return res.redirect(302, `/login?step=2fa${back}`);
       }
       this.sessions.setCookie(res, result.token);
-      return res.redirect(302, "/");
+      return res.redirect(302, signup.next);
     } catch (e) {
       // A sign-up the policy refused goes back to the register page, which explains the code.
       if (isApiError(e) && e.code.startsWith("signup_")) return res.redirect(302, `/register?error=${encodeURIComponent(e.code)}`);
-      return res.redirect(302, "/login?error=google_failed");
+      return res.redirect(302, `/login?error=google_failed${back}`);
     }
   }
 }
 
-function readSignupCookie(raw: unknown): { invite: string; consent: boolean } {
-  if (typeof raw !== "string" || raw.length > 400) return { invite: "", consent: false };
+function readSignupCookie(raw: unknown): { invite: string; consent: boolean; next: string } {
+  if (typeof raw !== "string" || raw.length > 1000) return { invite: "", consent: false, next: "/" };
   try {
-    const v = JSON.parse(raw) as { invite?: unknown; consent?: unknown };
-    return { invite: typeof v.invite === "string" ? v.invite.slice(0, 200) : "", consent: v.consent === true };
+    const v = JSON.parse(raw) as { invite?: unknown; consent?: unknown; next?: unknown };
+    return { invite: typeof v.invite === "string" ? v.invite.slice(0, 200) : "", consent: v.consent === true, next: safeNextPath(v.next) };
   } catch {
-    return { invite: "", consent: false };
+    return { invite: "", consent: false, next: "/" };
   }
 }

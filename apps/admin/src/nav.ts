@@ -130,7 +130,7 @@ export const NAV: NavGroup[] = [
         icon: UserPlus,
         keywords: ["signups", "sign-up", "waitlist", "invitations", "invite", "domains", "disposable", "verification", "trial"],
       },
-      { href: "/settings", label: "General settings", icon: Settings, keywords: ["maintenance", "outreach"] },
+      { href: "/settings", label: "General settings", icon: Settings, keywords: ["maintenance", "outreach", "email validation", "verify emails", "mx", "contacts"] },
       { href: "/audit", label: "Audit log", icon: ScrollText, keywords: ["events", "history"] },
     ],
   },

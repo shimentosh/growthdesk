@@ -108,7 +108,7 @@ export function FilterPopover({ state, update }: { state: ContactListState; upda
 
         <div className="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-3">
           <Field label="Owner">
-            <NativeSelect value={state.owner} onChange={(e) => update({ owner: e.target.value })} size="sm">
+            <NativeSelect value={state.owner} onChange={(e) => update({ owner: e.target.value })} size="sm" icon={<UserRound />}>
               <option value="">Anyone</option>
               <option value="me">Me</option>
               <option value="none">Unassigned</option>
@@ -121,10 +121,10 @@ export function FilterPopover({ state, update }: { state: ContactListState; upda
             </NativeSelect>
           </Field>
           <Field label="Has email">
-            <NativeSelect size="sm" value={state.hasEmail} onChange={(e) => update({ hasEmail: e.target.value as YesNo })} options={yesNo} />
+            <NativeSelect size="sm" value={state.hasEmail} icon={<Mail />} onChange={(e) => update({ hasEmail: e.target.value as YesNo })} options={yesNo} />
           </Field>
           <Field label="Has phone">
-            <NativeSelect size="sm" value={state.hasPhone} onChange={(e) => update({ hasPhone: e.target.value as YesNo })} options={yesNo} />
+            <NativeSelect size="sm" value={state.hasPhone} icon={<Phone />} onChange={(e) => update({ hasPhone: e.target.value as YesNo })} options={yesNo} />
           </Field>
         </div>
 

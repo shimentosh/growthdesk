@@ -32,6 +32,18 @@ export const QUEUES = {
   platformMarketing: "platform-marketing",
   /** Workspace data exports and the deleted-workspace purge (src/lifecycle). */
   lifecycle: "lifecycle",
+  /** AI calls (src/ai-calling): applying a finished call's result, and the sweep that fetches results a webhook missed. */
+  calls: "calls",
+  /** Calendar connections and booking pages (src/booking): token refresh, reminders, event sync. */
+  calendar: "calendar",
+  /** Lead scoring (src/scoring): recomputing contacts' scores as events arrive, and the nightly decay pass. */
+  scoring: "scoring",
+  /** Sales upkeep (src/forecast, src/quotes): stale-deal alerts, quote expiry. */
+  sales: "sales",
+  /** The daily / weekly digest for owners, admins and managers (src/digest). */
+  digest: "digest",
+  /** Discord notifications (src/discord): one job per delivery, and the sweep that re-queues lost ones. */
+  discord: "discord",
 } as const;
 export type QueueName = (typeof QUEUES)[keyof typeof QUEUES];
 
@@ -75,6 +87,12 @@ export class Queues implements OnModuleDestroy {
     @Inject(getQueueToken(QUEUES.platformMail)) platformMail: Queue,
     @Inject(getQueueToken(QUEUES.platformMarketing)) platformMarketing: Queue,
     @Inject(getQueueToken(QUEUES.lifecycle)) lifecycle: Queue,
+    @Inject(getQueueToken(QUEUES.calls)) calls: Queue,
+    @Inject(getQueueToken(QUEUES.calendar)) calendar: Queue,
+    @Inject(getQueueToken(QUEUES.scoring)) scoring: Queue,
+    @Inject(getQueueToken(QUEUES.sales)) sales: Queue,
+    @Inject(getQueueToken(QUEUES.digest)) digest: Queue,
+    @Inject(getQueueToken(QUEUES.discord)) discord: Queue,
   ) {
     this.byName = {
       engine,
@@ -90,6 +108,12 @@ export class Queues implements OnModuleDestroy {
       [QUEUES.platformMail]: platformMail,
       [QUEUES.platformMarketing]: platformMarketing,
       lifecycle,
+      calls,
+      calendar,
+      scoring,
+      sales,
+      digest,
+      discord,
     };
   }
 

@@ -21,18 +21,21 @@ export type DrawerProps = {
   side?: "right" | "left";
   /** Keep the page behind interactive-looking but inert (default) — set false for a non-modal side panel. */
   modal?: boolean;
+  /** Close on a click outside (default). Off for a side panel the page drives (e.g. a table's row preview), so clicking another row switches it. */
+  dismissOnOutside?: boolean;
   className?: string;
   children?: ReactNode;
 };
 
 /** A side sheet — record previews from a table, quick edits. Full height, scrolling body. */
-export function Drawer({ open, onOpenChange, title, icon, description, actions, footer, width = "md", side = "right", modal = true, className, children }: DrawerProps) {
+export function Drawer({ open, onOpenChange, title, icon, description, actions, footer, width = "md", side = "right", modal = true, dismissOnOutside = true, className, children }: DrawerProps) {
   return (
     <D.Root open={open} onOpenChange={onOpenChange} modal={modal}>
       <D.Portal>
         {modal && <D.Overlay className="fixed inset-0 z-50 bg-scrim animate-fade-in" />}
         <D.Content
           {...(description ? {} : { "aria-describedby": undefined })}
+          {...(dismissOnOutside ? {} : { onInteractOutside: (e: Event) => e.preventDefault() })}
           className={cn(
             "fixed inset-y-0 z-50 flex w-full flex-col border-line-strong bg-popover shadow-sheet",
             side === "right" ? "right-0 border-l animate-slide-in-right" : "left-0 border-r animate-slide-in-left",

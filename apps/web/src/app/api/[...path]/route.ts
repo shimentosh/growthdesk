@@ -7,6 +7,8 @@
  * CORS, no third-party cookies, and the API can stay on loopback.
  *
  *   /api/auth/me  →  ${API_URL}/v1/auth/me
+ *   /api/mcp      →  ${API_URL}/mcp      (the MCP endpoint lives outside /v1)
+ *   /api/oauth/token, /api/.well-known/oauth-…  →  ${API_URL}/oauth/…, /.well-known/…  (MCP OAuth)
  *
  * The body is forwarded as the exact bytes received: payment-provider
  * webhooks (/api/webhooks/billing/:provider) are verified by a signature over
@@ -18,6 +20,17 @@ export const runtime = "nodejs";
 
 const API_VERSION = "/v1";
 const BASE_PATH = "/api";
+/** API paths outside the /v1 prefix (apps/api/src/app.setup.ts). */
+const UNVERSIONED = new Set(["/mcp"]);
+/**
+ * And path prefixes outside it: MCP's OAuth discovery and endpoints
+ * (apps/api/src/mcp/oauth). /api/.well-known/* and /api/oauth/* are the issuer's
+ * own paths when PUBLIC_API_URL is unset (issuer = PUBLIC_APP_URL/api); the
+ * root /.well-known/oauth-* paths reach this handler through next.config.ts rewrites.
+ */
+const UNVERSIONED_PREFIXES = ["/.well-known/", "/oauth/"];
+
+const unversioned = (path: string) => UNVERSIONED.has(path) || UNVERSIONED_PREFIXES.some((p) => path.startsWith(p));
 
 const target = () => (process.env.API_URL ?? "http://127.0.0.1:3601").replace(/\/$/, "");
 
@@ -50,7 +63,7 @@ const DROP_FROM_RESPONSE = new Set([
 async function proxy(request: Request): Promise<Response> {
   const url = new URL(request.url);
   const asked = url.pathname.startsWith(BASE_PATH) ? url.pathname.slice(BASE_PATH.length) || "/" : url.pathname;
-  const path = `${API_VERSION}${asked}`;
+  const path = unversioned(asked) ? asked : `${API_VERSION}${asked}`;
 
   const headers = new Headers();
   request.headers.forEach((value, key) => {

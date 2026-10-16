@@ -113,7 +113,9 @@ export function renderPlatformTemplate(content: PlatformTemplateContent, vars: R
   for (const [k, v] of Object.entries(vars)) if (v !== undefined && v !== null) all[k] = String(v);
   const bodyVars = Object.fromEntries(Object.entries(all).map(([k, v]) => [k, k === "action_url" ? v : defuse(v)]));
   const subject = fill(content.subject, all).replace(/[\r\n]+/g, " ").trim().slice(0, 998);
-  const { html, text } = renderEmail(content.blocks, {
+  // A text or quote block made only of an optional variable (the inviter's note) is left out when that variable is empty.
+  const blocks = (content.blocks as EmailBlock[]).filter((b) => !((b.type === "text" || b.type === "quote") && !fill(b.text, bodyVars).trim()));
+  const { html, text } = renderEmail(blocks, {
     preheader: content.preheader,
     vars: bodyVars,
     accent: brand.primaryColor || undefined,

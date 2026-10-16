@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { ListQuery, PRIORITIES, TASK_TYPES, isoDate, optionalUuid, text } from "@growthdesk/shared";
+import { AI_REPLY_CATEGORIES, ListQuery, PRIORITIES, TASK_TYPES, isoDate, optionalUuid, text } from "@growthdesk/shared";
 
 /** Query strings carry booleans as text; anything other than "true"/"false" is a 400. */
 const queryBoolean = z.enum(["true", "false"]).transform((v) => v === "true");
@@ -21,6 +21,8 @@ export const ConversationListQuery = ListQuery.extend({
   tag: z.union([z.literal("none"), z.string().uuid()]).optional(),
   /** A channel integration — e.g. one live-chat widget. */
   integrationId: z.string().uuid().optional(),
+  /** The AI reply label (Conversation.aiCategory), e.g. "interested". */
+  aiCategory: z.enum(AI_REPLY_CATEGORIES).optional(),
   q: text(200).optional(),
 });
 export type ConversationListQueryT = z.infer<typeof ConversationListQuery>;

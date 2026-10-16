@@ -6,7 +6,8 @@ import { TENANT_MODELS } from "../prisma/tenant-guard.js";
  * cascading through a whole workspace at once, and so the two Restrict
  * relations (Deal → Pipeline/PipelineStage, Campaign → Sequence) never block.
  * The workspace row itself goes last and cascades the few non-tenant rows
- * left (memberships, invitations, usage counters, API keys, support grants).
+ * left (memberships, invitations, usage counters, API keys, MCP tokens and
+ * OAuth codes, support grants).
  *
  * A unit test keeps this list equal to the tenant guard's TENANT_MODELS, so a
  * new tenant table cannot be forgotten by the purge.
@@ -29,17 +30,38 @@ export const PURGE_ORDER = [
   "EspConnection",
   "WorkflowRun",
   "Workflow",
+  "DiscordDelivery",
+  "DiscordRule",
+  "DiscordTemplate",
+  "DiscordUnroutedEvent",
+  "DiscordSettings",
+  "DiscordDestination",
+  "DiscordConnection",
   "WebhookDelivery",
   "WebhookEndpoint",
   "DomainEvent",
   "Notification",
   "IdempotencyKey",
+  "McpPendingAction",
+  "McpCall",
   "AiUsage",
   "AiCache",
   "Call",
   "CallScript",
+  "CallAgent",
+  "QuoteLineItem",
+  "Quote",
+  "Product",
+  "SalesTarget",
+  "ScoringRule",
+  "Attachment",
+  "ConversationRead",
+  "TeamMember",
+  "Team",
+  "CalendarConnection",
   "Task",
   "Meeting",
+  "BookingPage",
   "DealStageChange",
   "Deal",
   "Campaign",

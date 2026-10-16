@@ -1,5 +1,6 @@
 import { Module } from "@nestjs/common";
 import { ChannelsModule } from "../channels/channels.module.js";
+import { AiCallingModule } from "../ai-calling/ai-calling.module.js";
 import { TemplatesController } from "./templates.controller.js";
 import { TemplatesService } from "./templates.service.js";
 import { SequencesController } from "./sequences.controller.js";
@@ -13,11 +14,12 @@ import { CampaignsService } from "./campaigns.service.js";
 /**
  * Templates, sequences, campaigns and the sequence engine. Email, CRM,
  * events, notifications, entitlements and queues come from global modules;
- * ChannelsModule provides CHAT_SENDER for WhatsApp/Telegram steps. The
+ * ChannelsModule provides CHAT_SENDER for WhatsApp/Telegram steps,
+ * AiCallingModule AI_CALLER for AI call steps. The
  * worker-side processors are in campaigns.processors.ts.
  */
 @Module({
-  imports: [ChannelsModule],
+  imports: [ChannelsModule, AiCallingModule],
   controllers: [TemplatesController, SequencesController, CampaignsController],
   providers: [TemplatesService, SequencesService, StepRulesService, EnrollmentService, EngineService, CampaignsService],
   exports: [TemplatesService, SequencesService, StepRulesService, EnrollmentService, EngineService, CampaignsService],

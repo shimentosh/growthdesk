@@ -138,5 +138,29 @@ export type InboxFacets = {
   widgets: { id: string; name: string; count: number }[];
 };
 
+/** `InboxSummaryService.summary()` — GET /inbox/summary. "Inbox today", over the conversations the caller can see. */
+export type InboxSummary = {
+  unread: number;
+  /** Open, not snoozed, and the contact wrote last. */
+  needsReply: number;
+  /** Snoozed, waking before the end of today (workspace time zone). */
+  snoozedToday: number;
+  mine: number;
+  /** The five longest-waiting of needsReply, oldest first. */
+  oldest: {
+    id: string;
+    channel: Channel;
+    subject: string;
+    displayName: string;
+    handle: string;
+    aiCategory: string;
+    lastInboundAt: string;
+    contact: { id: string; fullName: string | null; email: string | null } | null;
+    assignee: { id: string; name: string; email: string } | null;
+  }[];
+  /** Open, not snoozed, per AI reply label (largest first). */
+  labels: { category: string; count: number }[];
+};
+
 /** `unreadCount()` — GET /inbox/unread-count. Open, unread and not snoozed. */
 export type InboxUnreadCount = { total: number; byChannel: Record<InboxChannel, number> };

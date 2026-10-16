@@ -54,6 +54,7 @@ import { replyTrackingProblem } from "../mailboxes/mailbox-upkeep.js";
 import { OutboundEmailService } from "../messaging/outbound-email.service.js";
 import { testUnsubscribeUrl } from "../messaging/tracking.js";
 import { APP_CONFIG, type AppConfig } from "../config/config.js";
+import { AiCallsService } from "../ai-calling/ai-calls.service.js";
 
 // ─── Request schemas ─────────────────────────────────────────────────────────
 
@@ -177,6 +178,7 @@ export class CampaignsService {
     private readonly activity: ActivityService,
     private readonly extras: CrmExtrasService,
     private readonly outbound: OutboundEmailService,
+    private readonly aiCalls: AiCallsService,
     @Inject(APP_CONFIG) private readonly config: AppConfig,
   ) {}
 
@@ -613,6 +615,25 @@ export class CampaignsService {
           : null;
         if (keepOpen) warnings.push(why ?? "The starting audience is empty; the campaign waits for people a workflow or a teammate enrolls.");
         else problems.push({ field: "audience", message: why ?? "The audience has no contacts." });
+      }
+    }
+
+    // AI calls: Cartesia must be set up, and only people with recorded consent and a number are called (the rest skip the step).
+    if (steps.some((s) => s.type === "ai_call")) {
+      const state = await this.aiCalls.connection(w.id);
+      if (!state.conn) problems.push({ field: "steps", message: state.problem, fix: { label: "Set up AI calling", href: "/settings/calling" } });
+      if (eligible.length) {
+        let callable = 0;
+        for (let i = 0; i < eligible.length; i += 5000) {
+          callable += await this.prisma.db.contact.count({ where: { workspaceId: w.id, id: { in: eligible.slice(i, i + 5000) }, consentStatus: "granted", phone: { not: null } } });
+        }
+        if (callable < eligible.length) {
+          warnings.push(
+            callable
+              ? `${callable.toLocaleString()} of ${eligible.length.toLocaleString()} people have recorded consent and a phone number; the AI call step is skipped for the rest.`
+              : "Nobody in the audience has recorded consent to be called and a phone number, so the AI call step will be skipped for everyone.",
+          );
+        }
       }
     }
 

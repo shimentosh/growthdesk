@@ -1,13 +1,15 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
-import { Ban, CalendarCheck, CalendarClock, CalendarPlus, CalendarX, Ellipsis, Handshake, ListFilter, MapPin, Pencil, User, UserRound, Video } from "lucide-react";
+import { Suspense, useState } from "react";
+import { Ban, Bot, CalendarCheck, CalendarClock, CalendarPlus, CalendarRange, CalendarX, CircleDot, Ellipsis, Handshake, ListFilter, Mail, MapPin, Pencil, User, UserRound, Video, X } from "lucide-react";
 import { labelOf, MEETING_STATUSES, type MeetingStatus } from "@growthdesk/shared";
 import { Segmented, useSearchState } from "@/components/pipeline/controls";
 import { MeetingModal } from "@/components/pipeline/MeetingModal";
 import { useMembers } from "@/components/pickers/Pickers";
-import { StatusBadge } from "@/components/ui/Badge";
+import { CalendarHeaderControl, CalendarLanding } from "@/components/booking/CalendarConnect";
+import { MeetingsTabs } from "@/components/booking/MeetingsTabs";
+import { Badge, StatusBadge } from "@/components/ui/Badge";
 import { Button, IconButton } from "@/components/ui/Button";
 import { Callout } from "@/components/ui/Callout";
 import { Card } from "@/components/ui/Card";
@@ -23,7 +25,8 @@ import { cn } from "@/lib/cn";
 import { dayKey, utcToZonedInput, zonedInputToUtc } from "@/lib/format";
 import { useApiMutation, useApiQuery } from "@/lib/query";
 import { useFormat, useWorkspace } from "@/lib/session";
-import type { Meeting, MeetingRow } from "@/lib/types/pipeline";
+import type { Meeting } from "@/lib/types/pipeline";
+import type { BookedMeetingRow as MeetingRow } from "@/lib/types/booking";
 
 /** GET /meetings returns at most this many rows. */
 const API_LIMIT = 500;
@@ -90,13 +93,20 @@ function Meetings() {
         title="Meetings"
         description={`Times in ${ws.timezone}.`}
         actions={
-          canWrite ? (
-            <Button variant="primary" icon={<CalendarPlus />} onClick={() => setCreating(true)}>
-              Record meeting
-            </Button>
-          ) : undefined
+          <>
+            <CalendarHeaderControl />
+            {canWrite && (
+              <Button variant="primary" icon={<CalendarPlus />} onClick={() => setCreating(true)}>
+                Record meeting
+              </Button>
+            )}
+          </>
         }
       />
+      <Suspense fallback={null}>
+        <CalendarLanding />
+      </Suspense>
+      <MeetingsTabs />
       <div className="mb-4 flex flex-wrap items-center gap-2">
         <Segmented
           aria-label="Period"
@@ -110,6 +120,7 @@ function Meetings() {
         {when === "past" && (
           <NativeSelect
             aria-label="Range"
+            icon={<CalendarClock />}
             className="w-auto min-w-40"
             value={range}
             onChange={(e) =>
@@ -122,11 +133,17 @@ function Meetings() {
         )}
         <NativeSelect
           aria-label="Status"
+          icon={<CircleDot />}
           className="w-auto min-w-36"
           value={status}
           onChange={(e) => search.set({ status: e.target.value || null })}
           options={[{ value: "", label: "Any status" }, ...MEETING_STATUSES.map((s) => ({ value: s, label: labelOf(s) }))]}
         />
+        {(status || (when === "past" && range !== "30")) && (
+          <Button variant="ghost" size="sm" icon={<X />} onClick={() => search.set({ status: null, range: null })}>
+            Clear filters
+          </Button>
+        )}
       </div>
 
       <QueryState query={meetings} loading={<SkeletonText lines={6} />}>
@@ -234,6 +251,7 @@ function MeetingItem({
         <div className="flex flex-wrap items-center gap-2">
           <span className="text-sm font-medium text-text">{m.title}</span>
           <StatusBadge value={m.status} />
+          <SourceBadge meeting={m} />
         </div>
         <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-text-3">
           {m.contact && (
@@ -247,6 +265,18 @@ function MeetingItem({
               <Handshake aria-hidden className="size-3" />
               {m.deal.name}
             </Link>
+          )}
+          {m.attendeeEmail && !m.contact && (
+            <span className="inline-flex items-center gap-1" title="Booked by">
+              <Mail aria-hidden className="size-3" />
+              {m.attendeeName ? `${m.attendeeName} · ${m.attendeeEmail}` : m.attendeeEmail}
+            </span>
+          )}
+          {m.conferenceUrl && m.conferenceUrl !== m.location && (
+            <a href={m.conferenceUrl} target="_blank" rel="noreferrer noopener" className="inline-flex items-center gap-1 text-accent-hi hover:text-accent">
+              <Video aria-hidden className="size-3 shrink-0" />
+              Join video call
+            </a>
           )}
           {m.location &&
             (isLink ? (
@@ -268,6 +298,10 @@ function MeetingItem({
           )}
         </div>
         {m.notes && <p className="mt-1 line-clamp-2 text-xs whitespace-pre-wrap text-text-2">{m.notes}</p>}
+        {m.answers && m.answers.length > 0 && (
+          <p className="mt-1 line-clamp-2 text-xs text-text-2">{m.answers.map((a) => `${a.question}: ${typeof a.answer === "boolean" ? (a.answer ? "Yes" : "No") : a.answer}`).join(" · ")}</p>
+        )}
+        {m.status === "canceled" && m.cancelReason && <p className="mt-1 text-xs text-text-3">Canceled: {m.cancelReason}</p>}
       </div>
       {canWrite && (
         <DropdownMenu>
@@ -303,5 +337,30 @@ function MeetingItem({
         </DropdownMenu>
       )}
     </li>
+  );
+}
+
+/** Where a meeting came from: a booking page, an AI call, or recorded by hand. */
+function SourceBadge({ meeting: m }: { meeting: MeetingRow }) {
+  if (m.source === "booking") {
+    return (
+      <Badge tone="info" quiet title={m.bookingPage ? `Booked through “${m.bookingPage.title}”` : "Booked through a booking page"}>
+        <CalendarRange aria-hidden className="size-3" />
+        Booked
+      </Badge>
+    );
+  }
+  if (m.source === "ai_call") {
+    return (
+      <Badge tone="info" quiet title="Booked by an AI call">
+        <Bot aria-hidden className="size-3" />
+        AI call
+      </Badge>
+    );
+  }
+  return (
+    <Badge quiet title="Recorded in Growthdesk">
+      Manual
+    </Badge>
   );
 }

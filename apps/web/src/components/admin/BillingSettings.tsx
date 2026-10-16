@@ -18,6 +18,7 @@ import { Badge, StatusBadge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { Callout } from "@/components/ui/Callout";
 import { Card, CardBody, CardFooter, CardHeader } from "@/components/ui/Card";
+import { COL, ColumnLabel } from "@/components/ui/columns";
 import { ConfirmDialog } from "@/components/ui/Dialog";
 import { QueryState } from "@/components/ui/ErrorState";
 import { Field, FormError } from "@/components/ui/Field";
@@ -362,10 +363,10 @@ function Invoices({ data }: { data: BillingOverview }) {
         <table className={table.table}>
           <thead>
             <tr>
-              <th className={table.th}>Invoice</th>
-              <th className={table.th}>Issued</th>
-              <th className={table.th}>Status</th>
-              <th className={cn(table.th, "text-right")}>Amount</th>
+              <th className={table.th}><ColumnLabel icon={COL.invoice}>Invoice</ColumnLabel></th>
+              <th className={table.th}><ColumnLabel icon={COL.created}>Issued</ColumnLabel></th>
+              <th className={table.th}><ColumnLabel icon={COL.status}>Status</ColumnLabel></th>
+              <th className={cn(table.th, "text-right")}><ColumnLabel icon={COL.amount}>Amount</ColumnLabel></th>
               <th className={table.th}>
                 <span className="sr-only">Links</span>
               </th>

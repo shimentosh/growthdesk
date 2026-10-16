@@ -6,6 +6,9 @@ import { EventsService } from "../core/events.service.js";
 import { Queues } from "../queues/queues.js";
 import { MAX_WORKFLOW_DEPTH } from "./workflow-executor.service.js";
 import { DELIVERY_ATTEMPTS, DELIVERY_BACKOFF_MS } from "./webhook-delivery.service.js";
+import { ROUTING_DELAY_MS, ROUTING_EVENTS } from "./lead-routing.service.js";
+import { DiscordPlanner } from "../discord/discord-dispatch.js";
+import { discordJobOptions } from "../discord/discord-delivery.service.js";
 
 export const DISPATCH_BATCH = 200;
 
@@ -19,7 +22,17 @@ type ClaimedEvent = {
   occurredAt: Date;
 };
 
-export type DispatchResult = { events: number; runs: { workspaceId: string; runId: string }[]; deliveries: { workspaceId: string; deliveryId: string }[] };
+export type DispatchResult = {
+  events: number;
+  runs: { workspaceId: string; runId: string }[];
+  deliveries: { workspaceId: string; deliveryId: string }[];
+  /** Contacts lead routing should look at, per workspace (only workspaces that route leads). */
+  routes: { workspaceId: string; contactIds: string[]; key: string }[];
+  /** Conversations a reply came in on, to give to the contact's owner if nobody has them. */
+  inboxRoutes: { workspaceId: string; conversationIds: string[]; key: string }[];
+  /** Discord notifications planned by enabled rules (src/discord). */
+  discord: { workspaceId: string; deliveryId: string }[];
+};
 
 export const deliveryJobOptions = (deliveryId: string) => ({
   jobId: `delivery-${deliveryId}`,
@@ -32,15 +45,16 @@ export const deliveryJobOptions = (deliveryId: string) => ({
  *
  * Each batch runs in one transaction: the events are claimed with
  * FOR UPDATE SKIP LOCKED (so several workers can drain at once without
- * handing out the same event twice), their WorkflowRun and WebhookDelivery
- * rows are created — unique per (workflow, event) and (endpoint, event), so
- * a replayed event creates nothing new — and only then is dispatchedAt set.
+ * handing out the same event twice), their WorkflowRun, WebhookDelivery and
+ * DiscordDelivery rows are created — unique per (workflow, event),
+ * (endpoint, event) and (rule, channel, event), so a replayed event creates
+ * nothing new — and only then is dispatchedAt set.
  * If the process dies anywhere inside, the transaction rolls back and the
  * events are claimed again later: nothing is lost and nothing doubles.
  *
  * Jobs are enqueued after the commit. A crash between the commit and the
  * enqueue leaves a pending run or delivery without a job; the automation
- * `resume` sweep re-queues those.
+ * `resume` sweep re-queues those (Discord deliveries: the `discord` queue's own sweep).
  */
 @Injectable()
 export class DispatcherService {
@@ -54,7 +68,9 @@ export class DispatcherService {
   ) {}
 
   async dispatchBatch(limit = DISPATCH_BATCH): Promise<DispatchResult> {
-    const result: DispatchResult = { events: 0, runs: [], deliveries: [] };
+    const result: DispatchResult = { events: 0, runs: [], deliveries: [], routes: [], inboxRoutes: [], discord: [] };
+    const inbox = new Map<string, { conversationIds: Set<string>; key: string }>();
+    const routing = new Map<string, { contactIds: Set<string>; key: string }>();
     const features = new Map<string, PlanFeatures | null>();
     const featuresFor = async (workspaceId: string, billingAccountId: string, status: string) => {
       if (!features.has(workspaceId)) {
@@ -78,10 +94,11 @@ export class DispatcherService {
         if (!rows.length) return;
 
         const workspaces = new Map(
-          (await tx.workspace.findMany({ where: { id: { in: [...new Set(rows.map((r) => r.workspaceId))] } }, select: { id: true, billingAccountId: true, status: true } })).map((w) => [w.id, w]),
+          (await tx.workspace.findMany({ where: { id: { in: [...new Set(rows.map((r) => r.workspaceId))] } }, select: { id: true, billingAccountId: true, status: true, settings: true } })).map((w) => [w.id, w]),
         );
         const workflowCache = new Map<string, { id: string }[]>();
         const endpointCache = new Map<string, { id: string }[]>();
+        const discord = new DiscordPlanner(tx);
 
         for (const e of rows) {
           const w = workspaces.get(e.workspaceId);
@@ -89,6 +106,19 @@ export class DispatcherService {
           const payload = (e.payload && typeof e.payload === "object" ? e.payload : {}) as Record<string, unknown>;
           const depth = Number(payload.workflowDepth ?? 0) || 0;
           const key = `${e.workspaceId}|${e.type}`;
+
+          // A reply on a conversation: it goes to the contact's owner if nobody has it (every workspace).
+          if (e.type === "reply.received" && e.subjectType === "conversation" && e.subjectId) {
+            const r = inbox.get(e.workspaceId) ?? { conversationIds: new Set<string>(), key: e.id };
+            r.conversationIds.add(e.subjectId);
+            inbox.set(e.workspaceId, r);
+          }
+          // A new or newly listed contact in a workspace that routes leads: route it once this batch is committed.
+          if (ROUTING_EVENTS.has(e.type) && e.subjectType === "contact" && e.subjectId && (w.settings as { leadRouting?: { enabled?: boolean } } | null)?.leadRouting?.enabled) {
+            const r = routing.get(e.workspaceId) ?? { contactIds: new Set<string>(), key: e.id };
+            r.contactIds.add(e.subjectId);
+            routing.set(e.workspaceId, r);
+          }
 
           if (!workflowCache.has(key)) {
             workflowCache.set(key, await tx.workflow.findMany({ where: { workspaceId: e.workspaceId, trigger: e.type, enabled: true, deletedAt: null }, select: { id: true } }));
@@ -117,9 +147,15 @@ export class DispatcherService {
             });
             for (const d of deliveries) result.deliveries.push({ workspaceId: e.workspaceId, deliveryId: d.id });
           }
+
+          await discord.add(e);
         }
+        await discord.flush();
+        result.discord = discord.deliveries;
 
         await tx.domainEvent.updateMany({ where: { id: { in: rows.map((r) => r.id) } }, data: { dispatchedAt: new Date() } });
+        for (const [workspaceId, r] of routing) result.routes.push({ workspaceId, contactIds: [...r.contactIds], key: r.key });
+        for (const [workspaceId, r] of inbox) result.inboxRoutes.push({ workspaceId, conversationIds: [...r.conversationIds], key: r.key });
       },
       { timeout: 120_000, maxWait: 10_000 },
     );
@@ -127,8 +163,17 @@ export class DispatcherService {
     for (const r of result.runs) {
       await this.queues.add("automation", "run", r, { jobId: `run-${r.runId}`, attempts: 1 });
     }
+    for (const r of result.inboxRoutes) {
+      await this.queues.add("automation", "assign-conversations", { workspaceId: r.workspaceId, conversationIds: r.conversationIds }, { jobId: `inbox-${r.key}`, attempts: 3, backoff: { type: "exponential", delay: 5_000 } });
+    }
+    for (const r of result.routes) {
+      await this.queues.add("automation", "route", { workspaceId: r.workspaceId, contactIds: r.contactIds }, { jobId: `route-${r.key}`, delay: ROUTING_DELAY_MS, attempts: 3, backoff: { type: "exponential", delay: 5_000 } });
+    }
     for (const d of result.deliveries) {
       await this.queues.add("webhooks", "deliver", d, deliveryJobOptions(d.deliveryId));
+    }
+    for (const d of result.discord) {
+      await this.queues.add("discord", "deliver", d, discordJobOptions(d.deliveryId));
     }
     return result;
   }

@@ -1,16 +1,18 @@
 "use client";
 
-import { Suspense, useState } from "react";
+import { Suspense, useState, type CSSProperties } from "react";
+import { AI_REPLY_CATEGORIES } from "@growthdesk/shared";
 import { ComposeModal } from "@/components/inbox/ComposeModal";
 import { ContactContext } from "@/components/inbox/ContactContext";
 import { ConversationList, type InboxFilters } from "@/components/inbox/ConversationList";
 import { ConversationPane } from "@/components/inbox/ConversationPane";
 import { InboxRail } from "@/components/inbox/InboxRail";
+import { InboxToday } from "@/components/inbox/InboxToday";
+import { ResizeHandle } from "@/components/inbox/ResizeHandle";
 import { useInboxStream } from "@/components/inbox/useInboxStream";
+import { isBoolean, useStoredState } from "@/components/inbox/useStoredState";
 import { useSearchState } from "@/components/pipeline/controls";
 import { Drawer } from "@/components/ui/Drawer";
-import { EmptyState } from "@/components/ui/EmptyState";
-import { ENTITY } from "@/components/ui/icons";
 import { RequirePermission } from "@/components/ui/RequirePermission";
 import { LoadingBlock } from "@/components/ui/Skeleton";
 import { cn } from "@/lib/cn";
@@ -20,8 +22,10 @@ import { useWorkspace } from "@/lib/session";
  * The unified inbox: filter rail | conversations | thread | contact context.
  * The rail shows from `lg` (a drawer below that). Below the
  * `nav` breakpoint it is one pane at a time (list, or the open conversation
- * with a back button); the context pane shows from `xl`, and in a drawer
- * below that. The open conversation is ?c=<id> (notification links also use
+ * with a back button); above it the list can be dragged wider (remembered),
+ * and with nothing open the detail pane shows "Inbox today". The context pane
+ * shows from `xl` (folded from the conversation header, remembered), and in a
+ * drawer below that. The open conversation is ?c=<id> (notification links also use
  * ?conversation=<id>, and /inbox/<id> forwards here); filters live in the
  * URL too, so a link or a reload lands on the same view.
  */
@@ -40,7 +44,10 @@ const ASSIGNEES = ["all", "me", "none"] as const;
 const CHANNELS = ["email", "whatsapp", "telegram", "web"] as const;
 const UUID = /^[0-9a-f-]{36}$/i;
 
-const { icon: InboxGlyph, tint: inboxTint } = ENTITY.inbox;
+/** The conversation list's width from `nav` up: dragged between these, remembered per browser. */
+const LIST_MIN = 320;
+const LIST_MAX = 640;
+const isListWidth = (v: unknown): v is number => typeof v === "number" && v >= LIST_MIN && v <= LIST_MAX;
 
 function Inbox() {
   const ws = useWorkspace();
@@ -48,6 +55,10 @@ function Inbox() {
   const [details, setDetails] = useState(false);
   const [composing, setComposing] = useState(false);
   const [railOpen, setRailOpen] = useState(false);
+  const [listWidth, setListWidth] = useStoredState("gd.inbox.listWidth", 360, isListWidth);
+  const [dragWidth, setDragWidth] = useState<number | null>(null);
+  // The contact pane beside an open conversation (from `xl`); below that it is a drawer.
+  const [contactPane, setContactPane] = useStoredState("gd.inbox.contactPane", true, isBoolean);
   useInboxStream();
 
   const pick = <T extends string>(value: string, allowed: readonly T[], fallback: T): T => ((allowed as readonly string[]).includes(value) ? (value as T) : fallback);
@@ -59,6 +70,7 @@ function Inbox() {
     campaign: search.get("campaign") === "any" || UUID.test(search.get("campaign")) ? search.get("campaign") : "",
     tag: search.get("tag") === "none" || UUID.test(search.get("tag")) ? search.get("tag") : "",
     widget: UUID.test(search.get("widget")) ? search.get("widget") : "",
+    label: (AI_REPLY_CATEGORIES as readonly string[]).includes(search.get("label")) ? search.get("label") : "",
     q: search.get("q"),
     page: Math.max(1, Number(search.get("page")) || 1),
   };
@@ -74,12 +86,32 @@ function Inbox() {
       campaign: next.campaign || null,
       tag: next.tag || null,
       widget: next.widget || null,
+      label: next.label || null,
       q: next.q || null,
       page: next.page > 1 ? String(next.page) : null,
     });
   };
   const select = (id: string | null) => search.set({ c: id, conversation: null });
-  const activeFilters = [filters.assignee !== "all", filters.channel !== "", filters.unread, filters.campaign !== "", filters.tag !== "", filters.widget !== ""].filter(Boolean).length;
+  const activeFilters = [
+    filters.assignee !== "all",
+    filters.channel !== "",
+    filters.unread,
+    filters.campaign !== "",
+    filters.tag !== "",
+    filters.widget !== "",
+    filters.label !== "",
+  ].filter(Boolean).length;
+  // The header's contact button: folds the side pane where it shows (xl), else opens the drawer.
+  const showDetails = () => {
+    let wide = false;
+    try {
+      wide = window.matchMedia("(min-width: 80rem)").matches;
+    } catch {
+      // No matchMedia: use the drawer.
+    }
+    if (wide) setContactPane(!contactPane);
+    else setDetails(true);
+  };
 
   return (
     <div className="flex h-full min-h-0">
@@ -87,7 +119,10 @@ function Inbox() {
         <InboxRail filters={filters} onFilters={setFilters} />
       </aside>
 
-      <div className={cn("w-full shrink-0 flex-col border-r border-line bg-panel nav:flex nav:w-[320px] lg:w-[360px]", selected ? "hidden" : "flex")}>
+      <div
+        style={{ "--list-w": `${dragWidth ?? listWidth}px` } as CSSProperties}
+        className={cn("w-full shrink-0 flex-col border-r border-line bg-panel nav:flex nav:w-[clamp(320px,var(--list-w),50vw)]", selected ? "hidden" : "flex")}
+      >
         <ConversationList
           filters={filters}
           onFilters={setFilters}
@@ -99,21 +134,28 @@ function Inbox() {
         />
       </div>
 
+      <ResizeHandle
+        label="Resize the conversation list"
+        className="hidden nav:block"
+        width={dragWidth ?? listWidth}
+        min={LIST_MIN}
+        max={LIST_MAX}
+        onChange={setDragWidth}
+        onCommit={(w) => {
+          setListWidth(w);
+          setDragWidth(null);
+        }}
+      />
+
       <div className={cn("min-w-0 flex-1 flex-col bg-bg", selected ? "flex" : "hidden nav:flex")}>
         {selected ? (
-          <ConversationPane key={selected} id={selected} onBack={() => select(null)} onShowDetails={() => setDetails(true)} />
+          <ConversationPane key={selected} id={selected} onBack={() => select(null)} onShowDetails={showDetails} detailsShown={contactPane} />
         ) : (
-          <EmptyState
-            className="h-full"
-            icon={<InboxGlyph />}
-            tint={inboxTint}
-            title="Choose a conversation"
-            description="Email and campaign replies, WhatsApp and Telegram messages, and website live chats, in one place. Pick one from the list to read and reply."
-          />
+          <InboxToday onFilters={setFilters} onSelect={select} />
         )}
       </div>
 
-      {selected && (
+      {selected && contactPane && (
         <aside aria-label="Contact and details" className="hidden w-[300px] shrink-0 overflow-y-auto border-l border-line bg-panel xl:block">
           <ContactContext id={selected} />
         </aside>

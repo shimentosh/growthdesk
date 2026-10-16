@@ -30,6 +30,10 @@ export const API_SCOPE_INFO: Record<ApiScope, { label: string; description: stri
     label: "Read campaigns",
     description: "List campaigns, fetch one, and list its enrollments.",
   },
+  "products:write": {
+    label: "Sync products",
+    description: "Keep the product catalog in step with another system (the client portal's services): creates, updates and archives the products that system owns.",
+  },
 };
 
 /** How many active (unrevoked, unexpired) keys a workspace may hold. */
@@ -42,7 +46,7 @@ export const MAX_LEADS_PER_REQUEST = 100;
 export const IDEMPOTENCY_TTL_HOURS = 24;
 
 /** Where an ingested lead says it came from; recorded on the contact's source (ContactSource.source). */
-export const LEAD_SOURCES = ["business_os", "api"] as const;
+export const LEAD_SOURCES = ["business_os", "api", "clientdesk"] as const;
 
 /** A company named by a lead. Matched by domain, then by normalised name; created when neither exists. */
 export const LeadCompanyInput = z.object({
@@ -93,6 +97,11 @@ export const LeadInput = LeadContactFields.extend({
   /** Added as a note on the contact. */
   notes: text(5000).optional(),
   data: sourceData.optional(),
+  /**
+   * The lead list this lead belongs on, by name: the active list with that
+   * name (ignoring case) or a new one. Overrides the request's listName.
+   */
+  listName: requiredText(120).optional(),
 });
 export type LeadInputT = z.infer<typeof LeadInput>;
 
@@ -107,6 +116,8 @@ export const LeadIngestInput = z.object({
   campaignId: z.string().uuid().optional(),
   /** Subscribe every lead that resolves to a contact to this lead list (e.g. a newsletter signup form). */
   listId: z.string().uuid().optional(),
+  /** The same by name: the active list with that name (ignoring case), created if there is none. A lead's own listName wins. */
+  listName: requiredText(120).optional(),
   /**
    * The leads agreed to marketing email (a ticked opt-in box): recorded on
    * each contact with where they agreed, so list campaigns reach them.

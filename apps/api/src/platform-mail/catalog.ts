@@ -55,7 +55,9 @@ export const PLATFORM_TEMPLATE_DEFAULTS: Record<PlatformTemplateKey, PlatformTem
     preheader: "The invitation is valid for 7 days.",
     blocks: [
       heading("h", "Join {{workspace}}"),
-      text("t", "{{inviter}} invited you to join {{workspace}} on {{product_name}}. The invitation is valid for 7 days."),
+      text("t", "{{inviter}} invited you to join {{workspace}} on {{product_name}} as {{role|a teammate}}. The invitation is valid for 7 days."),
+      // The inviter's personal note; left out of the email when they wrote none.
+      { type: "quote", id: "m", text: "{{message}}", author: "{{inviter}}", role: "" },
       button("b", "Accept invitation"),
       pasteLink("p"),
     ],

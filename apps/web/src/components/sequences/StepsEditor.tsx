@@ -4,6 +4,7 @@ import { useRef, useState, type ReactNode, type Ref } from "react";
 import {
   ArrowDown,
   ArrowUp,
+  AudioLines,
   Bell,
   CheckSquare,
   ChevronDown,
@@ -21,6 +22,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import {
+  CALL_OUTCOMES,
   CONTACT_STATUSES,
   FEATURE_LABELS,
   PRIORITIES,
@@ -47,6 +49,8 @@ import { Input, NativeSelect, Textarea } from "@/components/ui/Input";
 import { Select, type SelectOption } from "@/components/ui/Select";
 import { MemberPicker } from "@/components/pickers/Pickers";
 import { selectOptions, useContactCustomFields, type CustomFieldDef } from "@/components/automation/ConditionEditor";
+import { AiAgentSelect } from "@/components/calls/AiAgentSelect";
+import { useAiAgents } from "@/components/calls/callHooks";
 import { DurationInput } from "@/components/automation/fields";
 import { CHANNEL_ICON } from "@/components/templates/channel";
 import { VariableMenu, focusAt, spliceToken } from "@/components/templates/VariableMenu";
@@ -54,9 +58,11 @@ import { cn } from "@/lib/cn";
 import { useApiQuery } from "@/lib/query";
 import { useWorkspace } from "@/lib/session";
 import type { Paged } from "@/lib/types";
+import type { AiAgent } from "@/lib/types/ai-calling";
 import type { Template } from "@/lib/types/templates";
 import {
   STEP_META,
+  stepFeatures,
   type AssignStrategy,
   type SequenceStep,
   type StepConfig,
@@ -101,6 +107,8 @@ export function defaultStepConfig(type: StepType): StepConfig {
       return { logic: { match: "all", rules: [{ field: "replied", op: "is", value: "yes" }] }, thenLength: 0, elseLength: 0 };
     case "call_task":
       return { taskTitle: "" };
+    case "ai_call":
+      return { agentId: "" };
     case "create_task":
       return { taskTitle: "", taskType: "follow_up" };
     case "whatsapp":
@@ -125,6 +133,7 @@ export const STEP_ICON: Record<StepType, { icon: LucideIcon; tint: Tint }> = {
   wait: { icon: Hourglass, tint: "gray" },
   branch: { icon: GitBranch, tint: "purple" },
   call_task: { icon: PhoneCall, tint: "teal" },
+  ai_call: { icon: AudioLines, tint: "cyan" },
   create_task: { icon: CheckSquare, tint: "orange" },
   update_field: { icon: PenLine, tint: "indigo" },
   assign_owner: { icon: UserRoundPlus, tint: "brown" },
@@ -165,6 +174,7 @@ const RULE_FIELD_LABELS: Record<(typeof RULE_FIELDS)[number], string> = {
   company: "Company",
   country: "Country",
   tag: "Tag",
+  call_outcome: "AI call outcome",
 };
 
 const OP_LABELS: Record<RuleOp, string> = { is: "is", is_not: "is not", contains: "contains", gt: "is more than", lt: "is less than" };
@@ -172,9 +182,21 @@ const OP_LABELS: Record<RuleOp, string> = { is: "is", is_not: "is not", contains
 /** Facts the engine answers with "yes" / "no" (engine.service.ts `facts()`). */
 const YES_NO = new Set(["replied", "opened", "clicked", "has_phone", "has_email"]);
 const RULE_ENUMS: Record<string, readonly string[]> = { status: CONTACT_STATUSES, qualification: QUALIFICATIONS, priority: PRIORITIES };
+/**
+ * Facts only a branch reads (never set by an update step). call_outcome is the
+ * enrollment's latest AI call: its outcome, "pending" until it is judged,
+ * "failed" when it never connected (engine.service.ts `lastAiCallOutcome`).
+ */
+const BRANCH_ENUMS: Record<string, readonly string[]> = { call_outcome: [...CALL_OUTCOMES, "pending", "failed"] };
+const BRANCH_VALUE_LABELS: Record<string, string> = { pending: "Pending (not judged yet)", failed: "Failed (never connected)" };
+const ruleEnum = (field: string): readonly string[] | undefined => RULE_ENUMS[field] ?? BRANCH_ENUMS[field];
+const ruleValueLabel = (field: string, value: string) => (YES_NO.has(field) || ruleEnum(field) ? (BRANCH_VALUE_LABELS[value] ?? labelOf(value)) : value);
 
-/** One line saying what a step will do. */
-export function stepSummary(step: SequenceStep): string {
+/** The agent names stepSummary may show ("AI call by Ava"). */
+type AgentNames = readonly { id: string; name: string }[];
+
+/** One line saying what a step will do. Pass the AI agents to name the one an AI call step uses. */
+export function stepSummary(step: SequenceStep, agents?: AgentNames): string {
   const c = step.config ?? {};
   switch (step.type) {
     case "email":
@@ -185,11 +207,16 @@ export function stepSummary(step: SequenceStep): string {
       const rules = c.logic?.rules ?? [];
       if (!rules.length) return "No rules: every contact takes the yes path";
       const first = rules[0]!;
-      const one = `${first.field.startsWith("custom.") ? first.field.slice(7) : (RULE_FIELD_LABELS[first.field as keyof typeof RULE_FIELD_LABELS] ?? first.field)} ${OP_LABELS[first.op] ?? first.op} ${first.value || "(blank)"}`;
+      const one = `${first.field.startsWith("custom.") ? first.field.slice(7) : (RULE_FIELD_LABELS[first.field as keyof typeof RULE_FIELD_LABELS] ?? first.field)} ${OP_LABELS[first.op] ?? first.op} ${first.value ? ruleValueLabel(first.field, first.value) : "(blank)"}`;
       return rules.length === 1 ? `If ${one}` : `If ${one} ${c.logic?.match === "any" ? "or" : "and"} ${rules.length - 1} more`;
     }
     case "call_task":
       return str(c.taskTitle).trim() || "Call {{full_name}}";
+    case "ai_call": {
+      if (!c.agentId) return "No agent chosen";
+      const agent = agents?.find((a) => a.id === c.agentId);
+      return agent ? `AI call by ${agent.name}` : "AI call";
+    }
     case "create_task":
       return str(c.taskTitle).trim() || "Follow up with {{full_name}}";
     case "whatsapp":
@@ -227,6 +254,7 @@ const SHOWN: Record<StepType, string[]> = {
   whatsapp: ["templateId", "body"],
   telegram: ["templateId", "body"],
   call_task: ["taskTitle", "description", "taskDueMinutes"],
+  ai_call: ["agentId"],
   create_task: ["taskTitle", "description", "taskDueMinutes", "taskType"],
   update_field: ["field", "value"],
   assign_owner: ["strategy", "userId"],
@@ -473,6 +501,75 @@ function TaskForm({ config, set, err, isCall }: FormProps & { isCall: boolean })
   );
 }
 
+/**
+ * The AI agent that places the call. Whether someone is called, and when, is
+ * decided right before dialling (AiCallsService.callForStep), so the form
+ * only says what those rules are.
+ */
+function AiCallForm({ config, set, err, agents, pending, loadError }: FormProps & { agents: AiAgent[]; pending: boolean; loadError?: string }) {
+  const ws = useWorkspace();
+  const value = str(config.agentId);
+  const current = agents.find((a) => a.id === value);
+  const usable = agents.filter((a) => !a.archivedAt);
+  const link = "inline-flex items-center gap-1 text-xs text-text-3 hover:text-text";
+  if (!ws.can("calls.read")) {
+    return (
+      <Field label="AI agent" error={err("agentId")}>
+        <p className="text-xs text-text-3">Your role cannot list AI agents{value ? "; this step uses one" : ""}.</p>
+      </Field>
+    );
+  }
+  return (
+    <>
+      {!pending && !loadError && !usable.length && !current ? (
+        <EmptyState
+          compact
+          icon={<AudioLines />}
+          title="No AI agents yet"
+          description="Create an agent with a voice and a script, then choose it here."
+          action={
+            <Button size="sm" icon={<Plus />} href={ws.href("/ai-agents")} external>
+              Create an agent
+            </Button>
+          }
+        />
+      ) : (
+        <Field
+          label="AI agent"
+          required
+          error={err("agentId") ?? (loadError ? `Agents could not be loaded: ${loadError}` : undefined)}
+          hint={
+            current?.archivedAt
+              ? "This agent is archived, so the step cannot be saved with it. Choose another."
+              : current && !current.sync.saved
+                ? `This agent's latest version is not saved on Cartesia yet${current.sync.error ? `: ${current.sync.error}` : "."}`
+                : undefined
+          }
+          labelAction={
+            <span className="flex items-center gap-3">
+              {value && current && (
+                <a href={ws.href(`/ai-agents/${value}`)} target="_blank" rel="noreferrer" className={link}>
+                  Open agent <ExternalLink aria-hidden className="size-3" />
+                </a>
+              )}
+              <a href={ws.href("/ai-agents")} target="_blank" rel="noreferrer" className={link}>
+                Manage AI agents <ExternalLink aria-hidden className="size-3" />
+              </a>
+            </span>
+          }
+        >
+          <AiAgentSelect agents={agents} value={value} pending={pending} invalid={Boolean(err("agentId"))} onChange={(id) => set({ agentId: id })} />
+        </Field>
+      )}
+      <Callout tone="info">
+        Only contacts with consent recorded as granted and a phone number are called; anyone else skips this step and moves on. Calls wait for the calling hours in
+        the contact&apos;s own time zone, and nobody on the do-not-contact list is called. A booked meeting, “not interested”, “do not call” or a wrong number stops
+        the contact&apos;s enrollment.
+      </Callout>
+    </>
+  );
+}
+
 const FIXED_FIELDS: { value: string; label: string }[] = [
   { value: "status", label: "Status" },
   { value: "qualification", label: "Qualification" },
@@ -578,8 +675,8 @@ function RuleRow({ rule, onChange, onRemove, custom }: { rule: StepRule; onChang
   const isCustom = rule.field.startsWith("custom.");
   const def = isCustom ? custom.find((d) => `custom.${d.key}` === rule.field) : undefined;
   const known = (RULE_FIELDS as readonly string[]).includes(rule.field) || Boolean(def);
-  const choices = YES_NO.has(rule.field) ? ["yes", "no"] : (RULE_ENUMS[rule.field] ?? selectOptions(def));
-  const ops: RuleOp[] = YES_NO.has(rule.field) || RULE_ENUMS[rule.field] ? ["is", "is_not"] : [...RULE_OPS];
+  const choices = YES_NO.has(rule.field) ? ["yes", "no"] : (ruleEnum(rule.field) ?? selectOptions(def));
+  const ops: RuleOp[] = YES_NO.has(rule.field) || ruleEnum(rule.field) ? ["is", "is_not"] : [...RULE_OPS];
   if (!ops.includes(rule.op)) ops.push(rule.op);
   return (
     <li className="flex flex-col gap-2 rounded-sm border border-line p-2 sm:flex-row sm:items-center">
@@ -625,7 +722,7 @@ function RuleRow({ rule, onChange, onRemove, custom }: { rule: StepRule; onChang
             aria-label="Value"
             value={rule.value}
             placeholder={choices.includes(rule.value) ? undefined : "Choose…"}
-            options={choices.map((v) => ({ value: v, label: YES_NO.has(rule.field) ? labelOf(v) : RULE_ENUMS[rule.field] ? labelOf(v) : v }))}
+            options={choices.map((v) => ({ value: v, label: ruleValueLabel(rule.field, v) }))}
             onChange={(e) => onChange({ ...rule, value: e.target.value })}
           />
         ) : (
@@ -691,6 +788,12 @@ function BranchForm({ config, set, err, index, total, custom }: FormProps & { in
           </Button>
         )}
         <p className="text-xs text-text-3">Opens and clicks are only known when the campaign tracks them. Text matches ignore case; a tag rule matches any of the contact&apos;s tags.</p>
+        {rules.some((r) => r.field === "call_outcome") && (
+          <p className="text-xs text-text-3">
+            The AI call outcome is that of the contact&apos;s latest AI call in this campaign: pending until the call is over and judged, failed when it never connected,
+            and blank when no call was placed (no consent or no phone number). Wait a while after the call step so the result is in.
+          </p>
+        )}
       </div>
       <div className="grid gap-3 sm:grid-cols-2">
         <Field label="Yes path: the next" error={err("thenLength")} hint={lane(k, index + 1, "Yes")}>
@@ -751,7 +854,7 @@ function AddStepMenu({ onAdd, label, variant = "ghost", size = "sm" }: { onAdd: 
       <DropdownMenuContent align="start" className="max-h-[min(460px,var(--radix-dropdown-menu-content-available-height))] w-72 overflow-y-auto">
         {STEP_TYPES.map((t) => {
           const meta = STEP_META[t];
-          const locked = meta.feature && !ws.hasFeature(meta.feature);
+          const locked = stepFeatures(t).some((f) => !ws.hasFeature(f));
           return (
             <DropdownMenuItem
               key={t}
@@ -812,8 +915,9 @@ function StepCard({
 }) {
   const ws = useWorkspace();
   const config = step.config ?? {};
-  const meta = STEP_META[step.type];
-  const locked = meta?.feature && !ws.hasFeature(meta.feature);
+  const missing = stepFeatures(step.type).find((f) => !ws.hasFeature(f));
+  const isAiCall = step.type === "ai_call";
+  const agents = useAiAgents(isAiCall, "all");
   const base = `${prefix}.${index}.`;
   const shown = new Set((SHOWN[step.type] ?? []).map((k) => `${base}config.${k}`));
   shown.add(`${base}config.delayMinutes`);
@@ -827,7 +931,7 @@ function StepCard({
   };
   const delay = num(config.delayMinutes);
   const firstEmail = steps.findIndex((s) => s.type === "email");
-  const isMessage = step.type === "email" || step.type === "whatsapp" || step.type === "telegram";
+  const isMessage = step.type === "email" || step.type === "whatsapp" || step.type === "telegram" || isAiCall;
   /** This step's position among the message steps (1 = the first touch), for "Write with AI". */
   const messageNumber = steps.slice(0, index + 1).filter((s) => s.type === "email" || s.type === "whatsapp" || s.type === "telegram").length;
   const props: FormProps = { config, set, err };
@@ -844,6 +948,9 @@ function StepCard({
     case "call_task":
     case "create_task":
       form = <TaskForm {...props} isCall={step.type === "call_task"} />;
+      break;
+    case "ai_call":
+      form = <AiCallForm {...props} agents={agents.data ?? []} pending={agents.isPending && ws.can("calls.read")} loadError={agents.error?.message} />;
       break;
     case "update_field":
       form = <UpdateFieldForm {...props} custom={custom} customKnown={customKnown} />;
@@ -883,14 +990,14 @@ function StepCard({
                 </Badge>
               )}
               {delay > 0 && step.type !== "wait" && <Badge quiet>after {formatMinutes(delay)}</Badge>}
-              {locked && meta.feature && (
-                <Badge tone="warn" title={`Needs a plan with: ${FEATURE_LABELS[meta.feature]}`}>
+              {missing && (
+                <Badge tone="warn" title={`Needs a plan with: ${FEATURE_LABELS[missing]}`}>
                   Upgrade
                 </Badge>
               )}
               {hasError && <Badge tone="bad">Needs attention</Badge>}
             </span>
-            <span className="block truncate text-xs text-text-3">{stepSummary(step)}</span>
+            <span className="block truncate text-xs text-text-3">{stepSummary(step, agents.data)}</span>
           </span>
         </button>
         {actions && <div className="flex shrink-0 items-center">{actions}</div>}
@@ -910,18 +1017,18 @@ function StepCard({
               {message}
             </p>
           ))}
-          {locked && meta.feature && (
-            <Callout tone="warn">The current plan does not include {FEATURE_LABELS[meta.feature].toLowerCase()}, so this step cannot be saved until the plan is upgraded.</Callout>
-          )}
+          {missing && <Callout tone="warn">The current plan does not include {FEATURE_LABELS[missing].toLowerCase()}, so this step cannot be saved until the plan is upgraded.</Callout>}
           <Field
             label={step.type === "wait" ? "Wait for" : "Wait before this step"}
             error={err("delayMinutes")}
             hint={
               index === 0
                 ? "Counted from when the contact is enrolled."
-                : isMessage
-                  ? "Counted from the previous step. Two messages on the same channel in a row are always at least a day apart."
-                  : "Counted from the previous step."
+                : isAiCall
+                  ? "Counted from the previous step. Two AI calls in a row are always at least a day apart."
+                  : isMessage
+                    ? "Counted from the previous step. Two messages on the same channel in a row are always at least a day apart."
+                    : "Counted from the previous step."
             }
           >
             <DurationInput

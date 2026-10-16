@@ -293,6 +293,28 @@ export class EntitlementsService {
     return ent;
   }
 
+  /**
+   * For a batch of invitations: which of `emails` (in order) still fit in the
+   * plan's seats. Addresses that already hold a seat (a member, or a pending
+   * invitation) always fit; the rest take seats until none are left.
+   */
+  async seatsFor(billingAccountId: string, emails: string[]): Promise<Set<string>> {
+    const ent = await this.forAccount(billingAccountId);
+    const allowed = ent.limits.seats;
+    if (isUnlimited(allowed)) return new Set(emails);
+    const seats = await this.seatEmails(await this.accountWorkspaceIds(billingAccountId));
+    const taken = new Set(seats.all);
+    const fits = new Set<string>();
+    for (const e of emails) {
+      if (taken.has(e)) fits.add(e);
+      else if (taken.size < allowed) {
+        taken.add(e);
+        fits.add(e);
+      }
+    }
+    return fits;
+  }
+
   /** How many more of a counted resource fit (Infinity when unlimited). */
   async remaining(billingAccountId: string, key: LimitKey): Promise<number> {
     const ent = await this.forAccount(billingAccountId);

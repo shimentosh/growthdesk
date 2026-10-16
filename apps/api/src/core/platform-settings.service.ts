@@ -74,6 +74,13 @@ export type PlatformSettings = {
   /** "" = MICROSOFT_TENANT. */
   microsoftTenant: string;
 
+  // The Discord application workspaces add as a bot (src/discord). Id "" = the DISCORD_* environment.
+  discordClientId: string;
+  /** Sealed; never returned to a client. */
+  discordClientSecretSealed: string;
+  /** Sealed; never returned to a client. */
+  discordBotTokenSealed: string;
+
   // Stripe. Each falls back to its STRIPE_* environment value.
   /** Sealed; never returned to a client. */
   stripeSecretKeySealed: string;
@@ -86,6 +93,21 @@ export type PlatformSettings = {
   trialsPerIpPerDay: number | null;
   /** History retention in days per table (worker/maintenance-policy.ts DATA_RETENTION); a missing key = its RETENTION_* environment value. */
   retentionDays: Partial<Record<DataRetentionKey, number>>;
+  /** Checks on every email a contact gets by hand, CSV, the leads API or MCP (core/email-validation.service.ts). */
+  contactEmailValidation: ContactEmailValidation;
+};
+
+export type ContactEmailValidation = {
+  /** Off: only the address's syntax matters, as before. */
+  enabled: boolean;
+  /** Refuse throwaway mail services (auth/disposable-domains.ts). */
+  blockDisposable: boolean;
+  /** Refuse domains with no mail server (DNS MX, or an address record). Fails open when DNS cannot answer. */
+  checkMailServer: boolean;
+  /** Refuse shared mailboxes such as info@ and sales@. */
+  blockRoleAccounts: boolean;
+  /** Domains never accepted as a contact's email (and their subdomains). */
+  blockedDomains: string[];
 };
 
 const DEFAULTS: PlatformSettings = {
@@ -123,11 +145,15 @@ const DEFAULTS: PlatformSettings = {
   microsoftClientId: "",
   microsoftClientSecretSealed: "",
   microsoftTenant: "",
+  discordClientId: "",
+  discordClientSecretSealed: "",
+  discordBotTokenSealed: "",
   stripeSecretKeySealed: "",
   stripeWebhookSecretSealed: "",
   aiBaseUrl: "",
   trialsPerIpPerDay: null,
   retentionDays: {},
+  contactEmailValidation: { enabled: false, blockDisposable: true, checkMailServer: true, blockRoleAccounts: false, blockedDomains: [] },
 };
 
 /** Write-only secret inputs → the sealed setting each one is stored in. */
@@ -138,6 +164,8 @@ export const SECRETS = {
   smtpPassword: "smtpPasswordSealed",
   googleClientSecret: "googleClientSecretSealed",
   microsoftClientSecret: "microsoftClientSecretSealed",
+  discordClientSecret: "discordClientSecretSealed",
+  discordBotToken: "discordBotTokenSealed",
   stripeSecretKey: "stripeSecretKeySealed",
   stripeWebhookSecret: "stripeWebhookSecretSealed",
 } as const;
@@ -147,6 +175,8 @@ type SecretInput = { [K in SecretName]?: string };
 type Sealed = (typeof SECRETS)[SecretName];
 
 export type OAuthClient = { id: string; secret: string; fromEnv: boolean };
+/** The Discord application: its OAuth client (to add the bot to a server) and the bot's token (to act in it). */
+export type DiscordApp = { clientId: string; clientSecret: string; botToken: string; fromEnv: boolean };
 export type SmtpConfig = { host: string; port: number; secure: boolean; user: string; password: string; fromEnv: boolean };
 
 const TTL_MS = 5_000;
@@ -221,6 +251,21 @@ export class PlatformSettingsService {
     return envId && envSecret ? { id: envId, secret: envSecret, fromEnv: true } : null;
   }
 
+  /**
+   * The Discord application, or null when it is not fully configured. Like the OAuth clients, the three values
+   * travel together: an admin-set client id uses the admin-set secret and token, never the environment's.
+   */
+  async discordApp(): Promise<DiscordApp | null> {
+    const s = await this.get();
+    if (s.discordClientId) {
+      const clientSecret = open(s.discordClientSecretSealed) ?? "";
+      const botToken = open(s.discordBotTokenSealed) ?? "";
+      return clientSecret && botToken ? { clientId: s.discordClientId, clientSecret, botToken, fromEnv: false } : null;
+    }
+    const c = this.config;
+    return c.DISCORD_CLIENT_ID && c.DISCORD_CLIENT_SECRET && c.DISCORD_BOT_TOKEN ? { clientId: c.DISCORD_CLIENT_ID, clientSecret: c.DISCORD_CLIENT_SECRET, botToken: c.DISCORD_BOT_TOKEN, fromEnv: true } : null;
+  }
+
   async microsoftTenant(): Promise<string> {
     return (await this.get()).microsoftTenant || this.config.MICROSOFT_TENANT;
   }
@@ -282,7 +327,7 @@ export class PlatformSettingsService {
   async publicView() {
     const s = await this.get();
     const rest = Object.fromEntries(Object.entries(s).filter(([k]) => !Object.values<string>(SECRETS).includes(k))) as Omit<PlatformSettings, Sealed>;
-    const [aiKey, resendKey, resendSecret, smtp, google, microsoft, stripe] = await Promise.all([
+    const [aiKey, resendKey, resendSecret, smtp, google, microsoft, stripe, discord] = await Promise.all([
       this.aiApiKey(),
       this.resendApiKey(),
       this.resendWebhookSecret(),
@@ -290,6 +335,7 @@ export class PlatformSettingsService {
       this.oauthClient("google"),
       this.oauthClient("microsoft"),
       this.stripe(),
+      this.discordApp(),
     ]);
     const c = this.config;
     return {
@@ -306,6 +352,12 @@ export class PlatformSettingsService {
       googleClientSecretFromEnv: Boolean(google?.fromEnv),
       microsoftClientSecretSet: Boolean(microsoft),
       microsoftClientSecretFromEnv: Boolean(microsoft?.fromEnv),
+      // Each Discord secret counts as set when it is saved here, or (with no client id saved) in the environment.
+      discordClientSecretSet: s.discordClientId ? Boolean(s.discordClientSecretSealed) : Boolean(this.config.DISCORD_CLIENT_SECRET),
+      discordClientSecretFromEnv: !s.discordClientId && Boolean(this.config.DISCORD_CLIENT_SECRET),
+      discordBotTokenSet: s.discordClientId ? Boolean(s.discordBotTokenSealed) : Boolean(this.config.DISCORD_BOT_TOKEN),
+      discordBotTokenFromEnv: !s.discordClientId && Boolean(this.config.DISCORD_BOT_TOKEN),
+      discordConfigured: Boolean(discord),
       stripeSecretKeySet: Boolean(stripe.secretKey),
       stripeSecretKeyFromEnv: !s.stripeSecretKeySealed && Boolean(stripe.secretKey),
       stripeWebhookSecretSet: Boolean(stripe.webhookSecret),
@@ -315,6 +367,7 @@ export class PlatformSettingsService {
         googleClientId: c.GOOGLE_CLIENT_ID ?? "",
         microsoftClientId: c.MICROSOFT_CLIENT_ID ?? "",
         microsoftTenant: c.MICROSOFT_TENANT,
+        discordClientId: c.DISCORD_CLIENT_ID ?? "",
         aiBaseUrl: c.AI_BASE_URL ?? "",
         trialsPerIpPerDay: c.TRIALS_PER_IP_PER_DAY,
         retentionDays: Object.fromEntries(Object.entries(DATA_RETENTION).map(([k, env]) => [k, c[env]])) as Record<DataRetentionKey, number>,

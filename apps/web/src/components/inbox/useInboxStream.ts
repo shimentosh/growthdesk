@@ -19,6 +19,7 @@ export function useInboxStream() {
   const listKey = ws.key("inbox", "list");
   const facetsKey = ws.key("inbox", "facets");
   const unreadKey = ws.key("inbox", "unread");
+  const summaryKey = ws.key("inbox", "summary");
   const detailKey = (id: string) => ws.key("inbox", "detail", id);
 
   useEffect(() => {
@@ -32,6 +33,7 @@ export function useInboxStream() {
       void qc.invalidateQueries({ queryKey: listKey });
       void qc.invalidateQueries({ queryKey: facetsKey });
       void qc.invalidateQueries({ queryKey: unreadKey });
+      void qc.invalidateQueries({ queryKey: summaryKey });
       for (const id of ids) void qc.invalidateQueries({ queryKey: detailKey(id) });
     };
     const onConversation = (e: MessageEvent<string>) => {

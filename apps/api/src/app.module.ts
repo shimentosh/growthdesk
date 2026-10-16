@@ -10,6 +10,7 @@ import { AppThrottlerGuard, RedisThrottlerStorage, ThrottleStorageModule } from 
 import { EnvelopeInterceptor } from "./common/envelope.interceptor.js";
 import { ApiExceptionFilter } from "./common/exception.filter.js";
 import { FEATURE_MODULES } from "./feature-modules.js";
+import { McpModule } from "./mcp/mcp.module.js";
 
 @Module({
   imports: [
@@ -26,6 +27,8 @@ import { FEATURE_MODULES } from "./feature-modules.js";
       }),
     }),
     ...FEATURE_MODULES,
+    // HTTP only (not in FEATURE_MODULES, which the worker shares): Claude and other MCP clients.
+    McpModule,
   ],
   providers: [
     { provide: APP_GUARD, useClass: AppThrottlerGuard },

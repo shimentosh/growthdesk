@@ -37,6 +37,7 @@ const pairs: [string, readonly string[], Record<string, string>][] = [
   ["BillingInterval", shared.BILLING_INTERVALS, prisma.BillingInterval],
   ["WorkflowRunStatus", shared.WORKFLOW_RUN_STATUSES, prisma.WorkflowRunStatus],
   ["ImportStatus", shared.IMPORT_STATUSES, prisma.ImportStatus],
+  ["McpAccess", shared.MCP_ACCESS_LEVELS, prisma.McpAccess],
 ];
 
 describe("shared enums mirror the Prisma schema", () => {

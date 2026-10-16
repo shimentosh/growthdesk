@@ -1,9 +1,12 @@
 "use client";
 
 import Link from "next/link";
+import { localDay } from "@growthdesk/shared";
 import { StatusBadge } from "@/components/ui/Badge";
+import { COL, ColumnLabel } from "@/components/ui/columns";
 import { useFormat, useWorkspace } from "@/lib/session";
 import type { Deal } from "@/lib/types/pipeline";
+import { NextStepLine, StaleBadge } from "./DealSignals";
 import { StageDot } from "./StageDot";
 import { formatCalendarDate } from "./utils";
 
@@ -14,28 +17,49 @@ const td = "px-3 py-2 align-middle";
 export function DealTable({ deals }: { deals: Deal[] }) {
   const ws = useWorkspace();
   const f = useFormat();
+  const today = localDay(new Date(), ws.timezone);
   return (
     <div className="overflow-x-auto">
       <table className="w-full min-w-[880px] text-sm">
         <thead className="border-b border-line bg-well">
           <tr>
-            <th className={th}>Deal</th>
-            <th className={th}>Stage</th>
-            <th className={`${th} text-right`}>Value</th>
-            <th className={th}>Status</th>
-            <th className={th}>Contact / company</th>
-            <th className={th}>Owner</th>
-            <th className={th}>Expected close</th>
-            <th className={th}>Updated</th>
+            <th className={th}>
+              <ColumnLabel icon={COL.name}>Deal</ColumnLabel>
+            </th>
+            <th className={th}>
+              <ColumnLabel icon={COL.stage}>Stage</ColumnLabel>
+            </th>
+            <th className={`${th} text-right`}>
+              <ColumnLabel icon={COL.amount}>Value</ColumnLabel>
+            </th>
+            <th className={th}>
+              <ColumnLabel icon={COL.status}>Status</ColumnLabel>
+            </th>
+            <th className={th}>
+              <ColumnLabel icon={COL.person}>Contact / company</ColumnLabel>
+            </th>
+            <th className={th}>
+              <ColumnLabel icon={COL.owner}>Owner</ColumnLabel>
+            </th>
+            <th className={th}>
+              <ColumnLabel icon={COL.due}>Expected close</ColumnLabel>
+            </th>
+            <th className={th}>
+              <ColumnLabel icon={COL.updated}>Updated</ColumnLabel>
+            </th>
           </tr>
         </thead>
         <tbody className="divide-y divide-line">
           {deals.map((d) => (
             <tr key={d.id} className="hover:bg-hover">
               <td className={td}>
-                <Link href={ws.href(`/deals/${d.id}`)} className="font-medium text-text hover:text-accent-hi">
-                  {d.name}
-                </Link>
+                <span className="flex items-center gap-2">
+                  <Link href={ws.href(`/deals/${d.id}`)} className="font-medium text-text hover:text-accent-hi">
+                    {d.name}
+                  </Link>
+                  <StaleBadge deal={d} />
+                </span>
+                {d.status === "open" && <NextStepLine deal={d} today={today} className="mt-0.5 max-w-80" />}
               </td>
               <td className={`${td} text-text-2`}>
                 <span className="flex items-center gap-2 whitespace-nowrap">

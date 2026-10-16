@@ -1,10 +1,12 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
-import { useState, type ReactNode } from "react";
-import { Archive, ArchiveRestore, ArrowDown, ArrowUp, ArrowUpRight, ChevronsUpDown, Ellipsis, FileQuestion, ListChecks, Pencil, SearchX } from "lucide-react";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { useState, type MouseEvent, type ReactNode } from "react";
+import { Archive, ArchiveRestore, ArrowDown, ArrowUp, ArrowUpRight, ChevronsUpDown, Ellipsis, FileQuestion, ListChecks, Pencil, SearchX, type LucideIcon } from "lucide-react";
 import { BulkActionsBar } from "@/components/crm/BulkActionsBar";
+import { CompanyMark, OwnerCell, PriorityIndicator, QualificationChip, ScoreMeter, StatusChip } from "@/components/crm/ContactCells";
+import { ContactPeek } from "@/components/crm/ContactPeek";
 import { FilterChips, FilterPopover, SavedViewsMenu } from "@/components/crm/ContactFilters";
 import { LIST_WRITE, StageBadge } from "@/components/crm/lifecycle";
 import { EditContactModal } from "@/components/crm/NewContactModal";
@@ -13,10 +15,11 @@ import { TagList } from "@/components/crm/Tags";
 import { PAGE_SIZES, activeFilterCount, toFilter, type ContactListState, type SortField } from "@/components/crm/contactListState";
 import { contactLabel } from "@/components/pickers/Pickers";
 import { Avatar } from "@/components/ui/Avatar";
-import { Badge, StatusBadge } from "@/components/ui/Badge";
+import { Badge } from "@/components/ui/Badge";
 import { Button, IconButton } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
 import { Checkbox } from "@/components/ui/Checkbox";
+import { COL, ColumnLabel } from "@/components/ui/columns";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/DropdownMenu";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { ErrorState } from "@/components/ui/ErrorState";
@@ -38,6 +41,7 @@ const TD = "px-3 py-2 align-middle";
 function SortHeader({
   field,
   label,
+  icon: ColIcon,
   sort,
   dir,
   onSort,
@@ -45,6 +49,7 @@ function SortHeader({
 }: {
   field: SortField;
   label: string;
+  icon?: LucideIcon;
   sort: SortField;
   dir: "asc" | "desc";
   onSort: (field: SortField, dir: "asc" | "desc") => void;
@@ -59,7 +64,10 @@ function SortHeader({
         onClick={() => onSort(field, active ? (dir === "asc" ? "desc" : "asc") : field === "fullName" ? "asc" : "desc")}
         className={cn("inline-flex items-center gap-1 hover:text-text", active && "text-text")}
       >
-        {label}
+        <span className="inline-flex items-center gap-1.5">
+          {ColIcon && <ColIcon aria-hidden className="size-3.5 shrink-0 opacity-70" strokeWidth={1.75} />}
+          {label}
+        </span>
         <Icon aria-hidden className={cn("size-3", !active && "opacity-50")} />
       </button>
     </th>
@@ -118,6 +126,30 @@ export function ContactListView({
   const ws = useWorkspace();
   const f = useFormat();
   const router = useRouter();
+  const pathname = usePathname();
+  const params = useSearchParams();
+
+  // The record open in the side panel lives in the URL (?peek=<id>), so reload and Back keep it.
+  const peekId = params.get("peek");
+  const setPeek = (id: string | null) => {
+    const q = new URLSearchParams(params.toString());
+    if (id) q.set("peek", id);
+    else q.delete("peek");
+    const qs = q.toString();
+    router.replace(qs ? `${pathname}?${qs}` : pathname, { scroll: false });
+  };
+  /** A click anywhere on a row opens the panel — except on its own controls (checkbox, links, menus). */
+  const onRowClick = (e: MouseEvent<HTMLTableRowElement>, id: string) => {
+    if ((e.target as HTMLElement).closest("a, button, input, label, [role=checkbox], [role=menuitem], [data-no-peek]")) return;
+    if (window.getSelection()?.toString()) return;
+    setPeek(id);
+  };
+  /** The name opens the panel too; Cmd/Ctrl/Shift-click or a middle click still opens the full record. */
+  const onNameClick = (e: MouseEvent<HTMLAnchorElement>, id: string) => {
+    if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return;
+    e.preventDefault();
+    setPeek(id);
+  };
 
   // Selection belongs to one page of one query; a new query starts empty.
   const scope = JSON.stringify(query);
@@ -199,32 +231,32 @@ export function ContactListView({
                   />
                 </th>
               )}
-              <SortHeader field="fullName" label="Name" sort={state.sort} dir={state.dir} onSort={onSort} />
+              <SortHeader field="fullName" label="Name" icon={COL.name} sort={state.sort} dir={state.dir} onSort={onSort} />
               <th scope="col" className={TH}>
-                Company
+                <ColumnLabel icon={COL.company}>Company</ColumnLabel>
               </th>
               {showStage && (
                 <th scope="col" className={TH}>
-                  Stage
+                  <ColumnLabel icon={COL.stage}>Stage</ColumnLabel>
                 </th>
               )}
               <th scope="col" className={TH}>
-                Status
+                <ColumnLabel icon={COL.status}>Status</ColumnLabel>
               </th>
               <th scope="col" className={TH}>
-                Qualification
+                <ColumnLabel icon={COL.qualification}>Qualification</ColumnLabel>
               </th>
-              <SortHeader field="priority" label="Priority" sort={state.sort} dir={state.dir} onSort={onSort} />
+              <SortHeader field="priority" label="Priority" icon={COL.priority} sort={state.sort} dir={state.dir} onSort={onSort} />
               <th scope="col" className={TH}>
-                Owner
+                <ColumnLabel icon={COL.owner}>Owner</ColumnLabel>
               </th>
               <th scope="col" className={TH}>
-                Tags
+                <ColumnLabel icon={COL.tags}>Tags</ColumnLabel>
               </th>
-              <SortHeader field="score" label="Score" sort={state.sort} dir={state.dir} onSort={onSort} />
-              <SortHeader field="lastContactedAt" label="Last contacted" sort={state.sort} dir={state.dir} onSort={onSort} />
-              <SortHeader field="nextActionAt" label="Next action" sort={state.sort} dir={state.dir} onSort={onSort} />
-              <SortHeader field="createdAt" label="Created" sort={state.sort} dir={state.dir} onSort={onSort} />
+              <SortHeader field="score" label="Score" icon={COL.score} sort={state.sort} dir={state.dir} onSort={onSort} />
+              <SortHeader field="lastContactedAt" label="Last contacted" icon={COL.updated} sort={state.sort} dir={state.dir} onSort={onSort} />
+              <SortHeader field="nextActionAt" label="Next action" icon={COL.due} sort={state.sort} dir={state.dir} onSort={onSort} />
+              <SortHeader field="createdAt" label="Created" icon={COL.created} sort={state.sort} dir={state.dir} onSort={onSort} />
               <th scope="col" className="w-10 px-2">
                 <span className="sr-only">Actions</span>
               </th>
@@ -235,7 +267,11 @@ export function ContactListView({
               const isSel = selected.has(c.id);
               const overdue = c.nextActionAt ? new Date(c.nextActionAt).getTime() < Date.now() : false;
               return (
-                <tr key={c.id} className={cn("hover:bg-hover", isSel && "bg-tint-pick")}>
+                <tr
+                  key={c.id}
+                  onClick={(e) => onRowClick(e, c.id)}
+                  className={cn("cursor-pointer transition-colors hover:bg-hover", isSel && "bg-tint-pick", peekId === c.id && "bg-tint-pick-hi shadow-[inset_2px_0_0_var(--tint-blue)]")}
+                >
                   {canWrite && (
                     <td className="w-10 px-3">
                       <Checkbox
@@ -251,8 +287,8 @@ export function ContactListView({
                     </td>
                   )}
                   <td className={cn(TD, "max-w-64")}>
-                    <Link href={ws.href(`/contacts/${c.id}`)} className="group flex min-w-0 items-center gap-2">
-                      <Avatar size="sm" name={c.fullName} email={c.email} />
+                    <Link href={ws.href(`/contacts/${c.id}`)} onClick={(e) => onNameClick(e, c.id)} className="group flex min-w-0 items-center gap-2.5">
+                      <Avatar size="md" name={c.fullName} email={c.email} />
                       <span className="min-w-0">
                         <span className="flex min-w-0 items-center gap-1.5">
                           <span className="truncate font-medium text-text group-hover:text-accent-hi">{contactLabel(c)}</span>
@@ -264,8 +300,9 @@ export function ContactListView({
                   </td>
                   <td className={cn(TD, "max-w-48")}>
                     {c.company ? (
-                      <Link href={ws.href(`/companies/${c.company.id}`)} className="block truncate text-text-2 hover:text-accent-hi">
-                        {c.company.name}
+                      <Link href={ws.href(`/companies/${c.company.id}`)} className="flex min-w-0 items-center gap-2 text-text-2 hover:text-accent-hi">
+                        <CompanyMark name={c.company.name} />
+                        <span className="truncate">{c.company.name}</span>
                       </Link>
                     ) : (
                       <span className="text-text-3">—</span>
@@ -277,19 +314,24 @@ export function ContactListView({
                     </td>
                   )}
                   <td className={TD}>
-                    <StatusBadge value={c.status} />
+                    <StatusChip value={c.status} />
                   </td>
                   <td className={TD}>
-                    <StatusBadge value={c.qualification} dot={false} />
+                    <QualificationChip value={c.qualification} />
                   </td>
                   <td className={TD}>
-                    <StatusBadge value={c.priority} dot={false} />
+                    <PriorityIndicator value={c.priority} />
                   </td>
-                  <td className={cn(TD, "max-w-40 truncate text-text-2")}>{c.owner?.name ?? <span className="text-text-3">Unassigned</span>}</td>
+                  <td className={cn(TD, "max-w-44")}>
+                    <OwnerCell owner={c.owner} />
+                  </td>
                   <td className={cn(TD, "max-w-56")}>
-                    <TagList tags={c.tags} max={2} />
+                    {/* One tag and a +N count keeps every row one line high. */}
+                    <TagList tags={c.tags} max={1} wrap={false} />
                   </td>
-                  <td className={cn(TD, "text-text-2 tabular-nums")}>{c.score ?? <span className="text-text-3">—</span>}</td>
+                  <td className={TD}>
+                    <ScoreMeter value={c.score} />
+                  </td>
                   <td className={cn(TD, "whitespace-nowrap text-text-2")} title={c.lastContactedAt ? f.dateTime(c.lastContactedAt) : undefined}>
                     {c.lastContactedAt ? f.relative(c.lastContactedAt) : <span className="text-text-3">Never</span>}
                   </td>
@@ -375,6 +417,14 @@ export function ContactListView({
 
       <Card className="overflow-hidden">{body}</Card>
 
+      <ContactPeek
+        id={peekId}
+        ids={rows.map((r) => r.id)}
+        summary={rows.find((r) => r.id === peekId)}
+        onOpenChange={(o) => !o && setPeek(null)}
+        onMove={(id) => setPeek(id)}
+      />
+
       {editing && <EditContactModal key={editing.id} open onOpenChange={(o) => !o && setEditing(null)} contact={editing} />}
       {canList && (
         <AddToListModal
@@ -410,7 +460,8 @@ export function Segments<V extends string>({
 }: {
   label: string;
   value: V;
-  options: { value: V; label: string }[];
+  /** `icon`: a small icon before the word (a LucideIcon), shown muted until the tab is chosen. */
+  options: { value: V; label: string; icon?: LucideIcon }[];
   onChange: (value: V) => void;
 }) {
   return (
@@ -423,10 +474,11 @@ export function Segments<V extends string>({
           aria-selected={value === o.value}
           onClick={() => onChange(o.value)}
           className={cn(
-            "h-7 shrink-0 rounded-sm px-2.5 text-xs font-medium whitespace-nowrap",
+            "inline-flex h-7 shrink-0 items-center gap-1.5 rounded-sm px-2.5 text-xs font-medium whitespace-nowrap",
             value === o.value ? "bg-accent-soft text-accent-ink" : "text-text-2 hover:bg-hover hover:text-text",
           )}
         >
+          {o.icon && <o.icon aria-hidden className={cn("size-3.5 shrink-0", value !== o.value && "opacity-70")} strokeWidth={1.75} />}
           {o.label}
         </button>
       ))}

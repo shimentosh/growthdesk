@@ -3,7 +3,7 @@
  * as ISO strings and decimals as numbers. Keep these in step with
  * apps/api/src/pipeline/pipeline.service.ts and apps/api/src/tasks/tasks.service.ts.
  */
-import type { DealStatus, MeetingStatus, Priority, StageKind, TaskStatus, TaskType } from "@growthdesk/shared";
+import type { DealStatus, ForecastCategory, MeetingStatus, Priority, StageKind, TaskStatus, TaskType } from "@growthdesk/shared";
 
 /** A pipeline stage row (Prisma PipelineStage). `color` is a name such as "gray" or "blue". */
 export type PipelineStage = {
@@ -15,6 +15,10 @@ export type PipelineStage = {
   kind: StageKind;
   probability: number;
   color: string;
+  /** Days without progress in this stage before a deal is stale; null = never. */
+  rotDays: number | null;
+  /** What to do in this stage / what gets a deal out of it ("" = none). One point per line. */
+  guidance: string;
   createdAt: string;
   updatedAt: string;
 };
@@ -33,7 +37,7 @@ export type Pipeline = {
 };
 
 /** The stage as embedded in a deal (`dealInclude.stage`). */
-export type DealStageRef = Pick<PipelineStage, "id" | "name" | "kind" | "position" | "color" | "probability">;
+export type DealStageRef = Pick<PipelineStage, "id" | "name" | "kind" | "position" | "color" | "probability" | "rotDays">;
 
 /** GET /deals items — `dealDto()`. */
 export type Deal = {
@@ -54,6 +58,13 @@ export type Deal = {
   lostReason: string;
   proposalUrl: string;
   description: string;
+  /** How the owner rates it for the forecast. */
+  forecastCategory: ForecastCategory;
+  nextStep: string;
+  /** A calendar date stored at UTC midnight, like expectedCloseDate. */
+  nextStepAt: string | null;
+  /** Open and past its stage's rotDays without progress: since the last progress, whole days since. */
+  stale: { since: string; days: number } | null;
   stageEnteredAt: string;
   closedAt: string | null;
   createdAt: string;

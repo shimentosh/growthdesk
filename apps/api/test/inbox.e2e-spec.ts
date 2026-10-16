@@ -151,6 +151,38 @@ describe("Unified inbox", () => {
     await owner.patch(`${base()}/conversations/${convoId}`).send({ assigneeId: null }).expect(200);
   });
 
+  it("filters by AI label and summarises the inbox for today", async () => {
+    await t.prisma.db.conversation.update({ where: { id: convoId, workspaceId: w }, data: { aiCategory: "interested" } });
+    const labelled = await owner.get(`${base()}/conversations?aiCategory=interested`).expect(200);
+    expect(labelled.body.data.items.map((c: { id: string }) => c.id)).toEqual([convoId]);
+    await owner.get(`${base()}/conversations?aiCategory=bogus`).expect(400);
+
+    const s = (await owner.get(`${base()}/summary`).expect(200)).body.data;
+    expect(s).toMatchObject({ needsReply: 2, snoozedToday: 0, mine: 0, labels: [{ category: "interested", count: 1 }] });
+    expect(typeof s.unread).toBe("number");
+    expect(s.oldest.map((c: { id: string }) => c.id).sort()).toEqual([convoId, otherConvoId].sort());
+
+    // We wrote last on one, snoozed it until later today, and assigned it to the owner: it no longer needs a reply.
+    const inbound = await t.prisma.db.conversation.findFirstOrThrow({ where: { id: otherConvoId, workspaceId: w } });
+    await t.prisma.db.conversation.update({
+      where: { id: otherConvoId, workspaceId: w },
+      data: { lastOutboundAt: new Date((inbound.lastInboundAt as Date).getTime() + 1000) },
+    });
+    await owner.patch(`${base()}/conversations/${otherConvoId}`).send({ assigneeId: owner.userId, snoozedUntil: new Date(Date.now() + 60_000).toISOString() }).expect(200);
+    const after = (await owner.get(`${base()}/summary`).expect(200)).body.data;
+    expect(after).toMatchObject({ needsReply: 1, snoozedToday: 1, mine: 0 });
+    expect(after.oldest.map((c: { id: string }) => c.id)).toEqual([convoId]);
+    await owner.patch(`${base()}/conversations/${otherConvoId}`).send({ snoozedUntil: null }).expect(200);
+    expect((await owner.get(`${base()}/summary`).expect(200)).body.data.mine).toBe(1);
+    // Without records.view_all, someone else's conversation is not counted.
+    const forMember = (await member.get(`${base()}/summary`).expect(200)).body.data;
+    expect(forMember).toMatchObject({ needsReply: 1, mine: 0 });
+
+    await owner.patch(`${base()}/conversations/${otherConvoId}`).send({ assigneeId: null }).expect(200);
+    await t.prisma.db.conversation.update({ where: { id: otherConvoId, workspaceId: w }, data: { lastOutboundAt: null } });
+    await t.prisma.db.conversation.update({ where: { id: convoId, workspaceId: w }, data: { aiCategory: "" } });
+  });
+
   it("closes, reopens, snoozes and marks read", async () => {
     await owner.patch(`${base()}/conversations/${otherConvoId}`).send({ status: "closed" }).expect(200);
     const closed = await owner.get(`${base()}/conversations?status=closed`).expect(200);
@@ -170,7 +202,9 @@ describe("Unified inbox", () => {
 
     const read = await member.post(`${base()}/conversations/${otherConvoId}/read`).expect(200);
     expect(read.body.data).toEqual({ id: otherConvoId, unread: false });
-    expect((await owner.get(`${base()}/conversations?unread=true`).expect(200)).body.data.total).toBe(1);
+    // Unread is each person's own: the member opening it leaves it unread for the owner (and still unanswered).
+    expect((await member.get(`${base()}/conversations?unread=true`).expect(200)).body.data.total).toBe(1);
+    expect((await owner.get(`${base()}/conversations?unread=true`).expect(200)).body.data.total).toBe(2);
   });
 
   it("keeps internal notes: author or inbox.assign may delete", async () => {

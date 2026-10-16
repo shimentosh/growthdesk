@@ -8,7 +8,7 @@ import { ListQuery, StartCallInput, isoDate, optionalUuid, text, uuid } from "./
  * the pure rules both sides read.
  */
 
-export const CALL_PROVIDERS = ["manual", "twilio"] as const;
+export const CALL_PROVIDERS = ["manual", "twilio", "cartesia"] as const;
 export type CallProvider = (typeof CALL_PROVIDERS)[number];
 
 /** Statuses after which nothing more happens on the line. */
@@ -35,6 +35,8 @@ export const CallListQuery = ListQuery.extend({
   /** An outcome, or "none" for calls nobody has recorded an outcome for yet. */
   outcome: z.enum([...CALL_OUTCOMES, "none"]).optional(),
   provider: z.enum(CALL_PROVIDERS).optional(),
+  /** AI calls placed by one agent. */
+  agentId: z.string().uuid().optional(),
   from: isoDate.optional(),
   to: isoDate.optional(),
 });

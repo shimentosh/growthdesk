@@ -31,6 +31,12 @@ export const RETENTION = {
   emailLog: 90 * DAY,
   /** Parsed CSV rows of finished imports (the counts and errors stay); see the Import.rows schema comment. */
   importRows: 30 * DAY,
+  /** The MCP call log (Settings → MCP / Claude → Recent activity). */
+  mcpCalls: 90 * DAY,
+  /** MCP confirmations, counted from their expiry: confirmed, canceled or lapsed, they are only history. */
+  mcpPendingActions: 30 * DAY,
+  /** Files removed from a contact, company, deal or quote: kept for undo questions, then their bytes go. */
+  deletedAttachments: 30 * DAY,
 } as const;
 
 /** For each RETENTION entry, the moment before which rows go. */

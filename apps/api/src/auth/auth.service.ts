@@ -336,6 +336,10 @@ export class AuthService {
         hasPassword: Boolean(user.passwordHash),
         googleLinked: Boolean(user.googleSub),
         twoFactorEnabled: Boolean(user.totpEnabledAt),
+        title: user.title,
+        phone: user.phone,
+        /** Away until then: lead routing and round-robin assignment skip them. */
+        outOfOfficeUntil: user.outOfOfficeUntil,
       },
       workspaces: user.memberships.map((m) => ({ ...m.workspace, role: m.role })),
       lastWorkspaceId: session?.workspaceId ?? null,
@@ -423,14 +427,20 @@ export class AuthService {
       } else if (byEmail) {
         user = await this.prisma.db.user.update({ where: { id: byEmail.id }, data: { googleSub: info.sub } });
       } else {
-        const invite = await this.assertSignupAllowed(email, extras.inviteToken);
+        // Someone a workspace invited (pending invitation to this Google-proven address) may create their
+        // account whatever the sign-up mode, as with the invitation's own password form.
+        const invitedToWorkspace = await this.prisma.db.invitation.findFirst({
+          where: { email, acceptedAt: null, revokedAt: null, expiresAt: { gt: new Date() } },
+          select: { id: true },
+        });
+        const invite = invitedToWorkspace ? null : await this.assertSignupAllowed(email, extras.inviteToken);
         const name = info.name ?? "";
         const sub = info.sub;
         user = await this.prisma.db.$transaction(async (tx) => {
           if (invite) await this.claimInvite(tx, invite.id);
           const created = await tx.user.create({ data: { email, name, googleSub: sub, emailVerifiedAt: new Date() } });
           await createSignupProfile(tx, created.id, {
-            source: invite ? "invite" : "google",
+            source: invite ? "invite" : invitedToWorkspace ? "workspace_invite" : "google",
             attribution: extras.attribution,
             marketingConsent: extras.marketingConsent,
           });
@@ -438,7 +448,7 @@ export class AuthService {
         });
         await this.audit.record(
           { ...ctx, identity: undefined },
-          { action: "auth.registered", targetType: "user", targetId: user.id, metadata: { source: invite ? "invite" : "google" } },
+          { action: "auth.registered", targetType: "user", targetId: user.id, metadata: { source: invite ? "invite" : invitedToWorkspace ? "workspace_invite" : "google" } },
           "user",
         );
       }

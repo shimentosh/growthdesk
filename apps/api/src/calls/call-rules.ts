@@ -84,7 +84,8 @@ export function callSummary(input: { contactName: string; outcome: string; statu
   const who = input.contactName || "the contact";
   const parts = [input.outcome ? labelOf(input.outcome) : labelOf(input.status)];
   if (input.durationSec) parts.push(formatSeconds(input.durationSec));
-  return `${input.provider === "twilio" ? "Called" : "Logged a call with"} ${who}: ${parts.join(" · ")}`;
+  const verb = input.provider === "cartesia" ? "AI agent called" : input.provider === "twilio" ? "Called" : "Logged a call with";
+  return `${verb} ${who}: ${parts.join(" · ")}`;
 }
 
 export function formatSeconds(total: number): string {

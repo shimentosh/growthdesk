@@ -2,9 +2,10 @@
 
 import Link from "next/link";
 import { useState } from "react";
-import { AlarmClock, CircleAlert, ClipboardPen, Clock, Ellipsis, FileText, Globe, History, ListFilter, ListPlus, ListTodo, Phone, PhoneCall, Plus, Settings2, UserRound, X } from "lucide-react";
-import { CALL_OUTCOMES, CALL_STATUSES, labelOf } from "@growthdesk/shared";
+import { AlarmClock, AudioLines, CalendarClock, CircleAlert, CircleCheck, CircleDot, CircleUserRound, ClipboardPen, Clock, Ellipsis, FileText, Globe, History, ListFilter, ListPlus, ListTodo, Phone, PhoneCall, Plus, Settings2, UserRound, Users, X } from "lucide-react";
+import { CALL_OUTCOMES, CALL_STATUSES, isFinalCallStatus, labelOf } from "@growthdesk/shared";
 import { AddToQueueModal } from "@/components/calls/AddToQueueModal";
+import { AiCallDetail } from "@/components/calls/AiCallDetail";
 import { CallDrawer, type CallDrawerProps } from "@/components/calls/CallDrawer";
 import { CallScriptsPanel } from "@/components/calls/CallScripts";
 import { useCallSetup } from "@/components/calls/callHooks";
@@ -15,6 +16,7 @@ import { Badge, StatusBadge } from "@/components/ui/Badge";
 import { Button, IconButton } from "@/components/ui/Button";
 import { Callout } from "@/components/ui/Callout";
 import { Card } from "@/components/ui/Card";
+import { COL, ColumnLabel } from "@/components/ui/columns";
 import { ConfirmDialog } from "@/components/ui/Dialog";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/DropdownMenu";
 import { EmptyState } from "@/components/ui/EmptyState";
@@ -54,6 +56,8 @@ function Calls() {
   // One drawer for the page: placing a call from the queue, logging one, or recording an outcome from the history.
   const [drawer, setDrawer] = useState<Omit<CallDrawerProps, "open" | "onOpenChange"> | null>(null);
   const [adding, setAdding] = useState(false);
+  // ?call=<id> opens a call's detail (AI calls from the history, and notification links).
+  const viewing = search.get("call") || null;
 
   const reason = setup.data?.clickToCall.reason;
   const notConnected = setup.data && !setup.data.twilio.length;
@@ -63,7 +67,7 @@ function Calls() {
       <PageHeader
         icon={<EntityTile of="calls" />}
         title="Calls"
-        description="Work through your call list one contact at a time, read from a script, and record how each call went. Calls are not recorded."
+        description="Work through your call list one contact at a time, read from a script, and record how each call went. Your own calls are not recorded; AI calls keep a transcript."
         actions={
           canCall ? (
             <>
@@ -108,6 +112,7 @@ function Calls() {
             outcome: null,
             status: null,
             user: null,
+            provider: null,
           })
         }
         options={[
@@ -119,11 +124,20 @@ function Calls() {
 
       <div className="mt-4">
         {tab === "queue" && <QueuePanel onCall={setDrawer} onAdd={() => setAdding(true)} />}
-        {tab === "history" && <HistoryPanel onOpen={(call) => setDrawer({ call })} />}
+        {tab === "history" && <HistoryPanel onOpen={(call) => (call.provider === "cartesia" ? search.set({ call: call.id }) : setDrawer({ call }))} />}
         {tab === "scripts" && <CallScriptsPanel />}
       </div>
 
       <CallDrawer open={drawer !== null} onOpenChange={(o) => !o && setDrawer(null)} {...(drawer ?? {})} />
+      <AiCallDetail
+        callId={viewing}
+        open={viewing !== null}
+        onOpenChange={(o) => !o && search.set({ call: null })}
+        onRecord={(call) => {
+          search.set({ call: null });
+          setDrawer({ call });
+        }}
+      />
       <AddToQueueModal open={adding} onOpenChange={setAdding} />
     </>
   );
@@ -164,8 +178,8 @@ function QueuePanel({ onCall, onAdd }: { onCall: (d: Omit<CallDrawerProps, "open
             search.set({ scope: v === "mine" ? null : v });
           }}
           options={[
-            { value: "mine", label: "Mine" },
-            { value: "team", label: "Everyone's" },
+            { value: "mine", label: "Mine", icon: <UserRound /> },
+            { value: "team", label: "Everyone's", icon: <Users /> },
           ]}
         />
         <Segmented
@@ -176,8 +190,8 @@ function QueuePanel({ onCall, onAdd }: { onCall: (d: Omit<CallDrawerProps, "open
             search.set({ window: v === "today" ? null : v });
           }}
           options={[
-            { value: "today", label: "Due today" },
-            { value: "all", label: "All open" },
+            { value: "today", label: "Due today", icon: <CalendarClock /> },
+            { value: "all", label: "All open", icon: <ListTodo /> },
           ]}
         />
         <span className="text-xs text-text-3">Call tasks from sequences, callbacks and contacts you add. Times in {ws.timezone}.</span>
@@ -330,20 +344,22 @@ function HistoryPanel({ onOpen }: { onOpen: (call: CallRow) => void }) {
   const outcome = search.get("outcome");
   const status = search.get("status");
   const user = search.get("user");
+  const provider = search.get("provider");
   const [page, setPage] = useState(1);
-  const query = { outcome, status, userId: user, page, pageSize: PAGE_SIZE };
+  const query = { outcome, status, userId: user, provider, page, pageSize: PAGE_SIZE };
   const list = useApiQuery<Paged<CallRow>>(ws.key("calls", "list"), ws.path("/calls"), { query, keepPrevious: true });
   const setFilter = (patch: Record<string, string | null>) => {
     setPage(1);
     search.set(patch);
   };
-  const filtered = Boolean(outcome || status || user);
+  const filtered = Boolean(outcome || status || user || provider);
 
   return (
     <>
       <div className="mb-4 flex flex-wrap items-center gap-2">
         <NativeSelect
           aria-label="Outcome"
+          icon={<CircleCheck />}
           className="w-auto min-w-40"
           value={outcome}
           onChange={(e) => setFilter({ outcome: e.target.value || null })}
@@ -351,14 +367,29 @@ function HistoryPanel({ onOpen }: { onOpen: (call: CallRow) => void }) {
         />
         <NativeSelect
           aria-label="Status"
+          icon={<CircleDot />}
           className="w-auto min-w-36"
           value={status}
           onChange={(e) => setFilter({ status: e.target.value || null })}
           options={[{ value: "", label: "Any status" }, ...CALL_STATUSES.map((s) => ({ value: s, label: labelOf(s) }))]}
         />
+        <NativeSelect
+          aria-label="Kind of call"
+          icon={<AudioLines />}
+          className="w-auto min-w-36"
+          value={provider}
+          onChange={(e) => setFilter({ provider: e.target.value || null })}
+          options={[
+            { value: "", label: "Any kind" },
+            { value: "cartesia", label: "AI calls" },
+            { value: "twilio", label: "Twilio calls" },
+            { value: "manual", label: "Logged calls" },
+          ]}
+        />
         {seeAll && (
           <NativeSelect
             aria-label="Caller"
+            icon={<CircleUserRound />}
             className="w-auto min-w-36"
             value={user}
             onChange={(e) => setFilter({ user: e.target.value || null })}
@@ -373,7 +404,7 @@ function HistoryPanel({ onOpen }: { onOpen: (call: CallRow) => void }) {
           />
         )}
         {filtered && (
-          <Button variant="ghost" size="sm" icon={<X />} onClick={() => setFilter({ outcome: null, status: null, user: null })}>
+          <Button variant="ghost" size="sm" icon={<X />} onClick={() => setFilter({ outcome: null, status: null, user: null, provider: null })}>
             Clear filters
           </Button>
         )}
@@ -386,7 +417,7 @@ function HistoryPanel({ onOpen }: { onOpen: (call: CallRow) => void }) {
           isEmpty={(d) => d.items.length === 0}
           empty={
             filtered ? (
-              <EmptyState compact icon={<ListFilter />} title="No calls match these filters" description="Try another outcome, status or caller, or clear the filters." />
+              <EmptyState compact icon={<ListFilter />} title="No calls match these filters" description="Try another outcome, status, kind or caller, or clear the filters." />
             ) : (
               <EmptyState icon={<History />} tint={ENTITY.calls.tint} title="No calls yet" description="Calls you place or log appear here, with their outcome and notes." />
             )
@@ -398,12 +429,24 @@ function HistoryPanel({ onOpen }: { onOpen: (call: CallRow) => void }) {
                 <table className="w-full min-w-[760px] text-sm">
                   <thead>
                     <tr className="border-b border-line text-left text-xs text-text-3">
-                      <th className="px-4 py-2 font-medium">When</th>
-                      <th className="px-4 py-2 font-medium">Contact</th>
-                      <th className="px-4 py-2 font-medium">Status</th>
-                      <th className="px-4 py-2 font-medium">Outcome</th>
-                      <th className="px-4 py-2 text-right font-medium">Length</th>
-                      <th className="px-4 py-2 font-medium">By</th>
+                      <th className="px-4 py-2 font-medium">
+                        <ColumnLabel icon={COL.date}>When</ColumnLabel>
+                      </th>
+                      <th className="px-4 py-2 font-medium">
+                        <ColumnLabel icon={COL.person}>Contact</ColumnLabel>
+                      </th>
+                      <th className="px-4 py-2 font-medium">
+                        <ColumnLabel icon={COL.status}>Status</ColumnLabel>
+                      </th>
+                      <th className="px-4 py-2 font-medium">
+                        <ColumnLabel icon={COL.result}>Outcome</ColumnLabel>
+                      </th>
+                      <th className="px-4 py-2 text-right font-medium">
+                        <ColumnLabel icon={COL.duration}>Length</ColumnLabel>
+                      </th>
+                      <th className="px-4 py-2 font-medium">
+                        <ColumnLabel icon={COL.owner}>By</ColumnLabel>
+                      </th>
                       <th className="px-4 py-2" />
                     </tr>
                   </thead>
@@ -426,21 +469,46 @@ function HistoryPanel({ onOpen }: { onOpen: (call: CallRow) => void }) {
                         <td className="px-4 py-2.5">
                           <span className="flex items-center gap-1.5">
                             <StatusBadge value={c.status} />
-                            <Badge quiet>{c.provider === "twilio" ? "Twilio" : "Logged"}</Badge>
+                            {c.provider === "cartesia" ? (
+                              <Badge tone="info" quiet className="max-w-44">
+                                AI · {c.agent?.name ?? "agent"}
+                              </Badge>
+                            ) : (
+                              <Badge quiet>{c.provider === "twilio" ? "Twilio" : "Logged"}</Badge>
+                            )}
                           </span>
                         </td>
-                        <td className="px-4 py-2.5">{c.outcome ? <StatusBadge value={c.outcome} dot={false} /> : <span className="text-xs text-text-3">Not recorded</span>}</td>
+                        <td className="max-w-72 px-4 py-2.5">
+                          {c.outcome ? (
+                            <StatusBadge value={c.outcome} dot={false} />
+                          ) : c.provider === "cartesia" && !c.processedAt ? (
+                            <span className="text-xs text-text-3">{isFinalCallStatus(c.status) ? "Judging…" : "In progress"}</span>
+                          ) : (
+                            <span className="text-xs text-text-3">Not recorded</span>
+                          )}
+                          {c.provider === "cartesia" && c.summary && (
+                            <div className="mt-0.5 truncate text-xs text-text-2" title={c.summary}>
+                              {c.summary}
+                            </div>
+                          )}
+                        </td>
                         <td className="px-4 py-2.5 text-right text-text-2 tabular-nums">{c.durationSec ? formatDuration(c.durationSec) : "—"}</td>
                         <td className="px-4 py-2.5 text-text-2">{c.user?.name ?? "—"}</td>
                         <td className="px-4 py-2.5 text-right">
-                          <Button
-                            size="sm"
-                            variant={c.outcome ? "ghost" : "secondary"}
-                            icon={!c.outcome && ws.can("calls.make") ? <ClipboardPen /> : undefined}
-                            onClick={() => onOpen(c)}
-                          >
-                            {c.outcome ? "View" : ws.can("calls.make") ? "Record outcome" : "View"}
-                          </Button>
+                          {c.provider === "cartesia" ? (
+                            <Button size="sm" variant="ghost" onClick={() => onOpen(c)}>
+                              View
+                            </Button>
+                          ) : (
+                            <Button
+                              size="sm"
+                              variant={c.outcome ? "ghost" : "secondary"}
+                              icon={!c.outcome && ws.can("calls.make") ? <ClipboardPen /> : undefined}
+                              onClick={() => onOpen(c)}
+                            >
+                              {c.outcome ? "View" : ws.can("calls.make") ? "Record outcome" : "View"}
+                            </Button>
+                          )}
                         </td>
                       </tr>
                     ))}

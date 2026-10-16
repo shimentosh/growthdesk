@@ -8,15 +8,18 @@ import { EntityTile } from "@/components/ui/icons";
 import { Page, PageHeader } from "@/components/ui/PageHeader";
 import { RequirePermission } from "@/components/ui/RequirePermission";
 import { LoadingBlock } from "@/components/ui/Skeleton";
+import { useWorkspace } from "@/lib/session";
 
 /** Contact imports: the CSV wizard on top, every past import below. ?listId= preselects the lead list. */
 export default function ImportsPage() {
+  const ws = useWorkspace();
   return (
     <Page width="capped">
       <RequirePermission permission="contacts.import">
         <PageHeader
           title="Imports"
           icon={<EntityTile of="imports" />}
+          back={{ href: ws.href("/leads"), label: "Leads" }}
           description="Bring leads in from a CSV file into a lead list. Rows are matched to existing people by email, then phone."
         />
         <div className="flex flex-col gap-5">

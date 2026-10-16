@@ -10,7 +10,7 @@ import { Card, CardBody, CardFooter, CardHeader } from "@/components/ui/Card";
 import { Checkbox } from "@/components/ui/Checkbox";
 import { ConfirmDialog, Modal } from "@/components/ui/Dialog";
 import { Field, FormError } from "@/components/ui/Field";
-import { Input, NativeSelect } from "@/components/ui/Input";
+import { Input, NativeSelect, Textarea } from "@/components/ui/Input";
 import { useApiMutation } from "@/lib/query";
 import { useWorkspace } from "@/lib/session";
 import type { Pipeline } from "@/lib/types/pipeline";
@@ -27,13 +27,17 @@ type DraftStage = {
   name: string;
   kind: StageKind;
   probability: string;
+  /** "Stale after N days" for open stages; "" = never. */
+  rotDays: string;
+  /** What to do in this stage / exit criteria, one point per line. */
+  guidance: string;
   /** Kept as-is: colour names have no place in this app's palette, but the API stores them. */
   color?: string;
 };
 
 let seq = 0;
 const draftOf = (p: Pipeline): DraftStage[] =>
-  p.stages.map((s) => ({ key: s.id, id: s.id, name: s.name, kind: s.kind, probability: String(s.probability), color: s.color }));
+  p.stages.map((s) => ({ key: s.id, id: s.id, name: s.name, kind: s.kind, probability: String(s.probability), rotDays: s.rotDays ? String(s.rotDays) : "", guidance: s.guidance ?? "", color: s.color }));
 
 /** What would stop the API from accepting these stages (assertStages + PipelineInput), in words. */
 function problems(name: string, stages: DraftStage[]): string[] {
@@ -46,6 +50,7 @@ function problems(name: string, stages: DraftStage[]): string[] {
   if (!stages.some((s) => s.kind === "won")) out.push("Keep a Won stage.");
   if (!stages.some((s) => s.kind === "lost")) out.push("Keep a Lost stage.");
   if (stages.some((s) => !/^\d{1,3}$/.test(s.probability.trim()) || Number(s.probability) > 100)) out.push("Probabilities are whole numbers from 0 to 100.");
+  if (stages.some((s) => s.kind === "open" && s.rotDays.trim() && (!/^\d{1,3}$/.test(s.rotDays.trim()) || Number(s.rotDays) < 1 || Number(s.rotDays) > 365))) out.push("“Stale after” is a whole number of days from 1 to 365, or empty for never.");
   return out;
 }
 
@@ -67,7 +72,16 @@ export function PipelineEditor({ pipeline, canManage }: { pipeline: Pipeline; ca
     path: ws.path(`/pipelines/${pipeline.id}`),
     body: () => ({
       name: name.trim(),
-      stages: stages.map((s) => ({ ...(s.id ? { id: s.id } : {}), name: s.name.trim(), kind: s.kind, probability: Number(s.probability), ...(s.color ? { color: s.color } : {}) })),
+      stages: stages.map((s) => ({
+        ...(s.id ? { id: s.id } : {}),
+        name: s.name.trim(),
+        kind: s.kind,
+        probability: Number(s.probability),
+        // Only open stages go stale; a closed deal has nothing left to do.
+        rotDays: s.kind === "open" && s.rotDays.trim() ? Number(s.rotDays) : null,
+        guidance: s.guidance.trim(),
+        ...(s.color ? { color: s.color } : {}),
+      })),
     }),
     // Deals embed their stage's name, so they refresh too.
     invalidate: [ws.key("pipelines"), ws.key("deals")],
@@ -107,7 +121,7 @@ export function PipelineEditor({ pipeline, canManage }: { pipeline: Pipeline; ca
     setStages((list) => {
       // New stages go before the closing (Won / Lost) stages, where open stages belong.
       const at = list.findIndex((s) => s.kind !== "open");
-      const stage: DraftStage = { key: `new-${++seq}`, name: "", kind: "open", probability: "0" };
+      const stage: DraftStage = { key: `new-${++seq}`, name: "", kind: "open", probability: "0", rotDays: "", guidance: "" };
       const next = [...list];
       next.splice(at === -1 ? next.length : at, 0, stage);
       return next;
@@ -150,19 +164,20 @@ export function PipelineEditor({ pipeline, canManage }: { pipeline: Pipeline; ca
           </Field>
 
           <div>
-            <div className="mb-1.5 hidden grid-cols-[24px_minmax(0,1fr)_120px_88px_auto] items-center gap-2 px-1 text-xs font-medium text-text-3 sm:grid">
+            <div className="mb-1.5 hidden grid-cols-[24px_minmax(0,1fr)_120px_88px_112px_auto] items-center gap-2 px-1 text-xs font-medium text-text-3 sm:grid">
               <span aria-hidden>#</span>
               <span>Stage</span>
               <span>Kind</span>
               <span>Probability</span>
+              <span title="A deal with no progress for this many days in the stage is flagged stale and its owner is told. Empty: never.">Stale after</span>
               <span className="sr-only">Order</span>
             </div>
             <ol className="flex flex-col gap-2">
               {stages.map((s, i) => {
-                const rowError = errors[`stages.${i}.name`] ?? errors[`stages.${i}.kind`] ?? errors[`stages.${i}.probability`];
+                const rowError = errors[`stages.${i}.name`] ?? errors[`stages.${i}.kind`] ?? errors[`stages.${i}.probability`] ?? errors[`stages.${i}.rotDays`] ?? errors[`stages.${i}.guidance`];
                 return (
                   <li key={s.key} className="rounded-md border border-line bg-well p-2 sm:border-0 sm:bg-transparent sm:p-0">
-                    <div className="grid grid-cols-[24px_minmax(0,1fr)] items-center gap-2 sm:grid-cols-[24px_minmax(0,1fr)_120px_88px_auto]">
+                    <div className="grid grid-cols-[24px_minmax(0,1fr)] items-center gap-2 sm:grid-cols-[24px_minmax(0,1fr)_120px_88px_112px_auto]">
                       <span className="text-center text-xs text-text-3 tabular-nums">{i + 1}</span>
                       <Input
                         aria-label={`Stage ${i + 1} name`}
@@ -199,6 +214,27 @@ export function PipelineEditor({ pipeline, canManage }: { pipeline: Pipeline; ca
                         />
                         <span className="text-xs text-text-3">%</span>
                       </div>
+                      <div className="col-start-2 flex items-center gap-1.5 sm:col-start-auto">
+                        {s.kind === "open" ? (
+                          <>
+                            <Input
+                              aria-label={`Stage ${i + 1}: stale after how many days`}
+                              type="number"
+                              inputMode="numeric"
+                              min={1}
+                              max={365}
+                              step={1}
+                              value={s.rotDays}
+                              placeholder="Never"
+                              onChange={(e) => update(s.key, { rotDays: e.target.value })}
+                              disabled={!canManage}
+                            />
+                            <span className="text-xs text-text-3">days</span>
+                          </>
+                        ) : (
+                          <span className="px-1 text-xs text-text-3">—</span>
+                        )}
+                      </div>
                       {canManage && (
                         <div className="col-start-2 flex items-center gap-0.5 sm:col-start-auto">
                           <IconButton size="sm" label={`Move ${s.name || "stage"} up`} icon={<ArrowUp />} disabled={i === 0} onClick={() => moveBy(i, -1)} />
@@ -213,6 +249,18 @@ export function PipelineEditor({ pipeline, canManage }: { pipeline: Pipeline; ca
                           />
                         </div>
                       )}
+                    </div>
+                    <div className="mt-1.5 grid grid-cols-[24px_minmax(0,1fr)] gap-2">
+                      <Textarea
+                        aria-label={`Stage ${i + 1} guidance`}
+                        className="col-start-2"
+                        rows={s.guidance ? Math.min(4, s.guidance.split("\n").length) : 1}
+                        value={s.guidance}
+                        onChange={(e) => update(s.key, { guidance: e.target.value })}
+                        maxLength={1000}
+                        placeholder={s.kind === "open" ? "Guidance: what to do here, what gets a deal out (one point per line)" : "Guidance (optional)"}
+                        disabled={!canManage}
+                      />
                     </div>
                     {rowError && <p className="mt-1 pl-8 text-xs text-bad-ink">{rowError}</p>}
                   </li>
@@ -235,7 +283,12 @@ export function PipelineEditor({ pipeline, canManage }: { pipeline: Pipeline; ca
               </ul>
             </Callout>
           )}
-          {canManage && <p className="text-xs text-text-3">Deals stay in their stage when you rename or reorder it. A stage that still holds deals cannot be removed — move them out first.</p>}
+          {canManage && (
+            <p className="text-xs text-text-3">
+              Deals stay in their stage when you rename or reorder it. A stage that still holds deals cannot be removed — move them out first. “Stale after” flags an open deal with no
+              progress (a stage move, an activity, a completed task, a held meeting or a call) for that many days, and tells its owner once.
+            </p>
+          )}
         </CardBody>
         {canManage && (
           <CardFooter>

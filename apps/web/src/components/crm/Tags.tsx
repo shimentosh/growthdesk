@@ -19,12 +19,13 @@ export function useTags() {
 }
 
 /** Tags as quiet chips; past `max`, a "+N" count. */
-export function TagList({ tags, max = 3, className }: { tags: TagRef[]; max?: number; className?: string }) {
+/** `wrap={false}` keeps the chips and the +N on one line (table rows). */
+export function TagList({ tags, max = 3, wrap = true, className }: { tags: TagRef[]; max?: number; wrap?: boolean; className?: string }) {
   if (!tags.length) return <span className="text-text-3">—</span>;
   const shown = tags.slice(0, max);
   const rest = tags.length - shown.length;
   return (
-    <span className={cn("inline-flex max-w-full flex-wrap items-center gap-1", className)}>
+    <span className={cn("inline-flex max-w-full items-center gap-1", wrap && "flex-wrap", className)}>
       {shown.map((t) => (
         <Badge key={t.id} tone={tagTone(t.color)}>
           {t.name}

@@ -183,6 +183,11 @@ export class MaintenanceProcessor extends WorkerHost {
       aiCache: await del("AiCache", Prisma.sql`t."expiresAt" < ${now}`),
       mailboxDailyCounts: await del("MailboxDailyCount", Prisma.sql`t."day" < ${c.mailboxDay}`),
       emailLog: await del("EmailLog", Prisma.sql`t."createdAt" < ${c.emailLog}`),
+      mcpCalls: await del("McpCall", Prisma.sql`t."createdAt" < ${c.mcpCalls}`),
+      mcpPendingActions: await del("McpPendingAction", Prisma.sql`t."expiresAt" < ${c.mcpPendingActions}`),
+      // OAuth authorization codes live minutes; same retention as auth tokens.
+      mcpOAuthCodes: await del("McpOAuthCode", Prisma.sql`t."expiresAt" < ${c.authTokens}`),
+      deletedAttachments: await del("Attachment", Prisma.sql`t."deletedAt" < ${c.deletedAttachments}`),
       // Unscoped by necessity (as above); clears a column, never deletes the import.
       importRows: (
         await this.prisma.unscoped.import.updateMany({

@@ -21,6 +21,7 @@ import {
   SAME_ORIGIN,
 } from "./decorators.js";
 import { ApiError, forbidden, locked, notFound, unauthorized, unavailable } from "./errors.js";
+import { applyTeamVisibility } from "./visibility.js";
 
 const UNSAFE = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 const API_KEY_PREFIX = "gd_";
@@ -31,6 +32,7 @@ const SCOPE_PERMISSIONS: Record<string, string[]> = {
   "contacts:read": ["contacts.read", "records.view_all"],
   "contacts:write": ["contacts.read", "contacts.write"],
   "campaigns:read": ["campaigns.read"],
+  "products:write": ["quotes.read", "products.manage"],
 };
 
 /*
@@ -136,6 +138,8 @@ export class AccessGuard implements CanActivate {
     });
     // A deleted workspace (awaiting its purge) is gone for everyone, whatever their role.
     if (!membership || membership.workspace.deletedAt) throw notFound("That workspace");
+    // Paused by an admin: they keep their seat and records but cannot open the workspace.
+    if (membership.deactivatedAt) throw new ApiError(403, "member_deactivated", `Your access to ${membership.workspace.name} is paused. Ask a workspace admin to turn it back on.`);
     const w = membership.workspace;
     ctx.workspace = {
       id: w.id,
@@ -147,6 +151,7 @@ export class AccessGuard implements CanActivate {
       timezone: w.timezone,
       currency: w.currency,
     };
+    await applyTeamVisibility(this.prisma.db, ctx.workspace, w.settings, membership.role, ctx.identity.userId);
     // The owner's two-factor requirement: the web app sends a member refused here to enrol.
     if (w.requireTwoFactor && !ctx.identity.twoFactor) {
       throw new ApiError(403, "two_factor_required", `${w.name} requires two-factor authentication. Turn it on in your account settings to continue.`);

@@ -4,6 +4,7 @@ import { useState } from "react";
 import { ScrollText } from "lucide-react";
 import { labelOf } from "@growthdesk/shared";
 import { Card } from "@/components/ui/Card";
+import { COL, ColumnLabel } from "@/components/ui/columns";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { EntityTile } from "@/components/ui/icons";
 import { QueryState } from "@/components/ui/ErrorState";
@@ -78,11 +79,11 @@ export function AuditSettings() {
                 <table className={table.table}>
                   <thead>
                     <tr>
-                      <th className={table.th}>When</th>
-                      <th className={table.th}>Who</th>
-                      <th className={table.th}>What</th>
-                      <th className={table.th}>Details</th>
-                      <th className={table.th}>IP address</th>
+                      <th className={table.th}><ColumnLabel icon={COL.updated}>When</ColumnLabel></th>
+                      <th className={table.th}><ColumnLabel icon={COL.person}>Who</ColumnLabel></th>
+                      <th className={table.th}><ColumnLabel icon={COL.activity}>What</ColumnLabel></th>
+                      <th className={table.th}><ColumnLabel icon={COL.details}>Details</ColumnLabel></th>
+                      <th className={table.th}><ColumnLabel icon={COL.ip}>IP address</ColumnLabel></th>
                     </tr>
                   </thead>
                   <tbody>

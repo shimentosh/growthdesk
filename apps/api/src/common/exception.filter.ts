@@ -60,14 +60,14 @@ function fromHttpException(thrown: HttpException): ApiError {
  * a provider 401 (rotated key) must not tell the browser it is signed out, and a
  * webhook that could not re-read the subscription must answer 5xx so the provider retries.
  */
-function fromUpstream(thrown: unknown): ApiError | null {
+export function fromUpstream(thrown: unknown): ApiError | null {
   const err = thrown as { type?: string };
   if (!err || typeof err !== "object" || typeof err.type !== "string" || !/^Stripe[A-Za-z]*Error$/.test(err.type)) return null;
   return new ApiError(502, "upstream_error", "The payment provider could not complete that request. Try again in a few minutes.");
 }
 
 /** Prisma's known request errors, by code, without leaking table or constraint names. */
-function fromPrisma(thrown: unknown): ApiError | null {
+export function fromPrisma(thrown: unknown): ApiError | null {
   const err = thrown as { code?: string; name?: string };
   if (!err || typeof err.code !== "string" || !/^P\d{4}$/.test(err.code)) return null;
   switch (err.code) {

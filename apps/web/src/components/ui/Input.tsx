@@ -46,6 +46,8 @@ export type NativeSelectProps = {
   invalid?: boolean;
   disabled?: boolean;
   searchable?: boolean;
+  /** A small muted icon before the chosen value (filter bars). */
+  icon?: ReactNode;
   id?: string;
   name?: string;
   "aria-label"?: string;

@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useApiQuery } from "@/lib/query";
 import { useWorkspace } from "@/lib/session";
+import type { AiAgent } from "@/lib/types/ai-calling";
 import type { CallScript, CallSetup } from "@/lib/types/calls";
 
 /** Connected Twilio accounts and whether click-to-call works here (GET /calls/setup). */
@@ -14,6 +15,19 @@ export function useCallSetup(enabled = true) {
 export function useCallScripts(enabled = true) {
   const ws = useWorkspace();
   return useApiQuery<CallScript[]>(ws.key("calls", "scripts"), enabled && ws.can("calls.read") ? ws.path("/call-scripts") : null);
+}
+
+/**
+ * The workspace's AI calling agents (GET /call-agents): archived ones left out,
+ * or "all" to still name the one a saved step points at. Keyed under
+ * "call-agents", so saving an agent anywhere refreshes the pickers.
+ */
+export function useAiAgents(enabled = true, archived: "exclude" | "all" = "exclude") {
+  const ws = useWorkspace();
+  return useApiQuery<AiAgent[]>(ws.key("call-agents", "list", archived), enabled && ws.can("calls.read") ? ws.path("/call-agents") : null, {
+    query: { archived },
+    staleTime: 30_000,
+  });
 }
 
 const AGENT_KEY = "gd.calls.agentNumber";

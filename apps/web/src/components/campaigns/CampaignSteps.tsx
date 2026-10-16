@@ -193,8 +193,8 @@ function changesStructure(before: SequenceStep[], after: SequenceStep[]): boolea
   return before.some((s, i) => s.type !== after[i]!.type || (s.type === "branch" && lanes(s) !== lanes(after[i]!)));
 }
 
-/** What each non-email channel needs before its steps can reach anyone. */
-const CHANNEL_NOTES: { type: "whatsapp" | "telegram" | "call_task"; title: string; text: string; href?: string }[] = [
+/** What each non-email channel needs before its steps can reach anyone; the link shows to roles with `permission` (default integrations.read). */
+const CHANNEL_NOTES: { type: "whatsapp" | "telegram" | "call_task" | "ai_call"; title: string; text: string; href?: string; link?: string; permission?: string }[] = [
   {
     type: "whatsapp",
     title: "WhatsApp",
@@ -208,6 +208,14 @@ const CHANNEL_NOTES: { type: "whatsapp" | "telegram" | "call_task"; title: strin
     href: "/settings/channels",
   },
   { type: "call_task", title: "Calls", text: "A call step creates a call task for the owner, with click-to-call when calling is set up.", href: "/settings/calling" },
+  {
+    type: "ai_call",
+    title: "AI calls",
+    text: "Only contacts with consent recorded as granted and a phone number are called (others skip the step), never anyone on the do-not-contact list, and only within calling hours in their own time zone. A booked meeting, “not interested”, “do not call” or a wrong number stops the contact's enrollment.",
+    href: "/ai-agents",
+    link: "AI agents",
+    permission: "calls.read",
+  },
 ];
 
 function ChannelNotes({ steps }: { steps: SequenceStep[] }) {
@@ -221,11 +229,11 @@ function ChannelNotes({ steps }: { steps: SequenceStep[] }) {
         {notes.map((n) => (
           <li key={n.type}>
             <span className="font-medium text-text">{n.title}:</span> {n.text}
-            {n.href && ws.can("integrations.read") && (
+            {n.href && ws.can(n.permission ?? "integrations.read") && (
               <>
                 {" "}
                 <Link href={ws.href(n.href)} className="text-accent-ink hover:text-accent-hi">
-                  Set up
+                  {n.link ?? "Set up"}
                 </Link>
               </>
             )}

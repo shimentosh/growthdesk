@@ -1,23 +1,26 @@
 import {
+  AudioLines,
+  FileSignature,
+  Package,
+  TrendingUp,
   BarChart3,
   Building2,
   CalendarDays,
   CheckSquare,
   FileText,
+  Gauge,
   Handshake,
+  History,
   Home,
   Inbox,
   ListChecks,
-  ListOrdered,
-  Palette,
+  type LucideIcon,
   Phone,
   Send,
   Settings,
-  Upload,
   UserPlus,
   Users,
   Workflow,
-  type LucideIcon,
 } from "lucide-react";
 
 /*
@@ -61,10 +64,10 @@ export const NAV: NavGroup[] = [
     id: "crm",
     label: "CRM",
     items: [
-      { href: "/leads", label: "Leads", icon: UserPlus, permission: "contacts.read" },
+      // CSV imports open from the Leads page (and lead lists), so they light Leads.
+      { href: "/leads", label: "Leads", icon: UserPlus, permission: "contacts.read", also: ["/imports"] },
       { href: "/contacts", label: "Contacts", icon: Users, permission: "contacts.read" },
       { href: "/companies", label: "Companies", icon: Building2, permission: "contacts.read" },
-      { href: "/imports", label: "Imports", icon: Upload, permission: "contacts.import" },
     ],
   },
   {
@@ -74,9 +77,17 @@ export const NAV: NavGroup[] = [
     items: [
       { href: "/campaigns", label: "Campaigns", icon: Send, permission: ["campaigns.read", "marketing.read"], also: ["/marketing/campaigns"] },
       { href: "/marketing/lists", label: "Lead lists", icon: ListChecks, permission: ["marketing.read", "contacts.read"] },
-      { href: "/sequences", label: "Sequences", icon: ListOrdered, permission: "campaigns.read" },
-      { href: "/templates", label: "Templates", icon: FileText, permission: "templates.read" },
-      { href: "/marketing/designs", label: "Email designs", icon: Palette, permission: "marketing.read" },
+      // Sequences and email designs are tabs on the Templates page (components/templates/library).
+      { href: "/templates", label: "Templates", icon: FileText, permission: ["templates.read", "campaigns.read", "marketing.read"], also: ["/sequences", "/marketing/designs"] },
+    ],
+  },
+  {
+    // Voice AI agents (Cartesia) and the call list / history they share with reps.
+    id: "calling",
+    label: "Calling",
+    items: [
+      { href: "/ai-agents", label: "AI agents", icon: AudioLines, permission: "calls.read" },
+      { href: "/calls", label: "Calls", icon: Phone, permission: "calls.read" },
     ],
   },
   {
@@ -84,8 +95,10 @@ export const NAV: NavGroup[] = [
     label: "Sales",
     items: [
       { href: "/deals", label: "Deals", icon: Handshake, permission: "deals.read" },
-      { href: "/meetings", label: "Meetings", icon: CalendarDays, permission: ["deals.read", "contacts.read"] },
-      { href: "/calls", label: "Calls", icon: Phone, permission: "calls.read" },
+      { href: "/forecast", label: "Forecast", icon: TrendingUp, permission: "deals.read" },
+      { href: "/quotes", label: "Quotes", icon: FileSignature, permission: "quotes.read" },
+      { href: "/products", label: "Products", icon: Package, permission: "quotes.read" },
+      { href: "/meetings", label: "Meetings", icon: CalendarDays, permission: ["deals.read", "contacts.read"], also: ["/meetings/booking-pages"] },
     ],
   },
   {
@@ -96,7 +109,11 @@ export const NAV: NavGroup[] = [
   {
     id: "insights",
     label: "Insights",
-    items: [{ href: "/reports", label: "Reports", icon: BarChart3, permission: "analytics.read" }],
+    items: [
+      { href: "/reports", label: "Reports", icon: BarChart3, permission: "analytics.read" },
+      { href: "/team", label: "Team overview", icon: Gauge, permission: "analytics.team" },
+      { href: "/activity", label: "Team activity", icon: History, permission: "contacts.read" },
+    ],
   },
 ];
 
@@ -114,9 +131,16 @@ export const SETTINGS_NAV: SettingsGroup[] = [
       { href: "/settings/general", label: "General" },
       { href: "/settings/company", label: "Company profile", permission: "settings.manage" },
       { href: "/settings/members", label: "Members", permission: "members.read" },
+      { href: "/settings/teams", label: "Teams", permission: "members.read" },
       { href: "/settings/roles", label: "Roles & permissions", permission: "members.read" },
+      { href: "/settings/lead-routing", label: "Lead routing", permission: "members.read" },
       { href: "/settings/billing", label: "Plan & billing", permission: "billing.read" },
     ],
+  },
+  {
+    // Personal: each member connects their own calendar.
+    label: "You",
+    items: [{ href: "/settings/calendar", label: "Calendar" }],
   },
   {
     label: "Outreach",
@@ -138,12 +162,15 @@ export const SETTINGS_NAV: SettingsGroup[] = [
       { href: "/settings/tags", label: "Tags", permission: "contacts.read" },
       { href: "/settings/fields", label: "Custom fields", permission: "contacts.read" },
       { href: "/settings/suppressions", label: "Suppression list", permission: "contacts.read" },
+      { href: "/settings/lead-scoring", label: "Lead scoring", permission: "contacts.read" },
     ],
   },
   {
     label: "Developers",
     items: [
       { href: "/settings/api-keys", label: "API keys", permission: "apikeys.manage" },
+      // Personal tokens: every member may connect Claude as themselves.
+      { href: "/settings/mcp", label: "MCP / Claude" },
       { href: "/settings/webhooks", label: "Webhooks", permission: "webhooks.manage" },
     ],
   },

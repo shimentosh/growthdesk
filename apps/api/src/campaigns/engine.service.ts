@@ -28,11 +28,13 @@ import { ActivityService } from "../crm/activity.service.js";
 import { EventsService } from "../core/events.service.js";
 import { NotificationsService } from "../notifications/notifications.service.js";
 import { CHAT_SENDER, type ChatSender } from "../channels/chat-sender.js";
+import { AI_CALLER, type AiCaller } from "../ai-calling/ai-caller.js";
 import { EntitlementsService } from "../billing/entitlements.service.js";
 import { PlatformSettingsService } from "../core/platform-settings.service.js";
 import { replyTrackingProblem, replyTrackingStalled } from "../mailboxes/mailbox-upkeep.js";
 import {
   ACTION_STEPS,
+  EXTERNAL_STEPS,
   MESSAGE_STEPS,
   type ScheduleT,
   type SettingsT,
@@ -153,6 +155,7 @@ export class EngineService {
     private readonly enrollment: EnrollmentService,
     @Inject(APP_CONFIG) private readonly config: AppConfig,
     @Optional() @Inject(CHAT_SENDER) private readonly chat?: ChatSender,
+    @Optional() @Inject(AI_CALLER) private readonly aiCaller?: AiCaller,
   ) {}
 
   // ─── Tick: discover due work across tenants ───────────────────────────────
@@ -480,9 +483,18 @@ export class EngineService {
     if (run.now.getTime() - prior.startedAt.getTime() < STALE_RUNNING_MS) {
       return { outcome: "busy", reason: "This step is already being run" };
     }
-    if (!MESSAGE_STEPS.has(prior.stepType)) {
+    if (!EXTERNAL_STEPS.has(prior.stepType)) {
       // Internal steps commit their effect and their execution row together, so a running row means nothing happened.
       return { position: prior.position, exec: prior, messageRowId: null };
+    }
+    if (prior.stepType === "ai_call") {
+      // The Call row is written before Cartesia is asked to dial (AiCallsService.dial), under the id held here.
+      const callRowId = typeof asObj(prior.result).callRowId === "string" ? (asObj(prior.result).callRowId as string) : null;
+      const state = callRowId && this.aiCaller ? await this.aiCaller.stepCallState(run.workspaceId, callRowId) : "none";
+      if (state === "none") return { position: prior.position, exec: prior, messageRowId: callRowId };
+      if (state === "placed") return this.finish(run, prior.position, prior.id, "succeeded", { result: { callId: callRowId } });
+      if (state === "failed") return { position: prior.position, exec: prior, messageRowId: null };
+      return this.finish(run, prior.position, prior.id, "uncertain", { error: "The worker stopped while placing the AI call; Cartesia may have dialled, so it was not called again." });
     }
     const messageRowId = typeof asObj(prior.result).messageRowId === "string" ? (asObj(prior.result).messageRowId as string) : null;
     const msg = messageRowId ? await this.prisma.db.message.findFirst({ where: { id: messageRowId, workspaceId: run.workspaceId } }) : null;
@@ -599,6 +611,7 @@ export class EngineService {
       company: c.company?.name ?? "",
       country: c.country,
       tag: c.tags.map((t) => t.tag.name).join("\n"),
+      call_outcome: await this.lastAiCallOutcome(run),
     };
     for (const [k, v] of Object.entries(asObj(c.customFields))) {
       if (v !== null && v !== undefined) facts[`custom.${k.toLowerCase()}`] = String(v);
@@ -624,6 +637,8 @@ export class EngineService {
       case "call_task":
       case "create_task":
         return this.taskStep(run, pos, retry);
+      case "ai_call":
+        return this.aiCallStep(run, pos, retry);
       case "update_field":
         return this.updateFieldStep(run, pos, retry);
       case "assign_owner":
@@ -840,6 +855,61 @@ export class EngineService {
         return this.finish(run, pos, exec.id, "uncertain", { messageId: result.messageRowId, error: result.reason });
       case "failed":
         return this.sendFailed(run, pos, exec.id, result.reason, false);
+    }
+  }
+
+  /** The latest AI call this enrollment placed: its outcome, "pending" while it has none yet, "" when there was none. */
+  private async lastAiCallOutcome(run: Run): Promise<string> {
+    const call = await this.prisma.db.call.findFirst({
+      where: { workspaceId: run.workspaceId, enrollmentId: run.e.id, provider: "cartesia" },
+      orderBy: { createdAt: "desc" },
+      select: { outcome: true, processedAt: true },
+    });
+    if (!call) return "";
+    return call.outcome || (call.processedAt ? "failed" : "pending");
+  }
+
+  /**
+   * An AI agent phones the contact (AiCallsService.callForStep, which applies
+   * the consent, do-not-contact, calling-hours and frequency rules right
+   * before it dials). The step succeeds once Cartesia accepted the call; what
+   * the person said comes back later, onto the Call, and a following branch
+   * can read it as `call_outcome`.
+   */
+  private async aiCallStep(run: Run, pos: number, retry: Retry | null): Promise<StepOutcome> {
+    const { e, contact, campaign, workspaceId } = run;
+    const cfg = configOf(run.steps[pos]!);
+    if (!this.aiCaller) return this.record(run, pos, "skipped", { reason: "unavailable" }, "AI calling is not available on this installation", retry);
+    if (!cfg.agentId) return this.fail(run, pos, "The AI call step has no agent", retry);
+
+    const callRowId = retry?.messageRowId ?? randomUUID();
+    const exec = await this.writeAhead(run, pos, "ai_call", retry, { callRowId, agentId: cfg.agentId });
+    if (!exec) return { outcome: "busy", reason: "Another worker is running this step" };
+
+    const result = await this.aiCaller.callForStep({
+      workspaceId,
+      agentId: cfg.agentId,
+      contactId: contact!.id,
+      campaignId: campaign.id,
+      enrollmentId: e.id,
+      fallbackOwnerId: campaign.ownerId ?? campaign.createdById ?? null,
+      callRowId,
+    });
+    switch (result.status) {
+      case "placed":
+        return this.finish(run, pos, exec.id, "succeeded", { result: { callId: result.callId } });
+      case "skipped":
+        return this.finish(run, pos, exec.id, "skipped", { error: result.reason, result: { reason: "not_callable" } });
+      case "later":
+        // Nothing was dialled: forget the attempt and wait (inside the campaign's own window too).
+        await this.prisma.db.stepExecution.deleteMany({ where: { id: exec.id, workspaceId } });
+        return this.reschedule(run, pos, nextOpening(run.schedule, new Date(Math.max(result.at.getTime(), Date.now() + 60_000))), result.reason);
+      case "blocked":
+        return this.blocked(run, exec.id, result.reason);
+      case "uncertain":
+        return this.finish(run, pos, exec.id, "uncertain", { error: result.reason, result: { callId: result.callId } });
+      case "failed":
+        return this.sendFailed(run, pos, exec.id, result.reason, result.permanent);
     }
   }
 

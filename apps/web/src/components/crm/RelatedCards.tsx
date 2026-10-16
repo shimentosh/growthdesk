@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useState, type ReactNode } from "react";
-import { Plus, X } from "lucide-react";
+import { ListChecks, Plus, X } from "lucide-react";
 import { labelOf } from "@growthdesk/shared";
 import { AddToListModal } from "@/components/marketing/AddToListModal";
 import { MembershipBadge, useMarketing } from "@/components/marketing/common";
@@ -19,11 +19,12 @@ import type { ContactListMembership } from "@/lib/types/marketing";
 const ROW = "flex items-start justify-between gap-3 px-4 py-2.5";
 
 /** A titled list on a record's side column. Renders nothing when empty unless `empty` is given. */
-export function RelatedCard({ title, count, empty, action, children }: { title: string; count: number; empty?: string; action?: ReactNode; children: ReactNode }) {
+export function RelatedCard({ title, count, empty, action, icon, children }: { title: string; count: number; empty?: string; action?: ReactNode; icon?: ReactNode; children: ReactNode }) {
   if (!count && !empty) return null;
   return (
     <Card>
       <CardHeader
+        icon={icon}
         title={
           <span className="flex items-center gap-2">
             {title}
@@ -292,6 +293,7 @@ export function MarketingListsCard({ contact }: { contact: ContactDetail }) {
     <>
       <RelatedCard
         title="Marketing lists"
+        icon={<ListChecks />}
         count={rows.length}
         empty={lists.isPending ? "Loading…" : lists.isError ? "The lists could not be loaded." : "Not on any marketing list."}
         action={

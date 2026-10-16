@@ -7,6 +7,7 @@ import { Table, Td, Th } from "@/components/imports/Table";
 import { Badge } from "@/components/ui/Badge";
 import { Button, IconButton } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
+import { COL } from "@/components/ui/columns";
 import { ConfirmDialog } from "@/components/ui/Dialog";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/DropdownMenu";
 import { EmptyState } from "@/components/ui/EmptyState";
@@ -102,10 +103,10 @@ function CustomFieldsSettings() {
                   <Table>
                     <thead>
                       <tr>
-                        <Th>Label</Th>
-                        <Th>Key</Th>
-                        <Th>Type</Th>
-                        <Th className="hidden sm:table-cell">Options</Th>
+                        <Th icon={COL.name}>Label</Th>
+                        <Th icon={COL.key}>Key</Th>
+                        <Th icon={COL.type}>Type</Th>
+                        <Th icon={COL.list} className="hidden sm:table-cell">Options</Th>
                         {canManage && (
                           <Th className="w-12">
                             <span className="sr-only">Actions</span>

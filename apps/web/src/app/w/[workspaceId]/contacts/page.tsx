@@ -2,7 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { Suspense, useState } from "react";
-import { Copy, Download, ListChecks, Plus, Upload, Users } from "lucide-react";
+import { BadgeCheck, Copy, Download, Handshake, ListChecks, Plus, Upload, UserPlus, Users, type LucideIcon } from "lucide-react";
 import type { LifecycleStage } from "@growthdesk/shared";
 import { ContactListView, Segments, useContactQuery } from "@/components/crm/ContactListView";
 import { LIST_READ } from "@/components/crm/lifecycle";
@@ -35,11 +35,11 @@ export default function ContactsPage() {
 /** Contacts shows people at the contact stage unless the stage control says otherwise. */
 const DEFAULTS = { stage: ["contact"] as const satisfies readonly LifecycleStage[] };
 type StageChoice = "all" | LifecycleStage;
-const STAGE_OPTIONS: { value: StageChoice; label: string }[] = [
-  { value: "all", label: "All" },
-  { value: "lead", label: "Leads" },
-  { value: "sales", label: "In sales" },
-  { value: "contact", label: "Contacts" },
+const STAGE_OPTIONS: { value: StageChoice; label: string; icon: LucideIcon }[] = [
+  { value: "all", label: "All", icon: Users },
+  { value: "lead", label: "Leads", icon: UserPlus },
+  { value: "sales", label: "In sales", icon: Handshake },
+  { value: "contact", label: "Contacts", icon: BadgeCheck },
 ];
 
 function Contacts() {
@@ -110,6 +110,7 @@ function Contacts() {
               <NativeSelect
                 size="sm"
                 aria-label="List"
+                icon={<ListChecks />}
                 className="w-full sm:w-64"
                 value={state.listId}
                 disabled={lists.isPending}

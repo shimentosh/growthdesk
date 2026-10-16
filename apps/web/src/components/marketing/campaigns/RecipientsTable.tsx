@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 import { Users } from "lucide-react";
 import { MARKETING_SEND_STATUSES, type MarketingSendStatus } from "@growthdesk/shared";
 import { Card } from "@/components/ui/Card";
+import { COL, ColumnLabel } from "@/components/ui/columns";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { ErrorState } from "@/components/ui/ErrorState";
 import { Pagination } from "@/components/ui/Pagination";
@@ -18,6 +19,14 @@ import type { CampaignRecipient, MarketingCampaign, Paged } from "@/lib/types/ma
 const TH = "h-9 px-3 text-left text-xs font-medium whitespace-nowrap text-text-3";
 const TD = "px-3 py-2 align-middle";
 const STATUS_LABEL: Record<MarketingSendStatus, string> = { queued: "Queued", sent: "Sent", failed: "Failed", skipped: "Skipped", bounced: "Bounced", complained: "Complained" };
+const STATUS_ICON = {
+  queued: COL.pending,
+  sent: COL.sent,
+  failed: COL.failed,
+  skipped: COL.skipped,
+  bounced: COL.bounced,
+  complained: COL.problem,
+} satisfies Record<MarketingSendStatus, unknown>;
 
 /** Who the campaign went to and what happened, page by page (GET recipients). */
 export function RecipientsTable({ campaign }: { campaign: MarketingCampaign }) {
@@ -45,7 +54,9 @@ export function RecipientsTable({ campaign }: { campaign: MarketingCampaign }) {
   return (
     <div className="flex flex-col gap-3">
       <div role="tablist" aria-label="Status" className="-mx-1 flex gap-1 overflow-x-auto px-1">
-        {(["", ...MARKETING_SEND_STATUSES] as const).map((s) => (
+        {(["", ...MARKETING_SEND_STATUSES] as const).map((s) => {
+          const Icon = s ? STATUS_ICON[s] : COL.people;
+          return (
           <button
             key={s || "all"}
             type="button"
@@ -56,13 +67,15 @@ export function RecipientsTable({ campaign }: { campaign: MarketingCampaign }) {
               setPage(1);
             }}
             className={cn(
-              "h-7 shrink-0 rounded-sm px-2.5 text-xs font-medium whitespace-nowrap",
+              "inline-flex h-7 shrink-0 items-center gap-1.5 rounded-sm px-2.5 text-xs font-medium whitespace-nowrap",
               status === s ? "bg-accent-soft text-accent-ink" : "text-text-2 hover:bg-hover hover:text-text",
             )}
           >
+            <Icon aria-hidden className="size-3.5 shrink-0 opacity-70" strokeWidth={1.75} />
             {s ? STATUS_LABEL[s] : "All"}
           </button>
-        ))}
+          );
+        })}
       </div>
       <Card className="overflow-hidden">
         {q.isPending ? (
@@ -86,26 +99,26 @@ export function RecipientsTable({ campaign }: { campaign: MarketingCampaign }) {
               <thead className="border-b border-line bg-s-2">
                 <tr>
                   <th scope="col" className={TH}>
-                    Recipient
+                    <ColumnLabel icon={COL.person}>Recipient</ColumnLabel>
                   </th>
                   <th scope="col" className={TH}>
-                    Status
+                    <ColumnLabel icon={COL.status}>Status</ColumnLabel>
                   </th>
                   <th scope="col" className={TH}>
-                    Sent
+                    <ColumnLabel icon={COL.sent}>Sent</ColumnLabel>
                   </th>
                   {campaign.trackOpens && (
                     <th scope="col" className={TH}>
-                      Opened
+                      <ColumnLabel icon={COL.opened}>Opened</ColumnLabel>
                     </th>
                   )}
                   {campaign.trackClicks && (
                     <th scope="col" className={TH}>
-                      Clicked
+                      <ColumnLabel icon={COL.clicked}>Clicked</ColumnLabel>
                     </th>
                   )}
                   <th scope="col" className={TH}>
-                    Notes
+                    <ColumnLabel icon={COL.notes}>Notes</ColumnLabel>
                   </th>
                 </tr>
               </thead>

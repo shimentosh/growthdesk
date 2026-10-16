@@ -175,6 +175,12 @@ export type ActivityEntry = {
   occurredAt: string;
   actorId: string | null;
   actor?: { id: string; name: string } | null;
+  /** Who acted: user | ai_agent | workflow | integration | system (older entries: user when actorId is set). */
+  actorType?: string;
+  /** The agent's, workflow's or integration's name when it acted. */
+  actorName?: string;
+  actorRef?: string;
+  onBehalfOfId?: string | null;
 };
 
 /** GET /companies/:id — companies.service.ts `get()` (the company row spread, plus relations). */

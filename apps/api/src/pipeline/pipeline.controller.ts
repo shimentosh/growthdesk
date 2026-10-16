@@ -14,6 +14,8 @@ const DealListQuery = ListQuery.extend({
   ownerId: z.string().max(40).optional(),
   contactId: z.string().uuid().optional(),
   q: z.string().max(200).optional(),
+  /** Only open deals past their stage's "stale after" (forecast/progress.ts). */
+  stale: z.enum(["true", "false"]).optional(),
   pageSize: z.coerce.number().int().min(1).max(1000).default(500),
 });
 const TaskListQuery = ListQuery.extend({
@@ -60,7 +62,7 @@ export class PipelineController {
   @Permission("deals.read")
   @Get("deals")
   deals(@Ctx() ctx: RequestContext, @Query(DealListQuery) q: z.infer<typeof DealListQuery>) {
-    return this.pipeline.deals(ctx, q, q.page, q.pageSize);
+    return this.pipeline.deals(ctx, { ...q, stale: q.stale === "true" }, q.page, q.pageSize);
   }
 
   @Permission("deals.write")
@@ -84,8 +86,10 @@ export class PipelineController {
   @Permission("deals.write")
   @HttpCode(200)
   @Post("deals/:id/move")
-  move(@Ctx() ctx: RequestContext, @Param("id") id: string, @Body(MoveDealInput) body: z.infer<typeof MoveDealInput>) {
-    return this.pipeline.moveDeal(ctx, id, body.stageId, body.reason);
+  async move(@Ctx() ctx: RequestContext, @Param("id") id: string, @Body(MoveDealInput) body: z.infer<typeof MoveDealInput>) {
+    const deal = await this.pipeline.moveDeal(ctx, id, body.stageId, body.reason);
+    // A nudge, not a rule: an open deal moved on without a next step says so, and the move still happens.
+    return deal.status === "open" && !deal.nextStep.trim() ? { ...deal, warning: "This deal has no next step. Add one so it doesn't stall." } : deal;
   }
 
   @Permission("deals.delete")

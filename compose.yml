@@ -21,6 +21,10 @@ x-api-env: &api-env
   API_PORT: 3601
   PUBLIC_APP_URL: ${PUBLIC_APP_URL:?set PUBLIC_APP_URL}
   ADMIN_APP_URL: ${ADMIN_APP_URL:?set ADMIN_APP_URL}
+  # Optional: the api domain above, e.g. https://api-growthdesk.sentosh.com — MCP clients connect to {PUBLIC_API_URL}/mcp (docs/MCP.md).
+  # It is also the OAuth issuer for "Add custom connector" (claude.ai): /.well-known/oauth-* and /oauth/* are served there.
+  # Unset: issuer and MCP URL fall back to {PUBLIC_APP_URL}/api through the web app.
+  PUBLIC_API_URL: ${PUBLIC_API_URL:-}
   ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-}
   TRUSTED_PROXY_HOPS: ${TRUSTED_PROXY_HOPS:-1}
   DATABASE_URL: ${DATABASE_URL:?set DATABASE_URL}

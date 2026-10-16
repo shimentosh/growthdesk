@@ -226,6 +226,8 @@ export type AdminSettings = {
   stripeWebhookSecretFromEnv: boolean;
   trialsPerIpPerDay: number | null;
   retentionDays: Partial<Record<RetentionKey, number>>;
+  /** Checks on every email a contact gets by hand, CSV, the leads API or MCP. */
+  contactEmailValidation: ContactEmailValidation;
   /** The server environment's values: what applies while a setting above is empty. */
   env: {
     googleClientId: string;
@@ -376,3 +378,23 @@ export type SupportConversation = Omit<SupportConversationRow, "messages"> & {
 /** GET /admin/email-log */
 export type EmailLogRow = { id: string; to: string; template: string; status: string; error: string; createdAt: string };
 export type EmailLogPage = { items: EmailLogRow[]; total: number; page: number; pageSize: number; templates: string[] };
+
+export type ContactEmailValidation = {
+  enabled: boolean;
+  blockDisposable: boolean;
+  checkMailServer: boolean;
+  blockRoleAccounts: boolean;
+  blockedDomains: string[];
+};
+
+export type EmailCheck = "syntax" | "blocked" | "disposable" | "role" | "mail_server";
+
+/** POST /admin/settings/email-validation/test */
+export type EmailValidationResult = {
+  enabled: boolean;
+  email: string;
+  ok: boolean;
+  reason?: EmailCheck;
+  message?: string;
+  checks: { check: EmailCheck; ok: boolean; detail?: string }[];
+};

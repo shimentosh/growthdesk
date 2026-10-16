@@ -11,8 +11,12 @@ export type InvitationRow = { id: string; email: string; role: WorkspaceRole; ex
 /** POST /workspaces/:id/invitations — workspaces.service.ts `invite()` */
 export type InviteResult = { id: string; email: string; role: WorkspaceRole; expiresAt: string };
 
+/** POST /workspaces/:id/invitations with `emails` — `inviteMany()` */
+export type InviteOutcome = { email: string; status: "invited" | "already_member" | "already_invited" | "no_seat" | "invalid"; invitationId?: string };
+export type BulkInviteResult = { results: InviteOutcome[] };
+
 /** PATCH /workspaces/:id/members/:id — `changeRole()` */
-export type ChangeRoleResult = { id: string; role: WorkspaceRole };
+export type ChangeRoleResult = { id: string; role: WorkspaceRole; deactivatedAt?: string | null };
 
 export type EditableRole = Exclude<WorkspaceRole, "owner">;
 

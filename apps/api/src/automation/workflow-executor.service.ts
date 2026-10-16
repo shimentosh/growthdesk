@@ -13,6 +13,7 @@ import { queueConfirmations } from "../marketing/double-opt-in.js";
 import { type Condition, type SubjectSnapshot, evaluateConditions } from "./conditions.js";
 import { type ParsedAction, parseAction } from "./actions.js";
 import { advanceStage } from "../crm/lifecycle.js";
+import { runAs } from "../common/actor.js";
 
 /** Runs at this depth or deeper (a workflow's action triggering another workflow, and so on) are not started. */
 export const MAX_WORKFLOW_DEPTH = 3;
@@ -175,7 +176,9 @@ export class WorkflowExecutor {
 
       let outcome: ActionOutcome;
       try {
-        outcome = await this.prisma.db.$transaction(async (tx) => {
+        // Everything the action writes (timeline, audit) says this workflow did it — and who approved the run, if anyone.
+        const actor = { type: "workflow" as const, id: ctx.workflow.id, name: ctx.workflow.name, ref: `workflow:${ctx.workflow.id}:run:${run.id}`, onBehalfOf: run.approvedById ? { id: run.approvedById } : null };
+        outcome = await runAs(actor, () => this.prisma.db.$transaction(async (tx) => {
           const res = await this.runAction(tx, ctx, action);
           const entry: LogEntry = { step: "action", index: i, type, status: res.status, detail: res.detail, ...(res.data ? { data: res.data } : {}), at: new Date().toISOString() };
           await tx.workflowRun.update({
@@ -184,7 +187,7 @@ export class WorkflowExecutor {
           });
           log.push(entry);
           return res;
-        });
+        }));
       } catch (e) {
         const message = (e instanceof Error ? e.message : String(e)).slice(0, 1000);
         attempts += 1;
@@ -325,10 +328,14 @@ export class WorkflowExecutor {
           user: { suspendedAt: null },
         },
         orderBy: [{ createdAt: "asc" }, { userId: "asc" }],
-        select: { userId: true },
+        select: { userId: true, deactivatedAt: true, user: { select: { outOfOfficeUntil: true } } },
       });
       const pool = members.map((m) => m.userId);
       if (!pool.length) throw new PermanentActionError("Nobody is left in this workflow's round-robin pool");
+      // Paused members and people marked away keep their place in the turn order but are skipped.
+      const now = Date.now();
+      const present = new Set(members.filter((m) => !m.deactivatedAt && !(m.user.outOfOfficeUntil && m.user.outOfOfficeUntil.getTime() > now)).map((m) => m.userId));
+      if (!present.size) return { status: "skipped", detail: "Everyone in the round-robin pool is away or paused" };
       // The last contact this workflow assigned tells us whose turn it is.
       const last = await tx.activity.findFirst({
         where: { workspaceId: ctx.workspaceId, type: "contact.assigned", data: { path: ["workflowId"], equals: ctx.workflow.id } },
@@ -337,7 +344,13 @@ export class WorkflowExecutor {
       });
       const lastOwner = (last?.data as { ownerId?: string } | null)?.ownerId;
       const idx = lastOwner ? pool.indexOf(lastOwner) : -1;
-      ownerId = pool[(idx + 1) % pool.length]!;
+      for (let step = 1; step <= pool.length; step++) {
+        const candidate = pool[(idx + step) % pool.length]!;
+        if (present.has(candidate)) {
+          ownerId = candidate;
+          break;
+        }
+      }
     }
     if (current?.ownerId === ownerId) return { status: "skipped", detail: "Already owned by that person" };
     await tx.contact.update({ where: { id: contact.id, workspaceId: ctx.workspaceId }, data: { ownerId } });

@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useState, type FormEvent } from "react";
-import { ExternalLink, Info, Pencil, Plus, Trash2, Users } from "lucide-react";
+import { ExternalLink, Info, Pencil, Plus, Trash2, Users, type LucideIcon } from "lucide-react";
 import {
   CompanyConflict,
   CompanyFields,
@@ -13,6 +13,7 @@ import {
   type CompanyDraft,
   type CompanyInputT,
 } from "@/components/crm/CompanyForm";
+import { AttachmentsPanel } from "@/components/attachments/AttachmentsPanel";
 import { CustomFieldsCard } from "@/components/crm/CustomFieldsCard";
 import { NewContactModal } from "@/components/crm/NewContactModal";
 import { NotesPanel } from "@/components/crm/NotesPanel";
@@ -24,6 +25,7 @@ import { Avatar } from "@/components/ui/Avatar";
 import { StatusBadge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { Card, CardBody, CardFooter, CardHeader } from "@/components/ui/Card";
+import { COL, ColumnLabel } from "@/components/ui/columns";
 import { ConfirmDialog } from "@/components/ui/Dialog";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { ErrorState } from "@/components/ui/ErrorState";
@@ -239,9 +241,17 @@ function Loaded({ company: c, onDeleted }: { company: CompanyDetail; onDeleted: 
                 <table className="w-full min-w-[560px] border-collapse text-sm">
                   <thead className="border-b border-line bg-s-2">
                     <tr>
-                      {["Name", "Job title", "Status", "Owner", "Last contacted"].map((h) => (
+                      {(
+                        [
+                          { h: "Name", icon: COL.name },
+                          { h: "Job title" },
+                          { h: "Status", icon: COL.status },
+                          { h: "Owner", icon: COL.owner },
+                          { h: "Last contacted", icon: COL.updated },
+                        ] as { h: string; icon?: LucideIcon }[]
+                      ).map(({ h, icon }) => (
                         <th key={h} scope="col" className="h-9 px-3 text-left text-xs font-medium whitespace-nowrap text-text-3">
-                          {h}
+                          <ColumnLabel icon={icon}>{h}</ColumnLabel>
                         </th>
                       ))}
                     </tr>
@@ -273,6 +283,7 @@ function Loaded({ company: c, onDeleted }: { company: CompanyDetail; onDeleted: 
           </Card>
 
           <NotesPanel notes={c.notes} addPath={ws.path(`/companies/${c.id}/notes`)} invalidate={[detailKey]} />
+          <AttachmentsPanel entityType="company" entityId={c.id} />
           <Timeline entries={c.activities} limitNote={c.activities.length >= 100 ? "The latest 100 events." : undefined} />
         </div>
 

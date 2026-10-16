@@ -40,6 +40,12 @@ model User {
   googleSub         String?      @unique
   avatarUrl         String       @default("")
   timezone          String       @default("UTC")
+  /// Job title, shown to teammates ("Account Executive").
+  title             String       @default("")
+  /// Work phone, shown to teammates.
+  phone             String       @default("")
+  /// Away until then: lead routing skips them, teammates see it.
+  outOfOfficeUntil  DateTime?
   platformRole      PlatformRole @default(none)
   suspendedAt       DateTime?
   suspendedReason   String       @default("")
@@ -73,6 +79,7 @@ model User {
   calls               Call[]
   notifications       Notification[]
   signInFailures      SignInFailure[]
+  mcpTokens           McpToken[]
 }
 
 model Session {
@@ -375,71 +382,92 @@ model Workspace {
   createdAt         DateTime        @default(now())
   updatedAt         DateTime        @updatedAt
 
-  billingAccount     BillingAccount          @relation(fields: [billingAccountId], references: [id], onDelete: Restrict)
-  memberships        Membership[]
-  invitations        Invitation[]
-  usageCounters      UsageCounter[]
-  contacts           Contact[]
-  identifiers        ContactIdentifier[]
-  contactSources     ContactSource[]
-  companies          Company[]
-  tags               Tag[]
-  contactTags        ContactTag[]
-  companyTags        CompanyTag[]
-  customFields       CustomFieldDefinition[]
-  savedViews         SavedView[]
-  notes              Note[]
-  activities         Activity[]
-  imports            Import[]
-  duplicates         DuplicateCandidate[]
-  suppressions       Suppression[]
-  consentEvents      ConsentEvent[]
-  marketingLists     MarketingList[]
-  listMemberships    ListMembership[]
-  espConnection      EspConnection?
-  sendingDomains     SendingDomain[]
-  emailDesigns       EmailDesign[]
-  librarySeeds       LibrarySeed[]
-  assets             WorkspaceAsset[]
-  marketingCampaigns MarketingCampaign[]
-  marketingSends     MarketingSend[]
-  pipelines          Pipeline[]
-  stages             PipelineStage[]
-  deals              Deal[]
-  stageChanges       DealStageChange[]
-  meetings           Meeting[]
-  tasks              Task[]
-  mailboxes          Mailbox[]
-  mailboxCounts      MailboxDailyCount[]
-  templates          Template[]
-  templateVersions   TemplateVersion[]
-  sequences          Sequence[]
-  sequenceSteps      SequenceStep[]
-  campaigns          Campaign[]
-  campaignMailbox    CampaignMailbox[]
-  enrollments        Enrollment[]
-  executions         StepExecution[]
-  conversations      Conversation[]
-  messages           Message[]
-  messageEvents      MessageEvent[]
-  convoNotes         ConversationNote[]
-  conversationTags   ConversationTag[]
-  chatVisitors       ChatVisitor[]
-  integrations       ChannelIntegration[]
-  calls              Call[]
-  callScripts        CallScript[]
-  workflows          Workflow[]
-  workflowRuns       WorkflowRun[]
-  events             DomainEvent[]
-  notifications      Notification[]
-  apiKeys            ApiKey[]
-  webhooks           WebhookEndpoint[]
-  webhookDelivery    WebhookDelivery[]
-  idempotencyKeys    IdempotencyKey[]
-  aiUsage            AiUsage[]
-  aiCache            AiCache[]
-  supportGrants      SupportAccessGrant[]
-  dataExports        WorkspaceExport[]
+  billingAccount      BillingAccount          @relation(fields: [billingAccountId], references: [id], onDelete: Restrict)
+  memberships         Membership[]
+  invitations         Invitation[]
+  teams               Team[]
+  usageCounters       UsageCounter[]
+  contacts            Contact[]
+  identifiers         ContactIdentifier[]
+  contactSources      ContactSource[]
+  companies           Company[]
+  tags                Tag[]
+  contactTags         ContactTag[]
+  companyTags         CompanyTag[]
+  customFields        CustomFieldDefinition[]
+  savedViews          SavedView[]
+  notes               Note[]
+  activities          Activity[]
+  imports             Import[]
+  duplicates          DuplicateCandidate[]
+  suppressions        Suppression[]
+  consentEvents       ConsentEvent[]
+  marketingLists      MarketingList[]
+  listMemberships     ListMembership[]
+  espConnection       EspConnection?
+  sendingDomains      SendingDomain[]
+  emailDesigns        EmailDesign[]
+  librarySeeds        LibrarySeed[]
+  assets              WorkspaceAsset[]
+  marketingCampaigns  MarketingCampaign[]
+  marketingSends      MarketingSend[]
+  pipelines           Pipeline[]
+  stages              PipelineStage[]
+  deals               Deal[]
+  stageChanges        DealStageChange[]
+  meetings            Meeting[]
+  tasks               Task[]
+  mailboxes           Mailbox[]
+  mailboxCounts       MailboxDailyCount[]
+  templates           Template[]
+  templateVersions    TemplateVersion[]
+  sequences           Sequence[]
+  sequenceSteps       SequenceStep[]
+  campaigns           Campaign[]
+  campaignMailbox     CampaignMailbox[]
+  enrollments         Enrollment[]
+  executions          StepExecution[]
+  conversations       Conversation[]
+  messages            Message[]
+  messageEvents       MessageEvent[]
+  convoNotes          ConversationNote[]
+  conversationTags    ConversationTag[]
+  chatVisitors        ChatVisitor[]
+  integrations        ChannelIntegration[]
+  calls               Call[]
+  callScripts         CallScript[]
+  callAgents          CallAgent[]
+  calendarConnections CalendarConnection[]
+  bookingPages        BookingPage[]
+  salesTargets        SalesTarget[]
+  products            Product[]
+  quotes              Quote[]
+  quoteLineItems      QuoteLineItem[]
+  scoringRules        ScoringRule[]
+  attachments         Attachment[]
+  workflows           Workflow[]
+  workflowRuns        WorkflowRun[]
+  events              DomainEvent[]
+  notifications       Notification[]
+  apiKeys             ApiKey[]
+  webhooks            WebhookEndpoint[]
+  webhookDelivery     WebhookDelivery[]
+  idempotencyKeys     IdempotencyKey[]
+  aiUsage             AiUsage[]
+  aiCache             AiCache[]
+  supportGrants       SupportAccessGrant[]
+  dataExports         WorkspaceExport[]
+  mcpTokens           McpToken[]
+  mcpPendingActions   McpPendingAction[]
+  mcpCalls            McpCall[]
+  mcpOAuthCodes       McpOAuthCode[]
+  discordConnections  DiscordConnection[]
+  discordDestinations DiscordDestination[]
+  discordTemplates    DiscordTemplate[]
+  discordRules        DiscordRule[]
+  discordDeliveries   DiscordDelivery[]
+  discordSettings     DiscordSettings?
+  discordUnrouted     DiscordUnroutedEvent[]
 
   @@index([billingAccountId])
   @@index([purgeAfter])
@@ -469,19 +497,64 @@ model WorkspaceExport {
 }
 
 model Membership {
-  id          String        @id @default(uuid(7)) @db.Uuid
-  workspaceId String        @db.Uuid
-  userId      String        @db.Uuid
-  role        WorkspaceRole
-  lastSeenAt  DateTime?
-  createdAt   DateTime      @default(now())
-  updatedAt   DateTime      @updatedAt
+  id            String        @id @default(uuid(7)) @db.Uuid
+  workspaceId   String        @db.Uuid
+  userId        String        @db.Uuid
+  role          WorkspaceRole
+  lastSeenAt    DateTime?
+  /// Paused by an admin: cannot open the workspace and gets no new work, but keeps their seat and records.
+  deactivatedAt DateTime?
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
 
   workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([workspaceId, userId])
   @@index([userId])
+}
+
+/// A group of teammates (Sales, Marketing, SDR…): who sees whose records in team visibility, routing pools, reporting.
+model Team {
+  id          String   @id @default(uuid(7)) @db.Uuid
+  workspaceId String   @db.Uuid
+  name        String
+  description String   @default("")
+  /// A system colour name (blue, green, purple…) for its badge.
+  color       String   @default("blue")
+  /// The team's lead (manager): sees the team's work and gets its escalations.
+  leadUserId  String?  @db.Uuid
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  workspace Workspace     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  members   TeamMember[]
+  targets   SalesTarget[]
+
+  @@unique([workspaceId, name])
+}
+
+model TeamMember {
+  teamId      String   @db.Uuid
+  workspaceId String   @db.Uuid
+  userId      String   @db.Uuid
+  createdAt   DateTime @default(now())
+
+  team Team @relation(fields: [teamId], references: [id], onDelete: Cascade)
+
+  @@id([teamId, userId])
+  @@index([workspaceId, userId])
+}
+
+/// When each person last read a conversation, so "unread" is per person, not shared.
+model ConversationRead {
+  conversationId String   @db.Uuid
+  userId         String   @db.Uuid
+  workspaceId    String   @db.Uuid
+  readAt         DateTime @default(now())
+
+  @@id([conversationId, userId])
+  @@index([workspaceId, userId])
 }
 
 model Invitation {
@@ -494,6 +567,8 @@ model Invitation {
   expiresAt   DateTime
   acceptedAt  DateTime?
   revokedAt   DateTime?
+  /// A personal note from the inviter, shown in the email and on the accept page.
+  message     String        @default("")
   createdAt   DateTime      @default(now())
 
   workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
@@ -608,6 +683,11 @@ model Contact {
   /// Archived people stay on file (history, dedup) but are hidden from lists and never contacted.
   archivedAt      DateTime?
   score           Int?
+  /// Lead scoring: the fit and engagement parts of `score`, which rules gave which points, and when.
+  scoreFit        Int?
+  scoreEngagement Int?
+  scoreBreakdown  Json           @default("[]")
+  scoreUpdatedAt  DateTime?
   customFields    Json           @default("{}")
   lastContactedAt DateTime?
   lastRepliedAt   DateTime?
@@ -800,16 +880,25 @@ model Note {
 
 /// The timeline. Written alongside the change it describes.
 model Activity {
-  id          String   @id @default(uuid(7)) @db.Uuid
-  workspaceId String   @db.Uuid
-  contactId   String?  @db.Uuid
-  companyId   String?  @db.Uuid
-  dealId      String?  @db.Uuid
-  actorId     String?  @db.Uuid
-  type        String
-  summary     String
-  data        Json     @default("{}")
-  occurredAt  DateTime @default(now())
+  id           String   @id @default(uuid(7)) @db.Uuid
+  workspaceId  String   @db.Uuid
+  contactId    String?  @db.Uuid
+  companyId    String?  @db.Uuid
+  dealId       String?  @db.Uuid
+  /// The teammate who acted (user), or the one an AI agent acted for; null for workflows, integrations and the system.
+  actorId      String?  @db.Uuid
+  /// Who acted: user | ai_agent | workflow | integration | system (src/common/actor.ts).
+  actorType    String   @default("system")
+  /// The actor's display name when it acted ("Priya Nair", "Claude", "Round-robin new leads", "Clientdesk").
+  actorName    String   @default("")
+  /// Provenance: "mcp:<tokenId>", "workflow:<id>:run:<runId>", "api_key:<id>", "call:<id>".
+  actorRef     String   @default("")
+  /// An AI agent's or approved run's teammate.
+  onBehalfOfId String?  @db.Uuid
+  type         String
+  summary      String
+  data         Json     @default("{}")
+  occurredAt   DateTime @default(now())
 
   workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   contact   Contact?  @relation(fields: [contactId], references: [id], onDelete: Cascade)
@@ -820,6 +909,10 @@ model Activity {
   @@index([workspaceId, dealId, occurredAt])
   @@index([workspaceId, type, occurredAt])
   @@index([type, occurredAt])
+  /// The team activity feed: everything, newest first, then by person or by kind of actor.
+  @@index([workspaceId, occurredAt])
+  @@index([workspaceId, actorId, occurredAt])
+  @@index([workspaceId, actorType, occurredAt])
 }
 
 enum ImportStatus {
@@ -975,6 +1068,10 @@ model PipelineStage {
   kind        StageKind @default(open)
   probability Int       @default(0)
   color       String    @default("gray")
+  /// A deal with no progress for this many days in this stage is stale (null = never).
+  rotDays     Int?
+  /// What a rep should do to move a deal out of this stage (shown on the deal).
+  guidance    String    @default("")
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
 
@@ -1003,6 +1100,13 @@ model Deal {
   lostReason        String     @default("")
   proposalUrl       String     @default("")
   description       String     @default("")
+  /// pipeline | best_case | commit | omitted — how the owner rates it for the forecast.
+  forecastCategory  String     @default("pipeline")
+  /// What happens next on the deal, and when.
+  nextStep          String     @default("")
+  nextStepAt        DateTime?
+  /// When the owner was last told this deal is stale (once per stale spell).
+  staleNotifiedAt   DateTime?
   stageEnteredAt    DateTime   @default(now())
   closedAt          DateTime?
   createdById       String?    @db.Uuid
@@ -1023,6 +1127,7 @@ model Deal {
   tasks          Task[]
   meetings       Meeting[]
   calls          Call[]
+  quotes         Quote[]
 
   @@index([workspaceId, pipelineId, stageId])
   @@index([workspaceId, ownerId])
@@ -1054,27 +1159,121 @@ enum MeetingStatus {
 }
 
 model Meeting {
-  id          String        @id @default(uuid(7)) @db.Uuid
-  workspaceId String        @db.Uuid
-  contactId   String?       @db.Uuid
-  dealId      String?       @db.Uuid
-  ownerId     String?       @db.Uuid
-  title       String
-  startsAt    DateTime
-  endsAt      DateTime?
-  location    String        @default("")
-  status      MeetingStatus @default(scheduled)
-  notes       String        @default("")
-  createdById String?       @db.Uuid
-  createdAt   DateTime      @default(now())
-  updatedAt   DateTime      @updatedAt
+  id                   String        @id @default(uuid(7)) @db.Uuid
+  workspaceId          String        @db.Uuid
+  contactId            String?       @db.Uuid
+  dealId               String?       @db.Uuid
+  ownerId              String?       @db.Uuid
+  title                String
+  startsAt             DateTime
+  endsAt               DateTime?
+  location             String        @default("")
+  status               MeetingStatus @default(scheduled)
+  notes                String        @default("")
+  /// manual | booking (a booking page) | ai_call | calendar
+  source               String        @default("manual")
+  bookingPageId        String?       @db.Uuid
+  /// Who booked (booking pages): as they typed it, kept even if the contact changes later.
+  attendeeName         String        @default("")
+  attendeeEmail        String        @default("")
+  /// The attendee's own time zone (booking pages), for their confirmation and reminders.
+  timezone             String        @default("")
+  /// Video link (Google Meet / Teams) when the calendar provider created one.
+  conferenceUrl        String        @default("")
+  /// [{ question, answer }] from the booking page form.
+  answers              Json          @default("[]")
+  /// The host's calendar event this meeting mirrors.
+  calendarConnectionId String?       @db.Uuid
+  externalEventId      String?
+  /// Random token in the attendee's cancel / reschedule link.
+  manageToken          String?       @unique
+  canceledAt           DateTime?
+  cancelReason         String        @default("")
+  createdById          String?       @db.Uuid
+  createdAt            DateTime      @default(now())
+  updatedAt            DateTime      @updatedAt
 
-  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  contact   Contact?  @relation(fields: [contactId], references: [id], onDelete: SetNull)
-  deal      Deal?     @relation(fields: [dealId], references: [id], onDelete: SetNull)
+  workspace   Workspace    @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  contact     Contact?     @relation(fields: [contactId], references: [id], onDelete: SetNull)
+  deal        Deal?        @relation(fields: [dealId], references: [id], onDelete: SetNull)
+  bookingPage BookingPage? @relation(fields: [bookingPageId], references: [id], onDelete: SetNull)
 
   @@index([workspaceId, startsAt])
   @@index([workspaceId, contactId])
+  @@index([workspaceId, ownerId, startsAt])
+}
+
+// ─── Calendars and booking pages ─────────────────────────────────────────────
+
+/// A teammate's Google or Microsoft calendar: busy times for booking pages,
+/// and where booked meetings are written. Personal — one person's account.
+model CalendarConnection {
+  id              String           @id @default(uuid(7)) @db.Uuid
+  workspaceId     String           @db.Uuid
+  userId          String           @db.Uuid
+  /// google | microsoft
+  provider        String
+  email           String
+  /// Refresh token, sealed. The access token is cached sealed until it expires.
+  secretSealed    String?
+  accessSealed    String?
+  accessExpiresAt DateTime?
+  scope           String           @default("")
+  /// The calendar booked meetings are written to.
+  calendarId      String           @default("primary")
+  /// Calendars whose busy times block booking slots (ids); empty = the write calendar only.
+  busyCalendarIds Json             @default("[]")
+  status          ConnectionStatus @default(connected)
+  lastError       String           @default("")
+  lastSyncedAt    DateTime?
+  deletedAt       DateTime?
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId, userId])
+}
+
+/// A public scheduling page (/book/<slug>): who hosts, when, for how long,
+/// and what to ask. Booking it creates a contact (or finds one), a Meeting,
+/// and an event on the host's calendar.
+model BookingPage {
+  id                  String    @id @default(uuid(7)) @db.Uuid
+  workspaceId         String    @db.Uuid
+  /// Globally unique, the public URL's last segment.
+  slug                String    @unique
+  title               String
+  description         String    @default("")
+  durationMinutes     Int       @default(30)
+  /// single | round_robin
+  assignment          String    @default("single")
+  /// User ids of the hosts (members of the workspace), in round-robin order.
+  hostUserIds         Json      @default("[]")
+  roundRobinCursor    Int       @default(0)
+  /// { timezone, hours: [{ day: 0-6, from: "09:00", to: "17:00" }] }
+  availability        Json      @default("{}")
+  bufferBeforeMinutes Int       @default(0)
+  bufferAfterMinutes  Int       @default(0)
+  minNoticeMinutes    Int       @default(240)
+  maxDaysAhead        Int       @default(30)
+  slotStepMinutes     Int       @default(30)
+  /// google_meet | teams | phone | in_person | custom
+  locationType        String    @default("google_meet")
+  locationDetail      String    @default("")
+  /// [{ id, label, type: "text" | "textarea" | "phone", required }]
+  questions           Json      @default("[]")
+  confirmationMessage String    @default("")
+  active              Boolean   @default(true)
+  createdById         String?   @db.Uuid
+  deletedAt           DateTime?
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  meetings  Meeting[]
+
+  @@index([workspaceId])
 }
 
 // ─── Tasks ───────────────────────────────────────────────────────────────────
@@ -1279,6 +1478,7 @@ enum StepType {
   wait
   branch
   call_task
+  ai_call
   whatsapp
   telegram
   update_field
@@ -1741,19 +1941,80 @@ model Call {
   recordingUrl   String     @default("")
   callbackAt     DateTime?
   scriptId       String?    @db.Uuid
+  /// AI calls (provider cartesia): the agent that spoke, and the campaign step that placed it.
+  agentId        String?    @db.Uuid
+  campaignId     String?    @db.Uuid
+  enrollmentId   String?    @db.Uuid
+  /// [{ role: "assistant" | "user", text, start, end }] — what was said, as the voice provider transcribed it.
+  transcript     Json       @default("[]")
+  summary        String     @default("")
+  /// AiCallAnalysis (packages/shared/src/ai-calling.ts): outcome, interest, callback, meeting time, answers.
+  analysis       Json       @default("{}")
+  /// The provider's end reason (Cartesia end_reason: client_hangup, dial_no_answer, voicemail_detected…).
+  endReason      String     @default("")
+  /// When the result (transcript, outcome, follow-ups) was applied — once per call.
+  processedAt    DateTime?
   createdAt      DateTime   @default(now())
   updatedAt      DateTime   @updatedAt
 
-  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  contact   Contact?  @relation(fields: [contactId], references: [id], onDelete: SetNull)
-  deal      Deal?     @relation(fields: [dealId], references: [id], onDelete: SetNull)
-  task      Task?     @relation(fields: [taskId], references: [id], onDelete: SetNull)
-  user      User?     @relation(fields: [userId], references: [id], onDelete: SetNull)
+  workspace Workspace  @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  contact   Contact?   @relation(fields: [contactId], references: [id], onDelete: SetNull)
+  deal      Deal?      @relation(fields: [dealId], references: [id], onDelete: SetNull)
+  task      Task?      @relation(fields: [taskId], references: [id], onDelete: SetNull)
+  user      User?      @relation(fields: [userId], references: [id], onDelete: SetNull)
+  agent     CallAgent? @relation(fields: [agentId], references: [id], onDelete: SetNull)
 
   @@unique([provider, providerCallId])
   @@index([workspaceId, createdAt])
   @@index([workspaceId, userId, createdAt])
   @@index([workspaceId, contactId])
+  @@index([workspaceId, agentId, createdAt])
+  @@index([provider, status, createdAt])
+}
+
+/// An AI calling agent: the script, voice and rules a voice agent (Cartesia
+/// Managed Agents) calls with. The row is the source of truth; it is pushed to
+/// the provider on every save (providerAgentId), and each call sends the
+/// contact's details as variables. See src/ai-calling.
+model CallAgent {
+  id                String    @id @default(uuid(7)) @db.Uuid
+  workspaceId       String    @db.Uuid
+  name              String
+  templateKey       String    @default("")
+  /// book_meeting | qualify | reengage | confirm | custom
+  goal              String    @default("book_meeting")
+  language          String    @default("en")
+  voiceId           String
+  voiceName         String    @default("")
+  personaName       String
+  businessName      String
+  greeting          String
+  disclosure        String
+  about             String
+  goalDetails       String    @default("")
+  /// string[]
+  questions         Json      @default("[]")
+  /// { objection, response }[]
+  objections        Json      @default("[]")
+  voicemailMessage  String    @default("")
+  extraInstructions String    @default("")
+  transferNumber    String    @default("")
+  maxCallMinutes    Int       @default(5)
+  /// The connection it was last saved to, and the provider's id for it there.
+  integrationId     String?   @db.Uuid
+  providerAgentId   String?
+  syncedAt          DateTime?
+  /// Why the last save to the provider failed ("" when it worked).
+  syncError         String    @default("")
+  archivedAt        DateTime?
+  createdById       String?   @db.Uuid
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  calls     Call[]
+
+  @@index([workspaceId, archivedAt])
 }
 
 model CallScript {
@@ -1939,6 +2200,172 @@ model WebhookDelivery {
   @@index([status, createdAt])
 }
 
+// ─── Discord notifications (src/discord) ─────────────────────────────────────
+
+/// A Discord server the workspace added the installation's bot to (OAuth2 bot install).
+/// The bot token is the installation's (platform settings / DISCORD_BOT_TOKEN), never stored here.
+model DiscordConnection {
+  id             String    @id @default(uuid(7)) @db.Uuid
+  workspaceId    String    @db.Uuid
+  guildId        String
+  guildName      String
+  guildIcon      String    @default("")
+  /// connected | lost (the bot was removed or the server is gone) | disconnected (by the workspace)
+  status         String    @default("connected")
+  /// The bot's server-wide permissions when last checked, as Discord's decimal bitfield.
+  permissions    String    @default("0")
+  /// The install asked for Manage Channels (creating and renaming channels from Growthdesk).
+  manageChannels Boolean   @default(false)
+  lastError      String    @default("")
+  lastCheckedAt  DateTime?
+  connectedById  String?   @db.Uuid
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  workspace    Workspace            @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  destinations DiscordDestination[]
+
+  @@unique([workspaceId, guildId])
+}
+
+/// A Discord channel saved as somewhere rules may post. A local record: removing it never touches Discord.
+model DiscordDestination {
+  id             String    @id @default(uuid(7)) @db.Uuid
+  workspaceId    String    @db.Uuid
+  connectionId   String    @db.Uuid
+  channelId      String
+  /// Snapshots from Discord, refreshed whenever the server's channels are read.
+  name           String
+  categoryName   String    @default("")
+  /// text | announcement
+  kind           String    @default("text")
+  /// The admin's own grouping label ("Sales", "Alerts"); "" = ungrouped.
+  group          String    @default("")
+  /// active | missing (deleted in Discord) | forbidden (the bot cannot see or post in it)
+  status         String    @default("active")
+  lastError      String    @default("")
+  lastDeliveryAt DateTime?
+  createdById    String?   @db.Uuid
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  workspace  Workspace         @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  connection DiscordConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+  deliveries DiscordDelivery[]
+
+  @@unique([connectionId, channelId])
+  @@index([workspaceId])
+}
+
+/// A reusable message layout (content, embed, link buttons); `body` is the shared DiscordTemplateBody.
+model DiscordTemplate {
+  id          String   @id @default(uuid(7)) @db.Uuid
+  workspaceId String   @db.Uuid
+  name        String
+  description String   @default("")
+  body        Json
+  createdById String?  @db.Uuid
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  workspace Workspace     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  rules     DiscordRule[]
+
+  @@index([workspaceId])
+}
+
+/// Routes events of the listed types (that meet every condition) to each destination, rendered by the template.
+model DiscordRule {
+  id             String    @id @default(uuid(7)) @db.Uuid
+  workspaceId    String    @db.Uuid
+  name           String
+  events         String[]
+  /// DiscordDestination ids, checked against the workspace on every write.
+  destinationIds String[]
+  /// null = the built-in default template.
+  templateId     String?   @db.Uuid
+  /// [{ field, op, value }] — shared DiscordConditionInput.
+  conditions     Json      @default("[]")
+  enabled        Boolean   @default(false)
+  createdById    String?   @db.Uuid
+  lastMatchedAt  DateTime?
+  lastTestedAt   DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  workspace  Workspace         @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  template   DiscordTemplate?  @relation(fields: [templateId], references: [id], onDelete: Restrict)
+  deliveries DiscordDelivery[]
+
+  @@index([workspaceId, enabled])
+}
+
+/// One event (or one test) posted, or to be posted, to one channel by one rule.
+/// Written by the dispatcher in the same transaction that marks the event dispatched.
+model DiscordDelivery {
+  id             String    @id @default(uuid(7)) @db.Uuid
+  workspaceId    String    @db.Uuid
+  /// null for the fallback channel and for tests of unsaved rules.
+  ruleId         String?   @db.Uuid
+  destinationId  String?   @db.Uuid
+  /// null for tests run without a real event.
+  eventId        String?   @db.Uuid
+  eventType      String
+  test           Boolean   @default(false)
+  /// pending | sent | failed | filtered (conditions not met) | skipped (template held it back) | canceled
+  status         String    @default("pending")
+  attempts       Int       @default(0)
+  nextAttemptAt  DateTime?
+  error          String    @default("")
+  /// Discord's JSON error code, or ours: rate_limited, missing_access, unknown_channel, not_configured…
+  errorCode      String    @default("")
+  responseStatus Int?
+  /// The posted message's Discord id.
+  messageId      String    @default("")
+  /// The rendered message as sent (no credentials), for the delivery log.
+  message        Json?
+  /// Channel and server names when the delivery was made, kept if the destination is removed.
+  channelName    String    @default("")
+  sentAt         DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  workspace   Workspace           @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  rule        DiscordRule?        @relation(fields: [ruleId], references: [id], onDelete: SetNull)
+  destination DiscordDestination? @relation(fields: [destinationId], references: [id], onDelete: SetNull)
+
+  @@unique([ruleId, destinationId, eventId])
+  @@index([workspaceId, createdAt])
+  @@index([status, nextAttemptAt])
+  @@index([eventId])
+}
+
+/// Per-workspace Discord routing settings.
+model DiscordSettings {
+  id                    String   @id @default(uuid(7)) @db.Uuid
+  workspaceId           String   @unique @db.Uuid
+  /// ignore | log (count events no rule takes) | fallback (post them to fallbackDestinationId)
+  unrouted              String   @default("ignore")
+  fallbackDestinationId String?  @db.Uuid
+  updatedAt             DateTime @updatedAt
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+}
+
+/// Events no enabled rule took, counted per type (settings: unrouted = log or fallback).
+model DiscordUnroutedEvent {
+  id          String   @id @default(uuid(7)) @db.Uuid
+  workspaceId String   @db.Uuid
+  eventType   String
+  count       Int      @default(0)
+  lastEventId String?  @db.Uuid
+  lastAt      DateTime @default(now())
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, eventType])
+}
+
 model IdempotencyKey {
   id          String   @id @default(uuid(7)) @db.Uuid
   workspaceId String   @db.Uuid
@@ -2004,7 +2431,7 @@ model AuditEvent {
   id          String   @id @default(uuid(7)) @db.Uuid
   workspaceId String?  @db.Uuid
   actorUserId String?  @db.Uuid
-  /// user | platform_admin | api_key | system
+  /// user | platform_admin | api_key | ai_agent | workflow | integration | system
   actorType   String
   action      String
   targetType  String   @default("")
@@ -2688,4 +3115,340 @@ model PlatformEmailDesign {
   deletedAt   DateTime?
 
   @@index([status, deletedAt, sortOrder])
+}
+
+// ─── MCP: Claude and other AI clients (src/mcp, docs/MCP.md) ────────────────
+
+/// Mirrored in packages/shared/src/mcp.ts (MCP_ACCESS_LEVELS).
+enum McpAccess {
+  read
+  build
+  send
+}
+
+/// A personal MCP token: it acts as `userId` in `workspaceId`, never beyond that
+/// member's role, narrowed by `access`. Only the SHA-256 digest is stored, like
+/// API keys. Not a tenant-guarded model: the token is what names the workspace
+/// (looked up unscoped by digest); it goes with its workspace or user. Tokens
+/// issued through OAuth (claude.ai custom connectors) carry `oauthClientId`,
+/// `clientName` and a refresh-token digest.
+model McpToken {
+  id               String    @id @default(uuid(7)) @db.Uuid
+  userId           String    @db.Uuid
+  workspaceId      String    @db.Uuid
+  name             String
+  tokenHash        String    @unique
+  /// The first characters of the token, shown so a person can tell tokens apart.
+  prefix           String
+  access           McpAccess
+  /// The MCP client that connected (OAuth registration name, or the client's initialize info).
+  clientName       String?
+  oauthClientId    String?
+  refreshTokenHash String?   @unique
+  refreshExpiresAt DateTime?
+  createdAt        DateTime  @default(now())
+  lastUsedAt       DateTime?
+  expiresAt        DateTime?
+  revokedAt        DateTime?
+
+  user           User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  workspace      Workspace          @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  oauthClient    McpOAuthClient?    @relation(fields: [oauthClientId], references: [id], onDelete: Cascade)
+  pendingActions McpPendingAction[]
+  calls          McpCall[]
+
+  @@index([workspaceId, userId])
+  @@index([userId])
+  @@index([oauthClientId])
+}
+
+/// An important tool call waiting for the person's approval (two-step confirmation).
+/// Bound to the token that prepared it; confirm_action runs it at most once, before
+/// `expiresAt`. Rows are kept for a while after (worker cleanup, RETENTION.mcpPendingActions).
+model McpPendingAction {
+  id          String    @id @default(uuid(7)) @db.Uuid
+  workspaceId String    @db.Uuid
+  tokenId     String    @db.Uuid
+  userId      String    @db.Uuid
+  tool        String
+  args        Json
+  summary     String
+  /// The preview shown with the summary (who, what, how many, cost).
+  preview     Json      @default("{}")
+  createdAt   DateTime  @default(now())
+  expiresAt   DateTime
+  confirmedAt DateTime?
+  canceledAt  DateTime?
+  result      Json?
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  token     McpToken  @relation(fields: [tokenId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId, tokenId, createdAt])
+  @@index([expiresAt])
+}
+
+/// One tool call through MCP: which tool, whether it worked, how long it took.
+/// Arguments and results are not kept. Pruned after 90 days (RETENTION.mcpCalls).
+model McpCall {
+  id          String   @id @default(uuid(7)) @db.Uuid
+  workspaceId String   @db.Uuid
+  tokenId     String   @db.Uuid
+  userId      String   @db.Uuid
+  tool        String
+  ok          Boolean
+  error       String?
+  durationMs  Int
+  createdAt   DateTime @default(now())
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  token     McpToken  @relation(fields: [tokenId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId, createdAt])
+  @@index([tokenId, createdAt])
+  @@index([createdAt])
+}
+
+/// An OAuth 2.1 client registered dynamically (RFC 7591) by an MCP client such as
+/// claude.ai. Public clients only: no secret, PKCE required. `id` is the client_id.
+model McpOAuthClient {
+  id           String   @id
+  name         String
+  redirectUris String[]
+  createdAt    DateTime @default(now())
+
+  tokens McpToken[]
+  codes  McpOAuthCode[]
+}
+
+/// A single-use authorization code (digest only), bound to the person, workspace and
+/// access level they approved on the consent screen, and to the PKCE challenge.
+model McpOAuthCode {
+  id                  String    @id @default(uuid(7)) @db.Uuid
+  codeHash            String    @unique
+  clientId            String
+  userId              String    @db.Uuid
+  workspaceId         String    @db.Uuid
+  access              McpAccess
+  redirectUri         String
+  codeChallenge       String
+  codeChallengeMethod String    @default("S256")
+  scope               String?
+  expiresAt           DateTime
+  usedAt              DateTime?
+  createdAt           DateTime  @default(now())
+
+  client    McpOAuthClient @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  workspace Workspace      @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@index([clientId])
+  @@index([workspaceId])
+  @@index([expiresAt])
+}
+
+// ─── Forecast ─────────────────────────────────────────────────────────────────
+
+/// A sales target (quota) for one person — or the whole team (userId null) —
+/// for one month or quarter.
+model SalesTarget {
+  id          String   @id @default(uuid(7)) @db.Uuid
+  workspaceId String   @db.Uuid
+  /// null = the whole team.
+  userId      String?  @db.Uuid
+  /// A team's target (with userId null); deleted with the team.
+  teamId      String?  @db.Uuid
+  /// month | quarter
+  periodType  String
+  /// First day of the month or quarter.
+  periodStart DateTime @db.Date
+  /// revenue_won | deals_won | meetings_booked
+  metric      String   @default("revenue_won")
+  target      Decimal  @db.Decimal(14, 2)
+  currency    String   @default("USD")
+  createdById String?  @db.Uuid
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  team      Team?     @relation(fields: [teamId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId, periodStart])
+  @@index([workspaceId, teamId, periodStart])
+}
+
+// ─── Products and quotes ────────────────────────────────────────────────────
+
+model Product {
+  id            String    @id @default(uuid(7)) @db.Uuid
+  workspaceId   String    @db.Uuid
+  name          String
+  sku           String    @default("")
+  description   String    @default("")
+  unitPrice     Decimal   @default(0) @db.Decimal(14, 2)
+  currency      String    @default("USD")
+  /// one_time | monthly | quarterly | yearly
+  billingPeriod String    @default("one_time")
+  /// Percent, e.g. 7.50.
+  taxRate       Decimal   @default(0) @db.Decimal(5, 2)
+  /// Free text grouping, e.g. "Link Building".
+  category      String    @default("")
+  /// Products sold as packages of one offering share it, e.g. "Guest Posts" for its DR 30+ / DR 50+ tiers.
+  groupName     String    @default("")
+  /// What one unit is: "guest post", "hour".
+  unit          String    @default("")
+  /// What one unit costs to deliver, for margin; null when unknown.
+  costPrice     Decimal?  @db.Decimal(14, 2)
+  /// "" when made here; else the system it is synced from (e.g. "clientdesk"), which owns it.
+  source        String    @default("")
+  /// Its id in that system; unique per workspace and source.
+  externalId    String?
+  /// Everything else the source sent, kept verbatim (turnaround, features, add-on rules …).
+  metadata      Json      @default("{}")
+  syncedAt      DateTime?
+  archivedAt    DateTime?
+  createdById   String?   @db.Uuid
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  workspace Workspace       @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  lineItems QuoteLineItem[]
+
+  @@unique([workspaceId, source, externalId])
+  @@index([workspaceId, archivedAt])
+}
+
+/// A quote / proposal sent to a buyer, viewed and signed on a public page
+/// (/q/<publicToken>). Totals are a cache of its line items, recomputed on
+/// every change; once accepted it is frozen (documentHash proves what was signed).
+model Quote {
+  id              String    @id @default(uuid(7)) @db.Uuid
+  workspaceId     String    @db.Uuid
+  /// Q-<number>, per workspace.
+  number          Int
+  dealId          String?   @db.Uuid
+  contactId       String?   @db.Uuid
+  companyId       String?   @db.Uuid
+  ownerId         String?   @db.Uuid
+  title           String
+  /// draft | sent | viewed | accepted | declined | expired | void
+  status          String    @default("draft")
+  currency        String    @default("USD")
+  subtotal        Decimal   @default(0) @db.Decimal(14, 2)
+  discountTotal   Decimal   @default(0) @db.Decimal(14, 2)
+  taxTotal        Decimal   @default(0) @db.Decimal(14, 2)
+  total           Decimal   @default(0) @db.Decimal(14, 2)
+  validUntil      DateTime? @db.Date
+  intro           String    @default("")
+  terms           String    @default("")
+  publicToken     String    @unique
+  sentAt          DateTime?
+  firstViewedAt   DateTime?
+  lastViewedAt    DateTime?
+  viewCount       Int       @default(0)
+  acceptedAt      DateTime?
+  signerName      String    @default("")
+  signerEmail     String    @default("")
+  signerTitle     String    @default("")
+  /// The typed signature, or a drawn one as a data: URL (PNG).
+  signatureData   String    @default("")
+  signerIp        String    @default("")
+  signerUserAgent String    @default("")
+  /// sha256 of the quote's content as accepted.
+  documentHash    String    @default("")
+  declinedAt      DateTime?
+  declineReason   String    @default("")
+  createdById     String?   @db.Uuid
+  deletedAt       DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  workspace Workspace       @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  deal      Deal?           @relation(fields: [dealId], references: [id], onDelete: SetNull)
+  lineItems QuoteLineItem[]
+
+  @@unique([workspaceId, number])
+  @@index([workspaceId, dealId])
+  @@index([workspaceId, status])
+}
+
+model QuoteLineItem {
+  id              String   @id @default(uuid(7)) @db.Uuid
+  workspaceId     String   @db.Uuid
+  quoteId         String   @db.Uuid
+  productId       String?  @db.Uuid
+  position        Int
+  name            String
+  description     String   @default("")
+  quantity        Decimal  @default(1) @db.Decimal(12, 2)
+  unitPrice       Decimal  @default(0) @db.Decimal(14, 2)
+  discountPercent Decimal  @default(0) @db.Decimal(5, 2)
+  taxRate         Decimal  @default(0) @db.Decimal(5, 2)
+  billingPeriod   String   @default("one_time")
+  /// quantity × unitPrice × (1 − discount), before tax.
+  total           Decimal  @default(0) @db.Decimal(14, 2)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  quote     Quote     @relation(fields: [quoteId], references: [id], onDelete: Cascade)
+  product   Product?  @relation(fields: [productId], references: [id], onDelete: SetNull)
+
+  @@index([quoteId, position])
+}
+
+// ─── Lead scoring ───────────────────────────────────────────────────────────
+
+/// One lead scoring rule: points for who the person is (fit: a contact field)
+/// or what they did (engagement: an event, counted within decayDays).
+model ScoringRule {
+  id          String   @id @default(uuid(7)) @db.Uuid
+  workspaceId String   @db.Uuid
+  name        String
+  /// fit | engagement
+  category    String
+  /// fit: the contact field, operator and value it matches.
+  field       String   @default("")
+  op          String   @default("")
+  value       String   @default("")
+  /// engagement: the event that earns the points (email.opened, reply.received, meeting.booked, call.outcome:<outcome>…).
+  event       String   @default("")
+  /// May be negative.
+  points      Int
+  /// engagement: the most this rule can add in total (repeat events).
+  maxPoints   Int?
+  /// engagement: only events in the last N days count.
+  decayDays   Int?
+  active      Boolean  @default(true)
+  position    Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId])
+}
+
+// ─── Files ──────────────────────────────────────────────────────────────────
+
+/// A file attached to a contact, company, deal or quote. Stored in the
+/// database (like WorkspaceAsset); listing queries never select `bytes`.
+model Attachment {
+  id           String    @id @default(uuid(7)) @db.Uuid
+  workspaceId  String    @db.Uuid
+  /// contact | company | deal | quote
+  entityType   String
+  entityId     String    @db.Uuid
+  fileName     String
+  /// The type sniffed from the bytes where possible, else the uploader's.
+  contentType  String
+  size         Int
+  sha256       String
+  bytes        Bytes
+  uploadedById String?   @db.Uuid
+  deletedAt    DateTime?
+  createdAt    DateTime  @default(now())
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId, entityType, entityId])
 }

@@ -52,6 +52,7 @@ A key holds one or more scopes. Each route accepts exactly one scope.
 | `contacts:read` | List and fetch contacts, companies and tags (every record in the workspace, whoever owns it) |
 | `contacts:write` | Create and edit contacts and companies, add notes. **No deleting.** |
 | `campaigns:read` | List campaigns, fetch one, list its enrollments |
+| `products:write` | `PUT /catalog/sync`: keep the product catalog in step with another system's (creates, updates, archives the products that system owns) |
 
 A key without the route's scope gets **403** `This API key lacks the "<scope>" scope`. Routes not
 listed below do not accept API keys at all (they ignore the header and answer **401**). Deals, tasks
@@ -64,6 +65,7 @@ All paths are under `/api/workspaces/{workspaceId}`.
 | Method & path | Scope | Notes |
 | --- | --- | --- |
 | `POST /leads` | `leads:write` | Lead ingest, below |
+| `GET /leads/ping` | `leads:write` | Connection check: `{ workspace: { id, name }, apiKey: { name } }`; 401/403 when the key cannot ingest here. Creates nothing |
 | `GET /contacts` | `contacts:read` | `page`, `pageSize` (≤200), `sort` (`createdAt`, `updatedAt`, `fullName`, `lastContactedAt`, `nextActionAt`, `priority`, `score`), `dir`, `filter` (URL-encoded JSON: `q`, `status[]`, `qualification[]`, `priority[]`, `companyId`, `tag[]`, `leadSource`, `hasEmail`, `hasPhone`, `createdAfter`, `createdBefore`, `campaignId`, …) |
 | `GET /contacts/{id}` | `contacts:read` | Includes identifiers, sources, deals, open tasks, enrollments |
 | `GET /companies` | `contacts:read` | `q`, `page`, `pageSize`, `sort` (`createdAt`, `name`, `updatedAt`), `dir` |
@@ -78,6 +80,8 @@ All paths are under `/api/workspaces/{workspaceId}`.
 | `GET /campaigns` | `campaigns:read` | `page`, `pageSize`, `status`, `q`, `ownerId` |
 | `GET /campaigns/{id}` | `campaigns:read` | |
 | `GET /campaigns/{id}/enrollments` | `campaigns:read` | `page`, `pageSize`, `status`, `q` |
+| `PUT /catalog/sync` | `products:write` | Catalog sync, below |
+| `GET /catalog/sync` | `products:write` | Connection check and status: `[{ source, products, active, lastSyncedAt }]` |
 
 Bodies are the same Zod schemas the web app uses (`ContactInput`, `CompanyInput` in
 packages/shared/src/schemas.ts). Contacts created with `POST /contacts` are recorded as created
@@ -102,7 +106,7 @@ Upserts up to **100** leads per request. Each lead goes through the same path as
    changes.
 5. **Events:** each new contact emits `lead.imported` (transactional outbox), which drives workflows
    with the "Lead imported" trigger and outgoing webhooks subscribed to `lead.imported`.
-6. **History:** the request is recorded as an import (`source` `business_os` or `api`, name
+6. **History:** the request is recorded as an import (`source` `business_os`, `api` or `clientdesk`, name
    `API key: <key name>`), visible under Imports with its counts and per-lead errors.
 
 Leads are processed independently: one invalid lead fails alone and the rest are saved. A
@@ -145,11 +149,12 @@ Idempotency-Key: bos-sync-2026-10-10T09:00Z-1
 | Field | Type | |
 | --- | --- | --- |
 | `leads` | array, 1–100 | required |
-| `source` | `"business_os"` \| `"api"` | default `business_os`; namespaces `externalId` |
+| `source` | `"business_os"` \| `"api"` \| `"clientdesk"` | default `business_os`; namespaces `externalId` |
 | `onDuplicate` | `"update"` \| `"skip"` | default `update` |
 | `tags` | string[] ≤20 | added to every lead |
 | `campaignId` | uuid | enroll every lead that resolved to a contact |
 | `listId` | uuid | subscribe every lead that resolved to a contact to this lead list (e.g. a newsletter form) |
+| `listName` | string ≤120 | the same by name: the active list with that name (case and spacing ignored), created when there is none. A lead's own `listName` wins |
 | `consent` | `{ "confirmed": true, "source": "…" }` | the leads opted in to marketing email (say where, ≤200); recorded on each contact |
 
 Per lead (all optional, but each needs a name, an email or a phone): `externalId` (≤200),
@@ -159,7 +164,8 @@ Per lead (all optional, but each needs a name, an email or a phone): `externalId
 `doNotContact` (also adds the email/phone to the suppression list), `consentStatus`, `consentSource`,
 `tags[]` (≤50), `companyName`, `company` (`name`, `domain`, `website`, `industry`, `country`, `city`,
 `description`), `notes` (≤5000, added as a note), `data` (object, ≤10,000 characters of JSON, kept
-on the source record).
+on the source record), `listName` (≤120, the lead list this lead joins — found or created by name, as
+above; lets one request sort leads into several lists, e.g. one per website form).
 
 ### Response — `200`
 
@@ -173,7 +179,8 @@ on the source record).
       { "index": 0, "externalId": "lead_4821", "contactId": "0199...", "status": "created", "matchedBy": null, "error": null }
     ],
     "enrollment": { "campaignId": "8b1e...", "enrolled": 1, "skipped": [], "error": null },
-    "list": null
+    "list": null,
+    "lists": []
   }
 }
 ```
@@ -193,6 +200,9 @@ on the source record).
   Anyone can join a list; only people with recorded consent (`consent` here, or `consentStatus:
   "granted"` on the lead) receive its marketing campaigns. Someone who unsubscribed from the list is
   never re-added. Joining fires the `list.subscribed` workflow trigger.
+- `lists` has one entry per list named by `listName` (the request's or the leads'): `{ listId, listName,
+  created, added, pending, alreadyMember, skipped, error }`, with the same joining rules as `list`.
+  `created: true` means the request made the list.
 - A new contact fires the `lead.imported` workflow trigger. A lead that matches an existing contact by
   email or phone fires it too, with `returning: true` in the event (use the condition
   `event.returning`); a re-send matched by `externalId` does not.
@@ -207,6 +217,51 @@ on the source record).
 | 404 | `not_found` | Wrong workspace id, or `campaignId` / `listId` not in the workspace |
 | 409 | `conflict` | `campaignId` is a draft, completed or canceled campaign; `listId` is archived; idempotency conflicts (below) |
 | 423 | `locked` | Workspace suspended, or the subscription is restricted (payment overdue past grace) |
+
+## Catalog sync — `PUT /catalog/sync`
+
+Keeps the workspace's **Products** in step with another system's catalog. The Clientdesk client portal
+sends its whole service catalog whenever a service, package, add-on or volume discount changes, and
+once a day. Each item is upserted by `(source, externalId)`. `active: false` archives an item and a
+returning item is restored. With `complete: true` (the default), a product from that source that the
+list no longer contains is archived. Nothing is deleted, so quotes keep the products they used.
+Products made by hand in Growthdesk are never touched. Synced products belong to the source, so
+edit them there.
+
+```json
+{
+  "source": "clientdesk",
+  "complete": true,
+  "items": [
+    {
+      "externalId": "tier:tr_gp_50",
+      "name": "Guest Posts · DR 50+",
+      "sku": "tr_gp_50",
+      "groupName": "Guest Posts",
+      "category": "Link Building",
+      "unit": "guest post",
+      "unitPrice": 350,
+      "costPrice": 155,
+      "currency": "USD",
+      "billingPeriod": "one_time",
+      "taxRate": 0,
+      "active": true,
+      "metadata": { "turnaroundDays": 14, "service": { "slug": "guest-posts" } }
+    }
+  ]
+}
+```
+
+Limits: up to 5,000 items, and each `externalId` (1–200 characters) at most once per request.
+`unitPrice` and `costPrice` are in major units with 2 decimals; `costPrice` may be `null` when
+unknown. `billingPeriod` is `one_time`, `monthly`, `quarterly` or `yearly`. `taxRate` is a percent.
+`metadata` is any JSON object and is kept verbatim. The same catalog sent twice changes nothing.
+
+Response `200`:
+
+```json
+{ "data": { "source": "clientdesk", "received": 12, "created": 0, "updated": 1, "unchanged": 11, "archived": 0, "restored": 0, "syncedAt": "2026-10-16T04:40:00.000Z" } }
+```
 
 ## Idempotency
 

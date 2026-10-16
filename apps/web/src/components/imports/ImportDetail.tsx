@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/Button";
 import { StatusBadge } from "@/components/ui/Badge";
 import { Callout } from "@/components/ui/Callout";
 import { Card, CardBody, CardHeader } from "@/components/ui/Card";
+import { COL } from "@/components/ui/columns";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { QueryState } from "@/components/ui/ErrorState";
 import { EntityTile } from "@/components/ui/icons";
@@ -207,10 +208,10 @@ function Detail({ imp }: { imp: ImportDetail }) {
                 <Table>
                   <thead className="sticky top-0 bg-panel">
                     <tr>
-                      <Th className="w-20" align="right">
+                      <Th className="w-20" align="right" icon={COL.rows}>
                         Row
                       </Th>
-                      <Th>Problem</Th>
+                      <Th icon={COL.problem}>Problem</Th>
                     </tr>
                   </thead>
                   <tbody>

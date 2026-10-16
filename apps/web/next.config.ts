@@ -36,6 +36,19 @@ const nextConfig: NextConfig = {
   allowedDevOrigins: ["127.0.0.1"],
   // Dev only: keeps the Next badge off the sidebar's pinned Settings link.
   devIndicators: { position: "bottom-right" },
+  /*
+   * MCP OAuth discovery (apps/api/src/mcp/oauth). Clients look for metadata at the ROOT of an
+   * origin, with the resource's or issuer's path appended (RFC 9728 / RFC 8414):
+   * /.well-known/oauth-protected-resource/api/mcp and /.well-known/oauth-authorization-server/api
+   * when the MCP URL is this app's /api/mcp (PUBLIC_API_URL unset, or the web URL pasted).
+   * Rewritten to the API proxy, which forwards them unversioned.
+   */
+  async rewrites() {
+    return [
+      { source: "/.well-known/oauth-protected-resource/:path*", destination: "/api/.well-known/oauth-protected-resource/:path*" },
+      { source: "/.well-known/oauth-authorization-server/:path*", destination: "/api/.well-known/oauth-authorization-server/:path*" },
+    ];
+  },
   async headers() {
     return [
       // /chat/<key> is the live-chat widget, framed by customers' websites: no X-Frame-Options there

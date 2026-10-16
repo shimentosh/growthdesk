@@ -2,10 +2,11 @@
 
 import Link from "next/link";
 import { useState, type DragEvent } from "react";
-import { ArrowRightLeft, Building2, Clock, Plus, User } from "lucide-react";
-import { labelOf } from "@growthdesk/shared";
+import { ArrowRightLeft, Building2, Clock, Info, Plus, User } from "lucide-react";
+import { labelOf, localDay } from "@growthdesk/shared";
 import { Avatar } from "@/components/ui/Avatar";
 import { IconButton } from "@/components/ui/Button";
+import { Tooltip } from "@/components/ui/Tooltip";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -16,6 +17,7 @@ import {
 import { cn } from "@/lib/cn";
 import { useFormat, useWorkspace } from "@/lib/session";
 import type { Deal, Pipeline, PipelineStage } from "@/lib/types/pipeline";
+import { NextStepLine, StaleBadge } from "./DealSignals";
 import { StageDot } from "./StageDot";
 import { totalsByCurrency } from "./utils";
 
@@ -114,6 +116,14 @@ function ColumnHeader({ stage, items, onAdd }: { stage: PipelineStage; items: De
           <StageDot stage={stage} />
           <h2 className="truncate text-sm font-semibold text-text-hi">{stage.name}</h2>
           <span className="text-xs text-text-3 tabular-nums">{items.length}</span>
+          {stage.guidance && (
+            // The stage's guidance once per column, not on every card.
+            <Tooltip content={<span className="block max-w-64 whitespace-pre-line">{stage.guidance}</span>}>
+              <button type="button" aria-label={`What to do in ${stage.name}`} className="rounded-xs text-text-3 hover:text-text">
+                <Info aria-hidden className="size-3.5" />
+              </button>
+            </Tooltip>
+          )}
         </div>
         <div className="mt-0.5 truncate pl-4 text-xs text-text-3 tabular-nums" title="Total value of the deals in this column">
           {totalsByCurrency(items, ws.currency)}
@@ -185,7 +195,10 @@ function DealCard({
           </DropdownMenu>
         )}
       </div>
-      <div className="mt-1 text-[15px] font-semibold tracking-[-0.01em] text-text-hi tabular-nums">{f.money(deal.value, deal.currency)}</div>
+      <div className="mt-1 flex items-center justify-between gap-2">
+        <span className="text-[15px] font-semibold tracking-[-0.01em] text-text-hi tabular-nums">{f.money(deal.value, deal.currency)}</span>
+        <StaleBadge deal={deal} />
+      </div>
       {(deal.contact || deal.company) && (
         <div className="mt-2 flex flex-col gap-1 text-xs text-text-2">
           {deal.contact && (
@@ -202,6 +215,7 @@ function DealCard({
           )}
         </div>
       )}
+      {deal.status === "open" && <NextStepLine deal={deal} today={localDay(new Date(), ws.timezone)} className="mt-2" />}
       <div className="mt-2.5 flex items-center justify-between gap-2 border-t border-line pt-2 text-2xs text-text-3">
         <span className="flex items-center gap-1" title={`In ${deal.stage.name} since ${f.dateTime(deal.stageEnteredAt)}`}>
           <Clock aria-hidden className="size-3 shrink-0" />

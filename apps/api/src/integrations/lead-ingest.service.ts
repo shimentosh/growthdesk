@@ -44,7 +44,22 @@ export type IngestResult = {
     skipped: AddResult["skipped"] | null;
     error: { code: string; message: string } | null;
   } | null;
+  /** Lists named by `listName` (the request's or each lead's): one entry per list, with what joining it did. */
+  lists: {
+    listId: string;
+    listName: string;
+    /** The list did not exist and was made by this request. */
+    created: boolean;
+    added: number;
+    pending: number;
+    alreadyMember: number;
+    skipped: AddResult["skipped"] | null;
+    error: { code: string; message: string } | null;
+  }[];
 };
+
+/** A list name as matched: trimmed, inner whitespace collapsed, case ignored. */
+const listKey = (name: string) => name.trim().replace(/\s+/g, " ").toLowerCase();
 
 const blank = (v: string | null | undefined) => !v || !v.trim();
 
@@ -81,6 +96,8 @@ export class LeadIngestService {
     await this.entitlements.assertFullAccess(w.billingAccountId, "Importing leads");
     if (input.campaignId) await this.checkCampaign(ctx, input.campaignId);
     if (input.listId) await this.checkList(ctx, input.listId);
+    // Lists named by the request or its leads are found (or made) before any lead is saved.
+    const named = await this.resolveLists(ctx, [input.listName, ...input.leads.map((l) => l.listName)]);
 
     const defaultCountry = await this.contacts.defaultCountry(w.id);
     const keyName = ctx.apiKey?.name;
@@ -95,6 +112,7 @@ export class LeadIngestService {
           tags: input.tags,
           campaignId: input.campaignId ?? null,
           listId: input.listId ?? null,
+          listNames: [...named.values()].map((l) => l.name),
           apiKeyId: ctx.apiKey?.id ?? null,
         },
         totalRows: input.leads.length,
@@ -209,7 +227,58 @@ export class LeadIngestService {
       }
     }
 
-    return { importId: imp.id, source: input.source, summary, results, enrollment, list };
+    // Each named list gets the contacts whose lead named it (or, without one, the request's listName).
+    const lists: IngestResult["lists"] = [];
+    const members = new Map<string, Set<string>>();
+    for (const r of results) {
+      const name = input.leads[r.index]?.listName ?? input.listName;
+      const target = name ? named.get(listKey(name)) : undefined;
+      if (!target || !r.contactId) continue;
+      if (!members.has(target.id)) members.set(target.id, new Set());
+      members.get(target.id)!.add(r.contactId);
+    }
+    for (const target of named.values()) {
+      const ids = [...(members.get(target.id) ?? [])];
+      const base = { listId: target.id, listName: target.name, created: target.created };
+      if (!ids.length) {
+        lists.push({ ...base, added: 0, pending: 0, alreadyMember: 0, skipped: null, error: null });
+        continue;
+      }
+      try {
+        // Through ListsService, so double opt-in, suppression, plan limits and list.subscribed all hold.
+        const res = await this.lists.addMembers(ctx, target.id, { contactIds: ids, ...(input.consent ? { consent: input.consent } : {}) });
+        lists.push({ ...base, added: res.added, pending: res.pending, alreadyMember: res.alreadyMember, skipped: res.skipped, error: null });
+      } catch (e) {
+        if (!isApiError(e)) throw e;
+        lists.push({ ...base, added: 0, pending: 0, alreadyMember: 0, skipped: null, error: { code: e.code, message: e.message } });
+      }
+    }
+
+    return { importId: imp.id, source: input.source, summary, results, enrollment, list, lists };
+  }
+
+  /**
+   * Lists by name: the active list with that name (case and spacing ignored),
+   * else a new one. Names repeated across leads resolve once.
+   */
+  private async resolveLists(ctx: RequestContext, names: (string | undefined)[]) {
+    const wanted = new Map<string, string>();
+    for (const n of names) if (n && n.trim()) wanted.set(listKey(n), n.trim().replace(/\s+/g, " "));
+    const out = new Map<string, { id: string; name: string; created: boolean }>();
+    if (!wanted.size) return out;
+    if (!ctx.apiKey && !holds(ctx, "marketing.write")) throw forbidden(`Your role (${ws(ctx).role}) cannot add people to lists`);
+    const w = ws(ctx);
+    const active = await this.prisma.db.marketingList.findMany({ where: { workspaceId: w.id, archivedAt: null }, select: { id: true, name: true }, orderBy: { createdAt: "asc" } });
+    for (const [key, name] of wanted) {
+      const found = active.find((l) => listKey(l.name) === key);
+      if (found) {
+        out.set(key, { id: found.id, name: found.name, created: false });
+        continue;
+      }
+      const made = await this.lists.create(ctx, { name, description: "Created by lead ingest" });
+      out.set(key, { id: made.id, name: made.name, created: true });
+    }
+    return out;
   }
 
   /** Refuses up front, before any lead is saved, when the list cannot take people. */
@@ -243,7 +312,7 @@ export class LeadIngestService {
    * business email's domain.
    */
   private async toContact(workspaceId: string, lead: LeadInputT, tags: string[], ctx: RequestContext): Promise<ContactInputT & { notes?: string }> {
-    const { externalId: _e, company, companyName, data: _d, tags: leadTags, ...fields } = lead;
+    const { externalId: _e, company, companyName, data: _d, tags: leadTags, listName: _l, ...fields } = lead;
     const contact: ContactInputT & { notes?: string } = { ...fields };
     const allTags = [...new Set([...(leadTags ?? []), ...tags])];
     if (allTags.length) contact.tags = allTags.slice(0, 50);

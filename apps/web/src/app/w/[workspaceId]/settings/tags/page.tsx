@@ -9,6 +9,7 @@ import { tagTone } from "@/components/imports/labels";
 import { Badge } from "@/components/ui/Badge";
 import { Button, IconButton } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
+import { COL } from "@/components/ui/columns";
 import { ConfirmDialog } from "@/components/ui/Dialog";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/DropdownMenu";
 import { EmptyState } from "@/components/ui/EmptyState";
@@ -96,9 +97,9 @@ function TagsSettings() {
                   <Table>
                     <thead>
                       <tr>
-                        <Th>Tag</Th>
-                        <Th align="right">Contacts</Th>
-                        <Th align="right">Companies</Th>
+                        <Th icon={COL.tags}>Tag</Th>
+                        <Th align="right" icon={COL.people}>Contacts</Th>
+                        <Th align="right" icon={COL.company}>Companies</Th>
                         {(canWrite || canDelete) && (
                           <Th className="w-12">
                             <span className="sr-only">Actions</span>

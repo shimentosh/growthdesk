@@ -6,7 +6,7 @@ import { useQuery } from "@tanstack/react-query";
 import { labelOf } from "@growthdesk/shared";
 import { AuthCard, AuthFooter } from "@/components/account/AuthFrame";
 import { TermsConsent } from "@/components/account/TermsConsent";
-import { Button } from "@/components/ui/Button";
+import { Button, buttonClass } from "@/components/ui/Button";
 import { Callout } from "@/components/ui/Callout";
 import { Field, FormError } from "@/components/ui/Field";
 import { Input } from "@/components/ui/Input";
@@ -21,7 +21,8 @@ import type { JoinResult } from "@/lib/types/admin";
  *   signed in as the invited address  → one click to join
  *   signed in as someone else         → sign out, then continue
  *   signed out, account exists        → sign in, which comes back here
- *   signed out, no account            → name + password creates it and joins
+ *   signed out, no account            → name + password creates it and joins,
+ *                                        or Google sign-in, which comes back here signed in
  * Joining lands in the workspace with a full load, so every query starts fresh.
  */
 
@@ -30,6 +31,21 @@ function Frame({ title, subtitle, children }: { title: string; subtitle?: string
     <AuthCard title={title} description={subtitle}>
       {children}
     </AuthCard>
+  );
+}
+
+/** Who sent it and their personal note, above every way in. */
+/** "a member", "an admin". */
+const ARTICLE = (word: string) => `${/^[aeiou]/.test(word) ? "an" : "a"} ${word}`;
+
+function InvitationNote({ invitation }: { invitation: InvitationInfo }) {
+  const who = invitation.invitedBy ? invitation.invitedBy.name || invitation.invitedBy.email : null;
+  if (!invitation.message) return null;
+  return (
+    <figure className="rounded-md border border-line bg-s-2 px-3 py-2.5 text-sm">
+      <blockquote className="whitespace-pre-line text-text">&ldquo;{invitation.message}&rdquo;</blockquote>
+      {who && <figcaption className="mt-1.5 text-xs text-text-3">— {who}</figcaption>}
+    </figure>
   );
 }
 
@@ -131,7 +147,7 @@ function WrongAccount({ token, invitation, me }: { token: string; invitation: In
   );
 }
 
-export function AcceptInvitation({ token }: { token: string }) {
+export function AcceptInvitation({ token, googleEnabled = false }: { token: string; googleEnabled?: boolean }) {
   const invitation = useQuery<InvitationInfo, ApiError>({
     queryKey: ["invitation", token],
     queryFn: ({ signal }) => get<InvitationInfo>(`/invitations/${encodeURIComponent(token)}`, { signal, noAuthRedirect: true }),
@@ -162,13 +178,15 @@ export function AcceptInvitation({ token }: { token: string }) {
 
   const inv = invitation.data;
   const title = `Join ${inv.workspaceName}`;
-  const subtitle = `You've been invited as ${labelOf(inv.role).toLowerCase()}.`;
+  const inviter = inv.invitedBy ? inv.invitedBy.name || inv.invitedBy.email : null;
+  const subtitle = `${inviter ? `${inviter} invited you` : "You've been invited"} as ${ARTICLE(labelOf(inv.role).toLowerCase())}.`;
   const next = `/invite/${encodeURIComponent(token)}`;
 
   if (me.isSuccess) {
     const same = me.data.user.email.toLowerCase() === inv.email.toLowerCase();
     return (
       <Frame title={title} subtitle={subtitle}>
+        <InvitationNote invitation={inv} />
         {same ? <JoinAsMe token={token} invitation={inv} /> : <WrongAccount token={token} invitation={inv} me={me.data} />}
       </Frame>
     );
@@ -188,6 +206,7 @@ export function AcceptInvitation({ token }: { token: string }) {
   if (inv.accountExists) {
     return (
       <Frame title={title} subtitle={subtitle}>
+        <InvitationNote invitation={inv} />
         <p className="text-sm text-text-2">Sign in as {inv.email} to accept. You&apos;ll come straight back here.</p>
         <Button href={`/login?next=${encodeURIComponent(next)}`} variant="primary" className="w-full">
           Sign in to accept
@@ -204,7 +223,16 @@ export function AcceptInvitation({ token }: { token: string }) {
 
   return (
     <Frame title={title} subtitle={`${subtitle} Create your account to join.`}>
+      <InvitationNote invitation={inv} />
       <RegisterAndJoin token={token} invitation={inv} />
+      {googleEnabled && (
+        <>
+          <a href={`/api/auth/google/start?next=${encodeURIComponent(next)}`} className={buttonClass({ variant: "secondary", className: "w-full" })}>
+            Continue with Google
+          </a>
+          <p className="text-xs text-text-3">Use the Google account for {inv.email}. You&apos;ll come back here to join in one click.</p>
+        </>
+      )}
     </Frame>
   );
 }

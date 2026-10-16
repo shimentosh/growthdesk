@@ -8,6 +8,7 @@ import { Table, Td, Th } from "@/components/imports/Table";
 import { Badge } from "@/components/ui/Badge";
 import { Button, IconButton } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
+import { COL } from "@/components/ui/columns";
 import { ConfirmDialog } from "@/components/ui/Dialog";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { QueryState } from "@/components/ui/ErrorState";
@@ -103,12 +104,12 @@ function Suppressions() {
                 <Table>
                   <thead>
                     <tr>
-                      <Th>Value</Th>
-                      <Th>Kind</Th>
-                      <Th>Stops</Th>
-                      <Th>Reason</Th>
-                      <Th className="hidden md:table-cell">Source</Th>
-                      <Th className="hidden sm:table-cell">Added</Th>
+                      <Th icon={COL.name}>Value</Th>
+                      <Th icon={COL.type}>Kind</Th>
+                      <Th icon={COL.channel}>Stops</Th>
+                      <Th icon={COL.details}>Reason</Th>
+                      <Th icon={COL.source} className="hidden md:table-cell">Source</Th>
+                      <Th icon={COL.created} className="hidden sm:table-cell">Added</Th>
                       {canRemove && (
                         <Th className="w-12">
                           <span className="sr-only">Actions</span>

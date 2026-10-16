@@ -12,6 +12,7 @@ import { KeyValueList } from "@/components/ui/KeyValue";
 import { useApiQuery } from "@/lib/query";
 import { useFormat, useWorkspace } from "@/lib/session";
 import type { ConversationDetail } from "@/lib/types/inbox";
+import { ContactListsBlock, ContactRecordFacts } from "./ContactRecord";
 
 function Block({ title, icon, children }: { title: string; icon: ReactNode; children: ReactNode }) {
   return (
@@ -29,8 +30,9 @@ function Block({ title, icon, children }: { title: string; icon: ReactNode; chil
 
 /**
  * The right pane: who the conversation is with and what is going on with
- * them — the contact, their open deals and tasks, the campaign that started
- * it, and the channel it runs on. Reads the same cached detail as the thread.
+ * them — the contact (with lifecycle stage, owner and tags from their record),
+ * their open deals and tasks, marketing lists, the campaign that started it,
+ * and the channel it runs on. Reads the same cached detail as the thread.
  */
 export function ContactContext({ id }: { id: string }) {
   const ws = useWorkspace();
@@ -89,6 +91,7 @@ function Loaded({ d }: { d: ConversationDetail }) {
                 },
               ]}
             />
+            <ContactRecordFacts contactId={c.id} />
           </div>
         ) : (
           <p className="text-xs text-text-3">Not linked to a contact. {d.handle ? `Messages come from ${d.handle}.` : ""}</p>
@@ -142,6 +145,8 @@ function Loaded({ d }: { d: ConversationDetail }) {
           </ul>
         </Block>
       )}
+
+      {c && <ContactListsBlock contactId={c.id} />}
 
       {d.visitor && (
         <Block title="Website visitor" icon={<Globe />}>

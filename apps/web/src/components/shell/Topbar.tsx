@@ -23,6 +23,7 @@ import {
 } from "@/components/ui/DropdownMenu";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/Popover";
 import { Spinner } from "@/components/ui/Skeleton";
+import { SearchTrigger } from "./CommandPalette";
 
 /** The bell: unread count, the latest notifications, mark one or all read. */
 function NotificationsBell() {
@@ -184,7 +185,10 @@ export function Topbar({ onOpenNav }: { onOpenNav: () => void }) {
   return (
     <header className="sticky top-0 z-30 flex h-12 shrink-0 items-center gap-2 border-b border-line bg-bg/90 px-3 backdrop-blur nav:px-4">
       <IconButton label="Open navigation" icon={<Menu />} className="nav:hidden" onClick={onOpenNav} />
-      <div className="flex-1" />
+      {/* Search / ⌘K palette: a wide field from sm up, an icon beside the bell on phones. */}
+      <div className="flex min-w-0 flex-1 items-center justify-end sm:justify-start">
+        <SearchTrigger />
+      </div>
       <AdminSwitch />
       <NotificationsBell />
       <UserMenu />

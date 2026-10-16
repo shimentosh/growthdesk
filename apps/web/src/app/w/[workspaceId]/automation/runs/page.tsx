@@ -2,7 +2,9 @@
 
 import { Suspense, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { CircleDot, Workflow, X } from "lucide-react";
 import { WORKFLOW_RUN_STATUSES, labelOf } from "@growthdesk/shared";
+import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
 import { NativeSelect } from "@/components/ui/Input";
 import { Page, PageHeader } from "@/components/ui/PageHeader";
@@ -50,8 +52,8 @@ function Runs() {
       <div className="mb-3 flex flex-wrap items-center gap-2">
         <div className="w-48">
           <NativeSelect
-            size="sm"
             aria-label="Filter by status"
+            icon={<CircleDot />}
             value={status}
             onChange={(e) => setFilter("status", e.target.value)}
             options={[{ value: "", label: "All statuses" }, ...WORKFLOW_RUN_STATUSES.map((s) => ({ value: s, label: labelOf(s) }))]}
@@ -59,8 +61,8 @@ function Runs() {
         </div>
         <div className="w-60 max-w-full">
           <NativeSelect
-            size="sm"
             aria-label="Filter by workflow"
+            icon={<Workflow />}
             value={workflowId}
             onChange={(e) => setFilter("workflowId", e.target.value)}
             options={[
@@ -70,6 +72,11 @@ function Runs() {
             ]}
           />
         </div>
+        {(params.get("status") || workflowId) && (
+          <Button variant="ghost" size="sm" icon={<X />} onClick={() => router.replace(pathname, { scroll: false })}>
+            Clear filters
+          </Button>
+        )}
       </div>
       <Card>
         <RunsList status={status} filterWorkflowId={workflowId} highlightRunId={highlight} />

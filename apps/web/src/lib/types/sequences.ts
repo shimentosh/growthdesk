@@ -39,6 +39,8 @@ export type StepConfig = {
   strategy?: AssignStrategy;
   message?: string;
   integrationId?: string | null;
+  /** ai_call: the AI agent that places the call. */
+  agentId?: string | null;
   [key: string]: unknown;
 };
 
@@ -93,6 +95,7 @@ export const STEP_META: Record<StepType, { description: string; feature?: Featur
   wait: { description: "Pause before the next step." },
   branch: { description: "Split the path on what the contact did or who they are.", feature: "branching" },
   call_task: { description: "Create a call task for a teammate.", feature: "multichannel" },
+  ai_call: { description: "An AI agent phones the contact (consent and calling hours apply).", feature: "multichannel" },
   whatsapp: { description: "Send a WhatsApp message.", feature: "multichannel" },
   telegram: { description: "Send a Telegram message.", feature: "multichannel" },
   update_field: { description: "Set a field on the contact." },
@@ -102,13 +105,19 @@ export const STEP_META: Record<StepType, { description: string; feature?: Featur
   end: { description: "Finish the sequence for the contact here." },
 };
 
+/** Every plan feature a step type needs: its STEP_META feature, plus calling for AI calls (step-rules.service.ts). */
+export const stepFeatures = (type: StepType): FeatureKey[] => {
+  const feature = STEP_META[type]?.feature;
+  return [...(feature ? [feature] : []), ...(type === "ai_call" ? (["calling"] as const) : [])];
+};
+
 /** Stored steps → the editable shape (drops id/position, keeps config as stored). */
 export const stepsOf = (rows: StepRow[] | undefined): SequenceStep[] =>
   [...(rows ?? [])]
     .sort((a, b) => a.position - b.position)
     .map((s) => ({ type: s.type, config: s.config && typeof s.config === "object" && !Array.isArray(s.config) ? { ...s.config } : {} }));
 
-const UUID_KEYS = ["templateId", "userId", "integrationId"] as const;
+const UUID_KEYS = ["templateId", "userId", "integrationId", "agentId"] as const;
 
 /** Steps ready to send: empty id fields become null (the API wants a UUID or null) and blank keys are dropped. */
 export function cleanSteps(steps: SequenceStep[]): SequenceStep[] {

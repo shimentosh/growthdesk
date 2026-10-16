@@ -12,6 +12,7 @@ import {
   UpdateWorkspaceInput,
   password,
   requiredText,
+  type WorkspaceRole,
 } from "@growthdesk/shared";
 import { AllowSuspended, AllowUnverified, Body, Ctx, Permission, Public, Query, SameOrigin } from "../common/decorators.js";
 import { ws, type RequestContext } from "../common/context.js";
@@ -28,6 +29,7 @@ const RegisterInvitee = z.object({
   password,
   acceptTerms: z.literal(true, { error: "Accept the Terms of Service and Privacy Policy to create an account." }),
 });
+const RemoveMemberQuery = z.object({ handoverTo: z.string().uuid().optional(), pauseMailboxes: z.enum(["true", "false"]).optional() });
 const SupportGrantInput = z.object({ hours: z.number().int().min(1).max(168), reason: requiredText(500) });
 
 @ApiTags("workspaces")
@@ -76,7 +78,9 @@ export class WorkspacesController {
   @Permission("members.manage")
   @Post("workspaces/:workspaceId/invitations")
   invite(@Ctx() ctx: RequestContext, @Body(InviteMemberInput) body: z.infer<typeof InviteMemberInput>) {
-    return this.workspaces.invite(ctx, body.email, body.role);
+    // `emails` (a batch) answers { results: [...] }; a single `email` keeps its own answer and errors.
+    if (body.emails) return this.workspaces.inviteMany(ctx, body.emails, body.role, body.message ?? "");
+    return this.workspaces.invite(ctx, body.email!, body.role, body.message ?? "");
   }
 
   @Permission("members.manage")
@@ -95,15 +99,27 @@ export class WorkspacesController {
 
   @Permission("members.manage")
   @Patch("workspaces/:workspaceId/members/:id")
-  changeRole(@Ctx() ctx: RequestContext, @Param("id") id: string, @Body(UpdateMemberInput) body: z.infer<typeof UpdateMemberInput>) {
-    return this.workspaces.changeRole(ctx, id, body.role);
+  /** `{ role }` changes the role; `{ deactivated: true | false }` pauses or restores their access (seat and records stay). */
+  async changeRole(@Ctx() ctx: RequestContext, @Param("id") id: string, @Body(UpdateMemberInput) body: z.infer<typeof UpdateMemberInput>) {
+    let out: { id: string; role: WorkspaceRole; deactivatedAt?: Date | null } | undefined;
+    if (body.role !== undefined) out = await this.workspaces.changeRole(ctx, id, body.role);
+    if (body.deactivated !== undefined) out = { ...out, ...(await this.workspaces.setDeactivated(ctx, id, body.deactivated)) };
+    return out;
   }
 
-  /** Removing someone needs members.manage; leaving (your own membership) does not. Checked in the service. */
+  /** What a member is responsible for, to hand over before they go. Same rule as removing them. */
+  @Get("workspaces/:workspaceId/members/:id/handover")
+  handover(@Ctx() ctx: RequestContext, @Param("id") id: string) {
+    return this.workspaces.handoverPreview(ctx, id);
+  }
+
+  /**
+   * Removing someone needs members.manage; leaving (your own membership) does not. Checked in the service.
+   * `?handoverTo=<userId>` hands everything they own to that teammate; `?pauseMailboxes=true` stops their mailboxes sending.
+   */
   @Delete("workspaces/:workspaceId/members/:id")
-  async remove(@Ctx() ctx: RequestContext, @Param("id") id: string) {
-    await this.workspaces.remove(ctx, id);
-    return { removed: true };
+  remove(@Ctx() ctx: RequestContext, @Param("id") id: string, @Query(RemoveMemberQuery) q: z.infer<typeof RemoveMemberQuery>) {
+    return this.workspaces.remove(ctx, id, { handoverTo: q.handoverTo ?? null, pauseMailboxes: q.pauseMailboxes === "true" });
   }
 
   @Permission("settings.manage")

@@ -4,6 +4,7 @@ import Link from "next/link";
 import { FileSpreadsheet, History } from "lucide-react";
 import { labelOf } from "@growthdesk/shared";
 import { Card, CardHeader } from "@/components/ui/Card";
+import { COL } from "@/components/ui/columns";
 import { StatusBadge } from "@/components/ui/Badge";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { QueryState } from "@/components/ui/ErrorState";
@@ -38,18 +39,26 @@ export function ImportHistory() {
           <Table>
             <thead>
               <tr>
-                <Th>File</Th>
-                <Th>Status</Th>
-                <Th align="right">Rows</Th>
-                <Th align="right">Created</Th>
-                <Th align="right" className="hidden sm:table-cell">
+                <Th icon={COL.file}>File</Th>
+                <Th icon={COL.status}>Status</Th>
+                <Th align="right" icon={COL.rows}>
+                  Rows
+                </Th>
+                <Th align="right" icon={COL.count}>
+                  Created
+                </Th>
+                <Th align="right" className="hidden sm:table-cell" icon={COL.count}>
                   Updated
                 </Th>
-                <Th align="right" className="hidden sm:table-cell">
+                <Th align="right" className="hidden sm:table-cell" icon={COL.skipped}>
                   Skipped
                 </Th>
-                <Th align="right">Failed</Th>
-                <Th className="hidden md:table-cell">Started</Th>
+                <Th align="right" icon={COL.failed}>
+                  Failed
+                </Th>
+                <Th className="hidden md:table-cell" icon={COL.date}>
+                  Started
+                </Th>
               </tr>
             </thead>
             <tbody>

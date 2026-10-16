@@ -16,6 +16,13 @@ import { PlatformMailProcessorsModule } from "../platform-mail/platform-mail.pro
 import { PlatformGrowthProcessorsModule } from "../platform-growth/platform-growth.processors.js";
 import { WorkerOpsModule } from "./worker-ops.module.js";
 import { LifecycleProcessorsModule } from "../lifecycle/lifecycle.processors.js";
+import { AiCallingProcessorsModule } from "../ai-calling/ai-calling.processors.js";
+import { BookingProcessorsModule } from "../booking/booking.processors.js";
+import { ForecastProcessorsModule } from "../forecast/forecast.processors.js";
+import { QuotesProcessorsModule } from "../quotes/quotes.processors.js";
+import { ScoringProcessorsModule } from "../scoring/scoring.processors.js";
+import { DigestProcessorsModule } from "../digest/digest.processors.js";
+import { DiscordProcessorsModule } from "../discord/discord.processors.js";
 
 /** The background worker: every feature's services plus the BullMQ processors and recurring schedules. */
 @Module({
@@ -37,6 +44,13 @@ import { LifecycleProcessorsModule } from "../lifecycle/lifecycle.processors.js"
     PlatformGrowthProcessorsModule,
     WorkerOpsModule,
     LifecycleProcessorsModule,
+    AiCallingProcessorsModule,
+    BookingProcessorsModule,
+    ForecastProcessorsModule,
+    QuotesProcessorsModule,
+    ScoringProcessorsModule,
+    DigestProcessorsModule,
+    DiscordProcessorsModule,
   ],
 })
 export class WorkerModule {}
@@ -54,4 +68,11 @@ export const PROCESSOR_MODULES = [
   PlatformMailProcessorsModule,
   PlatformGrowthProcessorsModule,
   LifecycleProcessorsModule,
+  AiCallingProcessorsModule,
+  BookingProcessorsModule,
+  ForecastProcessorsModule,
+  QuotesProcessorsModule,
+  ScoringProcessorsModule,
+  DigestProcessorsModule,
+  DiscordProcessorsModule,
 ];

@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useMemo, useState, type FormEvent } from "react";
-import { Activity, ArrowRightLeft, CalendarDays, CheckSquare, CircleDot, ClipboardList, Ellipsis, Handshake, History, Info, Milestone, Pin, PinOff, Plus, StickyNote, Trash2, Trophy, XCircle, type LucideIcon } from "lucide-react";
+import { Activity, ArrowRightLeft, CalendarDays, CheckSquare, CircleDot, ClipboardList, Ellipsis, Handshake, History, Info, ListChecks, Milestone, Pin, PinOff, Plus, StickyNote, Trash2, Trophy, XCircle, type LucideIcon } from "lucide-react";
 import { labelOf } from "@growthdesk/shared";
 import { CompanyPicker, ContactPicker, MemberPicker } from "@/components/pickers/Pickers";
 import { Badge } from "@/components/ui/Badge";
@@ -127,8 +127,34 @@ export function StagePanel({
             In {deal.stage.name} since {f.date(deal.stageEnteredAt)} · {deal.stage.probability}% probability
           </p>
         )}
+        {deal.status === "open" && <StageGuidance stageName={deal.stage.name} guidance={stages.find((s) => s.id === deal.stage.id)?.guidance ?? ""} />}
       </CardBody>
     </Card>
+  );
+}
+
+/** The stage's guidance (Settings → Pipelines) as a short checklist-style note: one point per line. */
+export function StageGuidance({ stageName, guidance }: { stageName: string; guidance: string }) {
+  const points = guidance
+    .split("\n")
+    .map((l) => l.replace(/^\s*(?:[-*•]|\d+[.)])\s*/, "").trim())
+    .filter(Boolean);
+  if (!points.length) return null;
+  return (
+    <div className="rounded-md border border-line bg-well px-3 py-2">
+      <div className="mb-1 flex items-center gap-1.5 text-xs font-medium text-text-2">
+        <ListChecks aria-hidden className="size-3.5 text-text-3" />
+        In {stageName}
+      </div>
+      <ul className="flex flex-col gap-0.5 text-xs text-text-2">
+        {points.map((p, i) => (
+          <li key={i} className="flex gap-1.5">
+            <span aria-hidden className="mt-1.5 size-1 shrink-0 rounded-full bg-text-3" />
+            <span className="min-w-0 break-words">{p}</span>
+          </li>
+        ))}
+      </ul>
+    </div>
   );
 }
 

@@ -1,5 +1,7 @@
 import {
   AlarmClock,
+  FileSignature,
+  Hourglass,
   ArrowRightLeft,
   Ban,
   Bell,
@@ -48,6 +50,8 @@ export const TRIGGER_GLYPH: Record<WorkflowTrigger, { icon: LucideIcon; tint: Ti
   "call.completed": { icon: PhoneCall, tint: "teal" },
   "meeting.booked": { icon: CalendarCheck, tint: "red" },
   "deal.stage_changed": { icon: ArrowRightLeft, tint: "green" },
+  "deal.stale": { icon: Hourglass, tint: "orange" },
+  "quote.accepted": { icon: FileSignature, tint: "green" },
   "task.overdue": { icon: AlarmClock, tint: "orange" },
   "list.subscribed": { icon: ListPlus, tint: "purple" },
   "marketing.opened": { icon: MailOpen, tint: "blue" },

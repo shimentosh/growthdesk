@@ -7,6 +7,7 @@ import { ENROLLMENT_STATUSES, labelOf, type EnrollmentStatus } from "@growthdesk
 import { StatusBadge } from "@/components/ui/Badge";
 import { Button, IconButton } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
+import { COL, ColumnLabel } from "@/components/ui/columns";
 import { ConfirmDialog, Modal } from "@/components/ui/Dialog";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { ErrorState } from "@/components/ui/ErrorState";
@@ -117,22 +118,22 @@ export function EnrollmentsPanel({ campaign, initialStatus }: { campaign: Campai
           <thead className="border-b border-line bg-s-2">
             <tr>
               <th scope="col" className={TH}>
-                Contact
+                <ColumnLabel icon={COL.person}>Contact</ColumnLabel>
               </th>
               <th scope="col" className={TH}>
-                Status
+                <ColumnLabel icon={COL.status}>Status</ColumnLabel>
               </th>
               <th scope="col" className={TH}>
-                Step
+                <ColumnLabel icon={COL.steps}>Step</ColumnLabel>
               </th>
               <th scope="col" className={TH}>
-                Next run
+                <ColumnLabel icon={COL.due}>Next run</ColumnLabel>
               </th>
               <th scope="col" className={TH}>
-                Note
+                <ColumnLabel icon={COL.notes}>Note</ColumnLabel>
               </th>
               <th scope="col" className={TH}>
-                Enrolled
+                <ColumnLabel icon={COL.enrolled}>Enrolled</ColumnLabel>
               </th>
               <th scope="col" className={TH}>
                 <span className="sr-only">Actions</span>
@@ -226,6 +227,7 @@ export function EnrollmentsPanel({ campaign, initialStatus }: { campaign: Campai
         />
         <NativeSelect
           aria-label="Status"
+          icon={<COL.status />}
           className="sm:w-40"
           value={status}
           onChange={(e) => {

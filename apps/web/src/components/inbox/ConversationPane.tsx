@@ -57,7 +57,18 @@ type PatchVars = {
 };
 
 /** The middle pane: header with triage actions, the thread (messages and internal notes), the composer. Live via the inbox stream; polled every minute as a fallback. */
-export function ConversationPane({ id, onBack, onShowDetails }: { id: string; onBack: () => void; onShowDetails: () => void }) {
+export function ConversationPane({
+  id,
+  onBack,
+  onShowDetails,
+  detailsShown,
+}: {
+  id: string;
+  onBack: () => void;
+  onShowDetails: () => void;
+  /** Whether the contact side pane is on (it shows from `xl`); the header button toggles it. */
+  detailsShown?: boolean;
+}) {
   const ws = useWorkspace();
   const detail = useApiQuery<ConversationDetail>(ws.key("inbox", "detail", id), ws.path(`/inbox/conversations/${id}`), { refetchInterval: 60_000 });
   const canWork = ws.can(["inbox.reply", "inbox.assign"]);
@@ -93,10 +104,10 @@ export function ConversationPane({ id, onBack, onShowDetails }: { id: string; on
       </div>
     );
   }
-  return <Loaded d={detail.data} onBack={onBack} onShowDetails={onShowDetails} />;
+  return <Loaded d={detail.data} onBack={onBack} onShowDetails={onShowDetails} detailsShown={detailsShown} />;
 }
 
-function Loaded({ d, onBack, onShowDetails }: { d: ConversationDetail; onBack: () => void; onShowDetails: () => void }) {
+function Loaded({ d, onBack, onShowDetails, detailsShown }: { d: ConversationDetail; onBack: () => void; onShowDetails: () => void; detailsShown?: boolean }) {
   const ws = useWorkspace();
   const me = useMe();
   const f = useFormat();
@@ -283,7 +294,13 @@ function Loaded({ d, onBack, onShowDetails }: { d: ConversationDetail; onBack: (
               </DropdownMenuContent>
             </DropdownMenu>
           )}
-          <IconButton size="sm" label="Contact and details" icon={<PanelRight />} onClick={onShowDetails} className="xl:hidden" />
+          <IconButton
+            size="sm"
+            label="Contact and details"
+            icon={<PanelRight />}
+            onClick={onShowDetails}
+            className={cn(detailsShown && "xl:bg-s-3 xl:text-text-hi")}
+          />
         </div>
       </header>
       <ConversationTags conversationId={d.id} tags={d.tags} canEdit={canWork} />
